@@ -15,16 +15,18 @@ export interface InstructionTaskController {
   sending: boolean
   error: string
   submit: (text: string) => Promise<void>
+  adopt: (runId: string, instruction: string) => void
   cancel: () => Promise<void>
   dismiss: () => void
 }
 
 interface InstructionTaskOptions {
+  enabled?: boolean
   motionStartAllowed: boolean
   motionStartBlockedReason: string
 }
 
-export function useInstructionTask({ motionStartAllowed, motionStartBlockedReason }: InstructionTaskOptions): InstructionTaskController {
+export function useInstructionTask({ motionStartAllowed, motionStartBlockedReason, enabled = true }: InstructionTaskOptions): InstructionTaskController {
   const [task, setTask] = useState<InstructionTask | null>(null)
   const [receipt, setReceipt] = useState<InstructionReceipt | null>(null)
   const [sending, setSending] = useState(false)
@@ -50,7 +52,7 @@ export function useInstructionTask({ motionStartAllowed, motionStartBlockedReaso
   const needsPolling = task ? instructionTaskNeedsPolling(task) : false
 
   useEffect(() => {
-    if (!runId || !needsPolling) return
+    if (!enabled || !runId || !needsPolling) return
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async () => {
@@ -83,7 +85,7 @@ export function useInstructionTask({ motionStartAllowed, motionStartBlockedReaso
     }
     timer = setTimeout(poll, 1_000)
     return () => { disposed = true; if (timer) clearTimeout(timer) }
-  }, [runId, generation, needsPolling, updateTask])
+  }, [runId, generation, needsPolling, updateTask, enabled])
 
   const submit = useCallback(async (input: string) => {
     const text = input.trim()
@@ -196,6 +198,16 @@ export function useInstructionTask({ motionStartAllowed, motionStartBlockedReaso
     }
   }, [updateTask])
 
+  const adopt = useCallback((runId: string, instruction: string) => {
+    if (!runId || taskRef.current?.runId === runId) return
+    const generation = ++generationRef.current
+    setReceipt(null)
+    setError('')
+    updateTask({ runId, instruction, executor: 'agent', generation,
+      status: { found: true, run_id: runId, state: 'accepted' }, statusSource: 'ack',
+      cancelRequested: false, cancelError: '', pollError: '' })
+  }, [updateTask])
+
   const dismiss = useCallback(() => {
     const current = taskRef.current
     if (sendingRef.current || (current && !instructionTaskCanDismiss(current))) return
@@ -205,5 +217,5 @@ export function useInstructionTask({ motionStartAllowed, motionStartBlockedReaso
     setError('')
   }, [updateTask])
 
-  return { task, receipt, sending, error, submit, cancel, dismiss }
+  return { task, receipt, sending, error, submit, adopt, cancel, dismiss }
 }

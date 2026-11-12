@@ -1,0 +1,24 @@
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+.sensorPreview { min-height: 100dvh; }
+.sensorPreview > header { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; }
+.sensorPreview > header > span { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 550; }
+.sensorPreview > header i { font-style: normal; font-size: 11px; color: var(--text-dim); font-weight: 400; margin-left: 7px; }
+.sensorPreview > header > div { display: flex; gap: 8px; }
+.sensorPreview button { border: 0; background: transparent; color: var(--text-dim); border-radius: 8px; cursor: pointer; font: inherit; }
+.sensorPreview > header button { padding: 7px; display: grid; place-items: center; }
+.sensorPreview button:hover { background: var(--bg-layer-2); color: var(--text); }
+.sensor-preview-hero { width: min(400px, calc(100vw - 56px)); margin: 150px 0 0 46px; }
+.sensor-preview-hero > svg { color: var(--text-dim); }
+.sensor-preview-hero h1 { font-size: 30px; font-weight: 500; letter-spacing: -.045em; margin: 24px 0 14px; }
+.sensor-preview-hero p { font-size: 13px; color: var(--text-dim); line-height: 1.9; margin-bottom: 24px; }
+.sensor-preview-hero .preview-primary { display: inline-flex; gap: 7px; align-items: center; padding: 9px 13px; background: var(--bg-layer-2); color: var(--text); font-size: 12px; }
+.sensor-preview-hero nav { display: flex; flex-direction: column; margin-top: 25px; max-width: 350px; }
+.sensor-preview-hero a { display: flex; justify-content: space-between; padding: 12px 3px; color: var(--text); text-decoration: none; font-size: 12px; border-radius: 7px; }
+.sensor-preview-hero a:hover { background: var(--bg-layer-2); }
+.sensor-preview-hero a span { color: var(--text-dim); font-size: 10px; }
+.sensor-preview-composer { border: 1px solid var(--border); border-radius: 18px; padding: 14px 12px 8px; background: var(--bg-layer-1); box-shadow: 0 8px 25px #00000004; }
+.sensor-preview-composer > input { box-sizing: border-box; width: 100%; border: 0; background: transparent; color: var(--text); padding: 3px 1px 23px; outline: 0; font: 13px var(--font-ui); }
+.sensor-preview-composer > div { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 10px; }
+.sensor-preview-composer button[type='submit'] { margin-left: auto; background: var(--bg-layer-2); padding: 6px; border-radius: 50%; }
+.sensor-preview-footnote { display: block; text-align: center; font-size: 9px; color: var(--text-dim); margin: 6px 0; }
+@media (max-width: 700px) { .sensor-preview-hero { margin: 90px 28px 0; } .sensor-preview-hero h1 { font-size: 26px; } }

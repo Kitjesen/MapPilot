@@ -24,16 +24,35 @@ test('a data gateway without a camera stays explicitly unavailable and status er
   assert.equal(recordingLiveCameraState({ ...base, hasFrame: true, lastFrameAt: 4900, statusError: true }), 'live')
 })
 
-test('the real data panel labels its live video and history separately without camera motion controls', async () => {
+test('recording starts at capture controls with video selection visible and diagnostics collapsed', async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' })
   try {
     const { RecordingPanel } = await server.ssrLoadModule('/src/components/RecordingPanel.tsx')
-    const panel = renderToStaticMarkup(createElement(RecordingPanel, { locale: 'zh', status: null, statusError: null, showToast: () => {}, refreshStatus: async () => {} }))
-    assert.match(panel, /实时相机视频/)
-    assert.match(panel, /正在检查当前相机源/)
-    assert.match(panel, /历史回看/)
-    assert.match(panel, /此处仅连接当前相机视频流/)
+    const panel = renderToStaticMarkup(createElement(RecordingPanel, { view: 'record', onViewChange: () => {}, locale: 'zh', status: null, statusError: null, showToast: () => {}, refreshStatus: async () => {} }))
+    assert.match(panel, /data-view="record"/)
+    assert.match(panel, /<button[^>]*>回看<\/button>/)
+    assert.match(panel, /<label[^>]*><input type="checkbox"[^>]*disabled=""[^>]*>[\s\S]*?包含视频<\/span><\/label><button[^>]*disabled=""[^>]*>[\s\S]*?开始录制<\/button>/)
+    assert.ok(panel.indexOf('包含视频') < panel.indexOf('采集配置'))
+    assert.match(panel, /<details[^>]*aria-label="数据诊断"[^>]*><summary>/)
+    assert.doesNotMatch(panel, /<details[^>]*\sopen(?:=|[\s>])|实时相机视频|运行概览|数据流量分析|role="tablist"/)
     assert.doesNotMatch(panel, /解除急停|Reset E-stop/)
+    const sessions = renderToStaticMarkup(createElement(RecordingPanel, { view: 'history', onViewChange: () => {}, locale: 'zh', status: null, statusError: null, showToast: () => {}, refreshStatus: async () => {} }))
+    assert.match(sessions, /data-view="history"/)
+    assert.match(sessions, /录制文件/)
+    assert.match(sessions, /<button[^>]*>录制<\/button>/)
+    assert.doesNotMatch(sessions, /包含视频|运行概览/)
+  } finally { await server.close() }
+})
+
+test('standalone live camera and recording history keep distinct video states', async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' })
+  try {
+    const { RecordingLiveCamera } = await server.ssrLoadModule('/src/components/RecordingLiveCamera.tsx')
+    const camera = renderToStaticMarkup(createElement(RecordingLiveCamera, { locale: 'zh' }))
+    assert.match(camera, /实时相机视频/)
+    assert.match(camera, /等待画面/)
+    assert.doesNotMatch(camera, /视频说明|此处仅连接/)
+    assert.doesNotMatch(camera, /正在接收实时视频|data-live|<video/)
     const { RecordingHistory } = await server.ssrLoadModule('/src/components/RecordingHistory.tsx')
     const history = renderToStaticMarkup(createElement(RecordingHistory, { sessionId: 'saved', sessions: [], topics: [], locale: 'zh' }))
     assert.match(history, /录制回看 · 非实时/)

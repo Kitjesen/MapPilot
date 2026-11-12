@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
-  Activity,
   Camera,
   ChevronDown,
-  Database,
   Download,
   HardDrive,
   Play,
@@ -37,7 +35,6 @@ import {
 } from '../services/recordingStatus'
 import styles from './RecordingPanel.module.css'
 import { RecordingStreams } from './RecordingStreams'
-import { RecordingLiveCamera } from './RecordingLiveCamera'
 import { readRecordingPreferences, writeRecordingPreferences } from '../services/recordingPreferences'
 
 interface RecordingPanelProps {
@@ -48,6 +45,8 @@ interface RecordingPanelProps {
   refreshStatus: () => Promise<void>
   embedded?: boolean
   onClose?: () => void
+  view: 'record' | 'history'
+  onViewChange: (view: 'record' | 'history') => void
 }
 
 function formatBytes(value: number | undefined): string {
@@ -166,8 +165,12 @@ export function RecordingPanel({
   refreshStatus,
   embedded = false,
   onClose,
+  view,
+  onViewChange,
 }: RecordingPanelProps) {
-  const [view, setView] = useState<'live' | 'capture' | 'sessions'>('live')
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => { headingRef.current?.focus() }, [view])
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false)
   const [catalog, setCatalog] = useState<RecordingListResponse | null>(null)
   const [topicCatalog, setTopicCatalog] = useState<RecordingCatalogResponse | null>(null)
   const [topicCatalogError, setTopicCatalogError] = useState<string | null>(null)
@@ -428,17 +431,19 @@ export function RecordingPanel({
   return (
     <div
       className={[styles.panel, embedded ? styles.panelEmbedded : ''].filter(Boolean).join(' ')}
+      data-view={view}
       role="region"
       aria-label={text(locale, 'Recording controls', '录制控制')}
     >
       <header className={styles.header}>
         <div>
-          <h1><Database size={16} /> {text(locale, 'Data', '数据')}</h1>
-          <p>{text(locale, 'Live video, data streams and recording history', '实时视频、数据流与录制回看')}</p>
+          <h1 ref={headingRef} tabIndex={-1}>{view === 'record' ? text(locale, 'Recording', '录制') : text(locale, 'History', '历史回看')}</h1>
         </div>
         <div className={styles.headerActions}>
+          {view === 'history' && <button className={styles.headerLink} onClick={() => onViewChange('record')}>{text(locale, 'Record', '录制')}</button>}
+          {view === 'record' && <button className={styles.headerLink} onClick={() => onViewChange('history')}>{text(locale, 'History', '回看')}</button>}
           {(active || recoveryRequired) && <span className={styles.headerState}><i className={recoveryRequired ? styles.dotRecovery : styles.dotActive} />{visibleState}</span>}
-          {active && view !== 'capture' && <button className={styles.danger} onClick={() => void stop()} disabled={busy !== null || !active}><Square size={12} />{text(locale, 'Stop', '停止')}</button>}
+          {active && view === 'history' && <button className={styles.danger} onClick={() => void stop()} disabled={busy !== null || !active}><Square size={12} />{text(locale, 'Stop recording', '停止录制')}</button>}
           <button className={styles.iconButton} onClick={() => void refreshAll()} disabled={busy !== null} title={text(locale, 'Refresh', '刷新')}>
             <RefreshCw size={16} />
           </button>
@@ -450,31 +455,7 @@ export function RecordingPanel({
         </div>
       </header>
 
-      <div className={styles.tabs} role="tablist" aria-label={text(locale, 'Data workspace', '数据工作区')} onKeyDown={event => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-        event.preventDefault()
-        const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-        const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
-        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-          : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-        tabs[next]?.click()
-        tabs[next]?.focus()
-      }}>
-        {([
-          ['live', Activity, text(locale, 'Live', '实时')],
-          ['capture', Camera, text(locale, 'Record', '录制')],
-          ['sessions', Database, text(locale, 'History', '历史回看')],
-        ] as const).map(([value, Icon, label]) => <button key={value} id={`data-tab-${value}`} role="tab" aria-selected={view === value} aria-controls={`data-panel-${value}`} tabIndex={view === value ? 0 : -1} onClick={() => setView(value)}><Icon size={14} />{label}{value === 'sessions' && !!catalog?.sessions.length && <small>{catalog.sessions.length}</small>}</button>)}
-      </div>
-
-      {view === 'live' && <section id="data-panel-live" role="tabpanel" aria-labelledby="data-tab-live" className={styles.livePanel}>
-        <RecordingLiveCamera locale={locale} />
-        {topicCatalog ? <RecordingStreams topics={topicCatalog.topics} selected={selectedTopics ?? []} disabled={controlsDisabled} locale={locale} onChange={updateSelectedTopics} /> : <div className={styles.empty}>{text(locale, 'Loading data streams…', '正在读取数据流…')}</div>}
-        {topicCatalogError && <p className={styles.error} role="alert">{recordingErrorMessage(topicCatalogError, locale)}</p>}
-        <footer className={styles.liveFooter}><span>{text(locale, 'Choose streams here, then configure recording.', '选择要保留的数据，再设置录制。')}</span><button className={styles.secondary} onClick={() => setView('capture')}><Settings2 size={13} />{text(locale, 'Recording options', '录制选项')}</button></footer>
-      </section>}
-
-      {view === 'capture' && <section id="data-panel-capture" role="tabpanel" aria-labelledby="data-tab-capture" className={styles.card} aria-label={text(locale, 'Recorder controls', '录制控制')}>
+      {view === 'record' && <section id="data-panel-capture" className={styles.card} aria-label={text(locale, 'Recorder controls', '录制控制')}>
         <div className={styles.statusRow}>
           <span className={recoveryRequired ? styles.dotRecovery : active ? styles.dotActive : styles.dot} />
           <strong>{visibleState}</strong>
@@ -501,6 +482,13 @@ export function RecordingPanel({
         <div className={styles.formRow}>
           <label>{text(locale, 'Duration (seconds)', '时长（秒）')}<input value={duration} onChange={event => setDuration(event.target.value)} inputMode="numeric" disabled={controlsDisabled} /></label>
           <label>{text(locale, 'Name', '名称')}<input value={prefix} onChange={event => setPrefix(event.target.value)} maxLength={40} disabled={controlsDisabled} /></label>
+        </div>
+        <div className={styles.captureActions}>
+          <label className={styles.cameraOption}>
+            <input type="checkbox" checked={includeCamera} onChange={event => { setCamera(event.target.checked); writeRecordingPreferences({ topics: selectedTopics ?? [], camera: event.target.checked }) }} disabled={controlsDisabled || !topicCatalog || topicCatalog.camera?.supported === false} />
+            <Camera size={14} />
+            <span>{text(locale, 'Include video', '包含视频')}</span>
+          </label>
           <button className={styles.primary} onClick={() => void start()} disabled={startDisabled}><Play size={15} /> {text(locale, 'Start', '开始录制')}</button>
           <button className={styles.danger} onClick={() => void stop()} disabled={busy !== null || !active}><Square size={14} /> {text(locale, 'Stop', '停止')}</button>
         </div>
@@ -521,19 +509,18 @@ export function RecordingPanel({
               <input value={minimumFreeGiB} onChange={event => setMinimumFreeGiB(event.target.value)} inputMode="numeric" disabled={controlsDisabled} />
               <small>GiB</small>
             </label>
-            <label className={styles.cameraOption}>
-              <input type="checkbox" checked={includeCamera} onChange={event => { setCamera(event.target.checked); writeRecordingPreferences({ topics: selectedTopics ?? [], camera: event.target.checked }) }} disabled={controlsDisabled || !topicCatalog || topicCatalog.camera?.supported === false} />
-              <Camera size={14} />
-              <span>{text(locale, 'Include color camera video', '包含彩色相机视频')}</span>
-            </label>
           </div>
           <div className={styles.note}>
             <HardDrive size={14} /> {text(locale, 'Replay can provide recorded sensor inputs. Commands are retained for analysis and never replayed to the robot. Inspection evidence sessions remain task-owned.', '回放可重新提供传感器输入；控制指令仅供分析，不向机器人重放。巡检证据会话仍由任务管理。')}
           </div>
         </details>
+        <details className={styles.disclosure} aria-label={text(locale, 'Data diagnostics', '数据诊断')} open={diagnosticsOpen} onToggle={event => setDiagnosticsOpen(event.currentTarget.open)}>
+          <summary>{text(locale, 'Diagnostics', '诊断')}<ChevronDown size={15} /></summary>
+          {diagnosticsOpen && <RecordingStreams topics={topicCatalog?.topics ?? []} selected={selectedTopics ?? []} disabled={controlsDisabled} locale={locale} onChange={updateSelectedTopics} />}
+        </details>
       </section>}
 
-      {view === 'sessions' && <section id="data-panel-sessions" role="tabpanel" aria-labelledby="data-tab-sessions" className={styles.card} aria-label={text(locale, 'Recording files', '录制文件')}>
+      {view === 'history' && <section id="data-panel-sessions" className={styles.card} aria-label={text(locale, 'Recording files', '录制文件')}>
         <div className={styles.sectionHeader}>
           <h2>{text(locale, 'Saved sessions', '已保存会话')}</h2>
           <span>{catalog?.truncated ? text(locale, 'More sessions exist', '还有更多会话') : `${catalog?.sessions.length ?? 0}`}</span>

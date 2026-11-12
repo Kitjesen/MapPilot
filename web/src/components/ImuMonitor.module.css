@@ -1,0 +1,50 @@
+.embedded :where(button), .embedded a { border: 0; background: transparent; color: var(--text-dim); font: inherit; cursor: pointer; text-decoration: none; border-radius: 7px; }
+.embedded :where(button) { padding: 6px 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.embedded button:hover, .embedded a:hover { background: var(--bg-layer-2); color: var(--text); }
+.embedded button:disabled { opacity: .45; cursor: default; }
+.embedded :is(button,a,input):focus-visible { outline: 2px solid #5681cb; outline-offset: 2px; }
+.body { padding: 0; overflow: auto; min-height: 0; }
+.source { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 11px; }
+.record { display: flex; justify-content: space-between; gap: 6px; padding-top: 4px; }
+.record .start { color: var(--text); background: var(--bg-layer-2); }
+.start svg { fill: #cc665b; stroke: #cc665b; }
+.record .stop { color: #bd554d; background: color-mix(in srgb, #cc665b 9%, transparent); }
+.stop svg { fill: currentColor; }
+.recording { display: flex; align-items: center; gap: 5px; color: #bd554d; font-size: 11px; }
+.recording i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.note { color: var(--text-dim); font-size: 10px; line-height: 1.55; margin: 8px 0 0; }
+.error { color: var(--red); font-size: 11px; overflow-wrap: anywhere; }
+.downloads { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 11px; }
+.downloads > span { margin-right: auto; color: var(--text-dim); }
+.downloads a { display: inline-flex; align-items: center; gap: 3px; padding: 4px; }
+.playback { display: flex; align-items: center; gap: 10px; }
+.playback input { min-width: 0; flex: 1; accent-color: #547ed0; }
+.analyze { width: 100%; background: var(--bg-layer-2) !important; color: var(--text) !important; }
+.library h3 { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+.library > button { display: flex; width: 100%; justify-content: space-between; text-align: left; }
+.library small { display: block; margin-top: 3px; color: var(--text-dim); }
+
+.embedded { min-width: 0; }
+.liveState { margin-left: auto; font-size: 10px; }
+.liveState[data-live='true'] { color: #398362; }
+.info { margin-top: 10px; font-size: 10px; color: var(--text-dim); }
+.info summary { cursor: pointer; padding: 4px 0; }
+
+@container sensor-card (max-height: 440px) { .info, .embedded > .body > .note:not([role='status']) { display: none; } }
+@container sensor-card (max-height: 250px) { .source > svg, .source > span:first-of-type { display: none; } .source { margin: 0; } .liveState { margin-left: 0; } .downloads { margin: 3px 0; } .record { padding-top: 2px; } .record button { font-size: 10px; padding: 4px 5px; } }
+
+.embedded { height: 100%; min-height: 0; }
+.body { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.body > [data-trace-chart] { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+.source, .record, .recording, .downloads, .playback { flex-shrink: 0; }
+.library { max-height: 140px; overflow: auto; flex-shrink: 1; }
+.record { position: sticky; bottom: 0; z-index: 2; background: var(--bg-layer-1); padding-bottom: 4px; }
+
+.recording { flex-wrap: wrap; margin: 5px 0; }
+.recording small { font-size: 10px; }
+@container sensor-card (max-height: 250px) {
+  .embedded > .body > .note[role='status'], .downloads, .recording small { display: none; }
+  .recording { margin: 2px 0; font-size: 10px; }
+  .body > [data-trace-chart] { flex: 1 1 auto; }
+  .record { padding-bottom: 1px; }
+}

@@ -3,6 +3,7 @@ import { ArrowUp, Ellipsis, Navigation, Plus, Square, X } from 'lucide-react'
 import type { Locale } from '../i18n'
 import type { InstructionTaskController } from '../hooks/useInstructionTask'
 import { instructionTaskCanDismiss, presentInstructionTask } from '../services/instructionTask'
+import { operatorReasonMessage } from '../services/navigationStatus'
 import styles from './InstructionTaskBar.module.css'
 
 interface InstructionTaskBarProps {
@@ -11,6 +12,7 @@ interface InstructionTaskBarProps {
   motionStartAllowed: boolean
   motionStartBlockedReason: string
   hasNativeTask: boolean
+  showComposer?: boolean
 }
 
 const ENGLISH_STAGES: Record<string, string> = {
@@ -28,7 +30,7 @@ const ENGLISH_STAGES: Record<string, string> = {
 }
 
 export function InstructionTaskBar({ controller, locale, motionStartAllowed,
-  motionStartBlockedReason, hasNativeTask }: InstructionTaskBarProps) {
+  motionStartBlockedReason, hasNativeTask, showComposer = true }: InstructionTaskBarProps) {
   const [input, setInput] = useState('')
   const [composerOpen, setComposerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -69,8 +71,7 @@ export function InstructionTaskBar({ controller, locale, motionStartAllowed,
       </div>
       {sending ? <p className={styles.stage} role="status">{text('Sending instruction…', '正在发送指令…')}</p> : !task && (
         <div className={styles.examples} aria-label={text('Fill an example instruction', '填入示例指令')}>
-          <button type="button" onClick={() => fillExample(text('Follow me', '跟随我'))}>{text('Follow me', '跟随我')}</button>
-          <button type="button" onClick={() => fillExample(text('Help me find a bottle of water', '帮我找一瓶水'))}>{text('Find a bottle of water', '帮我找一瓶水')}</button>
+          <button type="button" onClick={() => fillExample(text('What is the current task?', '当前任务是什么？'))}>{text('Current task', '当前任务')}</button>
         </div>
       )}
       {!motionStartAllowed && motionStartBlockedReason && <p className={styles.notice}>{motionStartBlockedReason}</p>}
@@ -81,6 +82,13 @@ export function InstructionTaskBar({ controller, locale, motionStartAllowed,
   if (task && view) {
     const canDismiss = instructionTaskCanDismiss(task)
     const stage = locale === 'zh' ? view.label : ENGLISH_STAGES[view.label] ?? view.label
+    const navigation = task.status.navigation
+    const abnormalNavigation = ['FAILED', 'RECOVERING', 'PAUSED'].includes(String(navigation?.state ?? '').toUpperCase())
+    const visibleReason = task.statusSource === 'poll' && !task.pollError
+      ? abnormalNavigation && navigation?.reason
+        ? operatorReasonMessage(navigation.reason, locale)
+        : view.tone === 'error' ? text(task.status.summary ?? view.detail, view.detail) : ''
+      : ''
     return (
       <section className={`${styles.bar} ${view.tone === 'error' ? styles.error : view.tone === 'warning' ? styles.warning : ''}`}
         data-instruction-bar data-state={canDismiss ? 'terminal' : task.cancelRequested ? 'stopping' : 'active'}
@@ -90,6 +98,7 @@ export function InstructionTaskBar({ controller, locale, motionStartAllowed,
           <div className={styles.taskCopy} aria-live="polite">
             <div className={styles.taskTitle} title={task.instruction}>{task.instruction}</div>
             <div className={styles.stage}>{stage}</div>
+            {visibleReason && <p className={styles.visibleReason} title={visibleReason}>{visibleReason}</p>}
           </div>
           {view.canCancel && (
             <button type="button" className={styles.endButton} onClick={() => { void controller.cancel() }}
@@ -134,7 +143,7 @@ export function InstructionTaskBar({ controller, locale, motionStartAllowed,
             </dl>
           </div>
         </details>
-        {composer}
+        {showComposer && composer}
       </section>
     )
   }
@@ -150,10 +159,14 @@ export function InstructionTaskBar({ controller, locale, motionStartAllowed,
           <button type="button" className={styles.iconButton} onClick={controller.dismiss}
             aria-label={text('Dismiss receipt', '关闭受理结果')}><X size={18} /></button>
         </div>
-        {composer}
+        {showComposer && composer}
       </section>
     )
   }
+
+  if (!showComposer) return sending || error
+    ? <p className={styles.bar} role={error ? 'alert' : 'status'}>{error || text('Sending instruction…', '正在发送指令…')}</p>
+    : null
 
   const compact = hasNativeTask && !composerOpen && !sending
   if (compact) {

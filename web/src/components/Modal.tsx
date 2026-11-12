@@ -1,61 +1,74 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Save, Trash2, AlertTriangle, Pencil } from 'lucide-react'
+import { Save, Trash2, AlertTriangle, Pencil } from 'lucide-react'
 import styles from './Modal.module.css'
 
 // ── Base modal shell ────────────────────────────────────────────
 
 interface ModalProps {
   open: boolean
-  title: string
+  title: React.ReactNode
   icon?: React.ReactNode
   danger?: boolean
   onClose: () => void
   children: React.ReactNode
   footer?: React.ReactNode
+  initialFocus?: React.RefObject<HTMLElement | null>
+  className?: string
+  headerAction?: React.ReactNode
+  onPointerMove?: React.PointerEventHandler<HTMLDialogElement>
+  onPointerLeave?: React.PointerEventHandler<HTMLDialogElement>
 }
 
-function ModalShell({ open, title, icon, danger, onClose, children, footer }: ModalProps) {
-  // Close on Escape
+export function ModalShell({
+  open, title, icon, danger, onClose, children, footer, initialFocus,
+  className, headerAction, onPointerMove, onPointerLeave,
+}: ModalProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+    const dialog = dialogRef.current
+    if (!dialog) return
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dialog.showModal()
+    const focusTarget = initialFocus?.current ?? dialog.querySelector<HTMLButtonElement>('[data-modal-cancel]')
+    focusTarget?.focus()
+    return () => {
+      dialog.close()
+      if (previousFocus?.isConnected) previousFocus.focus()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, initialFocus])
 
   if (!open) return null
 
   const content = (
-    <div
-      className={styles.backdrop}
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialogRef}
+      className={`${styles.dialog} ${className ?? ''}`}
+      data-has-icon={Boolean(icon)}
+      aria-labelledby={titleId}
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
+      onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}
+      onKeyDown={event => { if (event.key === 'Escape') event.stopPropagation() }}
+      onClick={event => {
+        if (event.target !== event.currentTarget) return
+        const bounds = event.currentTarget.getBoundingClientRect()
+        if (event.clientX < bounds.left || event.clientX > bounds.right
+          || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose()
+      }}
     >
-      <div
-        className={styles.dialog}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className={styles.header}>
-          <div className={danger ? styles.iconWrapDanger : styles.iconWrap}>
-            {icon}
-          </div>
-          <h2 className={styles.title}>{title}</h2>
-          <button
-            className={styles.closeBtn}
-            onClick={onClose}
-            aria-label="关闭"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className={styles.body}>{children}</div>
-        {footer && <div className={styles.actions}>{footer}</div>}
+      <div className={styles.header}>
+        {icon && <div className={danger ? styles.iconWrapDanger : styles.iconWrap}>
+          {icon}
+        </div>}
+        <h2 id={titleId} className={styles.title}>{title}</h2>
+        {headerAction}
       </div>
-    </div>
+      <div className={styles.body}>{children}</div>
+      {footer && <div className={styles.actions}>{footer}</div>}
+    </dialog>
   )
 
   return createPortal(content, document.body)
@@ -99,9 +112,6 @@ export function PromptModal({
     if (open) {
       setValue(initialValue)
       setError(null)
-      // Autofocus after entrance animation
-      const t = setTimeout(() => inputRef.current?.focus(), 80)
-      return () => clearTimeout(t)
     }
   }, [open, initialValue])
 
@@ -132,12 +142,14 @@ export function PromptModal({
       title={title}
       icon={icon}
       onClose={onCancel}
+      initialFocus={inputRef}
       footer={
         <>
-          <button className={styles.btnCancel} onClick={onCancel}>
+          <button type="button" data-modal-cancel className={styles.btnCancel} onClick={onCancel}>
             取消
           </button>
           <button
+            type="button"
             className={styles.btnPrimary}
             onClick={handleConfirm}
             disabled={!value.trim()}
@@ -172,8 +184,12 @@ interface ConfirmModalProps {
   title: string
   message: React.ReactNode
   confirmLabel?: string
+  cancelLabel?: string
+  icon?: React.ReactNode
   danger?: boolean
   busy?: boolean
+  confirmDisabled?: boolean
+  className?: string
   onConfirm: () => void
   onCancel: () => void
 }
@@ -183,8 +199,12 @@ export function ConfirmModal({
   title,
   message,
   confirmLabel = '确认',
+  cancelLabel = '取消',
+  icon,
   danger = false,
   busy = false,
+  confirmDisabled = false,
+  className,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -192,18 +212,20 @@ export function ConfirmModal({
     <ModalShell
       open={open}
       title={title}
-      icon={danger ? <AlertTriangle size={18} /> : <Save size={18} />}
+      className={className}
+      icon={icon ?? (danger ? <AlertTriangle size={20} /> : <Save size={20} />)}
       danger={danger}
       onClose={busy ? () => undefined : onCancel}
       footer={
         <>
-          <button className={styles.btnCancel} onClick={onCancel} disabled={busy}>
-            取消
+          <button type="button" data-modal-cancel className={styles.btnCancel} onClick={onCancel} disabled={busy}>
+            {cancelLabel}
           </button>
           <button
+            type="button"
             className={danger ? styles.btnDanger : styles.btnPrimary}
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {busy ? '处理中…' : confirmLabel}
           </button>

@@ -1,4 +1,4 @@
-import { Ban, Ellipsis, Navigation2, Pause, Play, X } from 'lucide-react'
+import { Ban, Ellipsis, LoaderCircle, Route, Pause, Play, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useCurrentNavigationTask } from '../hooks/useCurrentNavigationTask'
@@ -11,6 +11,7 @@ import {
 } from '../services/navigationTaskLifecycle'
 import { navigationTaskLabel, navigationTaskReasonMessage, operatorReasonMessage } from '../services/navigationStatus'
 import type { ToastKind } from '../types'
+import { ConfirmModal } from './Modal'
 import styles from './CurrentTaskCard.module.css'
 
 interface CurrentTaskCardProps {
@@ -124,6 +125,7 @@ export function CurrentTaskCard({
   const { identity, snapshot, loading, stale, error, dismiss } = useCurrentNavigationTask()
   const [now, setNow] = useState(() => Date.now() / 1000)
   const [controlRequest, setControlRequest] = useState<NavigationTaskControlRequest | null>(null)
+  const [confirmation, setConfirmation] = useState<{ taskId: string; action: 'resume' | 'cancel' } | null>(null)
   const [cancelRequest, setCancelRequest] = useState<{
     taskId: string
     state: 'requesting' | 'requested'
@@ -186,6 +188,13 @@ export function CurrentTaskCard({
   const showReason = !waitingForRoute && reason !== '-' && Boolean(reason) && (
     stale || !snapshot?.found || ['PAUSED', 'RECOVERING', 'FAILED', 'UNKNOWN'].includes(task.state)
   )
+  const visibleReason = !stale && snapshot?.found && (
+    task.state === 'FAILED'
+    || (task.state === 'RECOVERING' && !waitingForRoute)
+    || (task.state === 'PAUSED' && !resumeAllowed)
+  )
+    ? (task.state === 'PAUSED' && resumeBlockedReason) || (showReason ? reason : '')
+    : ''
   const updatedAt = Number(status?.ts ?? snapshot?.ts ?? identity.submitted_at)
   const freshness = formatAge(updatedAt, now, locale)
   const snapshotSource = cleanText((snapshot as { source?: unknown } | null)?.source)
@@ -239,7 +248,7 @@ export function CurrentTaskCard({
     }
   }
   const requestResume = async () => {
-    if (!task.canResume || pendingAction !== null || cancelState !== 'idle') return
+    if (stale || !snapshot?.found || !task.canResume || pendingAction !== null || cancelState !== 'idle') return
     if (!resumeAllowed) {
       showToast(
         resumeBlockedReason || text(locale, 'Robot state cannot safely resume motion', '当前状态暂不能继续导航'),
@@ -247,12 +256,6 @@ export function CurrentTaskCard({
       )
       return
     }
-    if (!window.confirm(text(
-      locale,
-      'Continue this paused navigation task? The robot may begin moving after confirmation.',
-      '继续这个已暂停的导航任务？机器人确认后可能开始移动。',
-    ))) return
-
     setControlRequest({
       taskId: identity.task_id,
       action: 'resume',
@@ -288,12 +291,6 @@ export function CurrentTaskCard({
   }
   const requestCancel = async () => {
     if (terminal || cancelState !== 'idle') return
-    if (!window.confirm(text(
-      locale,
-      'Request cancellation of this task? The task is not cancelled until the robot confirms it has stopped.',
-      '请求取消这个任务？只有机器人确认停车后，任务才会变为“已取消”。',
-    ))) return
-
     setCancelRequest({ taskId: identity.task_id, state: 'requesting' })
     try {
       const response = await api.cancelNavigationTask(identity.task_id)
@@ -320,27 +317,48 @@ export function CurrentTaskCard({
     }
   }
 
+  const confirmAction = () => {
+    if (!confirmation || confirmation.taskId !== identity.task_id) return
+    setConfirmation(null)
+    if (confirmation.action === 'resume') void requestResume()
+    else void requestCancel()
+  }
+
   const displayLabel = !stale && !terminal && cancelState !== 'idle'
-    ? text(locale, 'Awaiting stop confirmation', '等待停车确认')
+    ? cancelState === 'requesting'
+      ? text(locale, 'Requesting cancellation', '正在请求取消')
+      : text(locale, 'Awaiting stop confirmation', '等待停车确认')
     : !stale && !terminal && pendingAction === 'pause'
       ? text(locale, 'Awaiting pause confirmation', '等待停稳确认')
       : !stale && !terminal && pendingAction === 'resume'
         ? text(locale, 'Awaiting continuation', '等待继续确认')
         : state.label
   const displayTaskName = cleanText(taskName) || text(locale, 'Navigation task', '导航任务')
+  const controlsPending = pendingAction !== null || cancelState !== 'idle'
+  const visualState = stale || !snapshot?.found || !status ? 'unknown'
+    : task.state === 'FAILED' ? 'failed'
+      : terminal ? 'idle'
+        : pendingAction !== null || cancelState !== 'idle' || waitingForRoute ? 'waiting'
+          : task.state === 'EXECUTING' ? 'executing'
+            : task.state === 'PAUSED' ? 'paused' : 'idle'
 
   const card = (
     <aside
       className={`${styles.card} ${container ? styles.embedded : styles.floating}`}
       aria-label={text(locale, 'Current navigation task', '当前导航任务')}
+      data-visual-state={visualState}
     >
+      <span className={styles.flow} aria-hidden="true" />
       <div className={styles.taskIdentity}>
         <span className={styles.taskIcon} aria-hidden="true">
-          <Navigation2 size={17} className={styles[state.tone]} aria-hidden="true" />
+          <Route size={21} strokeWidth={1.7} className={styles[state.tone]} aria-hidden="true" />
         </span>
         <span className={styles.taskCopy}>
-          <strong className={styles.taskName}>{displayTaskName}</strong>
-          <span className={styles.stateLabel} aria-live="polite">{displayLabel}</span>
+          <span className={styles.taskHeading}>
+            <strong className={styles.taskName} title={displayTaskName}>{displayTaskName}</strong>
+            <span className={styles.stateLabel} aria-live="polite">{displayLabel}</span>
+          </span>
+          {visibleReason && <span className={styles.visibleReason} title={visibleReason} aria-live="polite">{visibleReason}</span>}
         </span>
       </div>
 
@@ -349,25 +367,43 @@ export function CurrentTaskCard({
           type="button"
           className={styles.primaryControl}
           onClick={() => void requestPause()}
-          disabled={pendingAction !== null || cancelState !== 'idle'}
+          disabled={controlsPending}
+          aria-busy={controlsPending}
           aria-label={text(locale, 'Pause task', '暂停任务')}
           title={text(locale, 'Pause task', '暂停任务')}
         >
-          <Pause size={19} aria-hidden="true" />
+          {controlsPending ? <LoaderCircle size={18} className={styles.pendingIcon} aria-hidden="true" /> : <Pause size={19} aria-hidden="true" />}
         </button>
       )}
       {!terminal && task.canResume && (
         <button
           type="button"
           className={styles.primaryControl}
-          onClick={() => void requestResume()}
-          disabled={pendingAction !== null || cancelState !== 'idle' || !resumeAllowed}
+          onClick={() => setConfirmation({ taskId: identity.task_id, action: 'resume' })}
+          disabled={controlsPending || !resumeAllowed}
+          aria-busy={controlsPending}
           aria-label={text(locale, 'Continue navigation', '继续导航')}
           title={resumeAllowed
             ? text(locale, 'Continue navigation', '继续导航')
             : resumeBlockedReason || text(locale, 'Resume is blocked by robot state', '机器人状态暂不支持继续导航')}
         >
-          <Play size={19} fill="currentColor" aria-hidden="true" />
+          {controlsPending ? <LoaderCircle size={18} className={styles.pendingIcon} aria-hidden="true" /> : <Play size={19} fill="currentColor" aria-hidden="true" />}
+        </button>
+      )}
+
+      {!terminal && task.canCancel && (
+        <button
+          type="button"
+          className={styles.cancelButton}
+          onClick={() => setConfirmation({ taskId: identity.task_id, action: 'cancel' })}
+          disabled={cancelState !== 'idle'}
+          aria-busy={cancelState !== 'idle'}
+          aria-label={text(locale, 'Cancel task', '取消任务')}
+          title={text(locale, 'Cancel task', '取消任务')}
+        >
+          {cancelState !== 'idle'
+            ? <LoaderCircle size={17} className={styles.pendingIcon} aria-hidden="true" />
+            : <Ban size={17} aria-hidden="true" />}
         </button>
       )}
 
@@ -399,19 +435,7 @@ export function CurrentTaskCard({
             <div><dt>{text(locale, 'Raw reason', '原始原因')}</dt><dd><code>{rawReason}</code></dd></div>
             {error && <div><dt>{text(locale, 'Connection', '连接信息')}</dt><dd>{error}</dd></div>}
           </dl>
-          {!terminal && task.canCancel && (
-            <div className={styles.panelActions}>
-              <button
-                type="button"
-                className={styles.cancelButton}
-                onClick={() => void requestCancel()}
-                disabled={cancelState !== 'idle'}
-              >
-                <Ban size={15} aria-hidden="true" />
-                <span>{text(locale, 'Cancel task', '取消任务')}</span>
-              </button>
-            </div>
-          )}
+
         </section>
       </details>
       {terminal && (
@@ -425,6 +449,26 @@ export function CurrentTaskCard({
           <X size={16} aria-hidden="true" />
         </button>
       )}
+      <ConfirmModal
+        className={styles.confirmation}
+        open={confirmation?.taskId === identity.task_id && !terminal}
+        title={confirmation?.action === 'resume'
+          ? text(locale, 'Continue navigation?', '继续导航？')
+          : text(locale, 'Cancel this task?', '取消当前任务？')}
+        icon={confirmation?.action === 'resume' ? <Play size={20} /> : <Ban size={20} />}
+        message={confirmation?.action === 'resume'
+          ? (!resumeAllowed && resumeBlockedReason) || text(locale, 'The robot may start moving after confirmation.', '确认后，机器人可能开始移动。')
+          : text(locale, 'The task ends once the robot confirms it has stopped.', '机器人确认停车后，任务才会结束。')}
+        confirmLabel={confirmation?.action === 'resume'
+          ? text(locale, 'Continue navigation', '继续导航')
+          : text(locale, 'Cancel task', '取消任务')}
+        cancelLabel={text(locale, 'Back', '返回')}
+        confirmDisabled={confirmation?.action === 'resume'
+          ? stale || !snapshot?.found || !task.canResume || controlsPending || !resumeAllowed
+          : cancelState !== 'idle'}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={confirmAction}
+      />
     </aside>
   )
   return createPortal(card, container ?? document.body)

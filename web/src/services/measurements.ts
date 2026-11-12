@@ -127,7 +127,8 @@ async function request<T>(url: string, init: RequestInit, acceptRejection = fals
     const response = await dashboardFetch(url, { ...init, signal: controller.signal, cache: 'no-store' })
     const body = await response.json()
     if (!response.ok && !(acceptRejection && response.status === 409 && body.applied === false)) {
-      throw new MeasurementApiError(response.status, body.message || body.error || `HTTP ${response.status}`)
+      const reason = body.message ?? body.error ?? body.detail
+      throw new MeasurementApiError(response.status, typeof reason === 'string' ? reason : reason ? JSON.stringify(reason) : `HTTP ${response.status}`)
     }
     return body as T
   } finally {

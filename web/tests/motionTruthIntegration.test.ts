@@ -22,7 +22,7 @@ test('direct motion surfaces keep the frontend gate while dialogue goes to the o
   assert.match(scene, /motionStartAllowed/)
   assert.match(scene, /disabled=\{[^}]*!motionStartAllowed/)
   // The saved-map library opens Scene, where preview and motion admission live.
-  assert.match(map, /onClick=\{onReturnLive\}><Navigation size=\{16\} \/>在现场中导航/)
+  assert.match(map, /onClick=\{onReturnLive\}><Navigation size=\{16\} \/>返回\{returnLabel\}/)
   assert.doesNotMatch(map, /api\.(?:navigateClick|sendGoal|sendWaypoints)|onPick=/)
   const instructionController = source('hooks/useInstructionTask.ts')
   assert.match(chat, /controller\.submit\(text\)/)
@@ -43,7 +43,8 @@ test('manual map dispatch respects the active instruction owner while read-only 
 test('active task controls survive route editing and workspace changes', () => {
   const app = source('App.tsx')
   const scene = source('components/SceneView.tsx')
-  assert.match(app, /activeTab === 'scene' \? taskPanelTarget : globalTaskPanelTarget/)
+  assert.match(app, /const sceneWorkspace = activeTab === 'scene' \|\| activeTab === 'mapping'/)
+  assert.match(app, /sceneWorkspace \? taskPanelTarget : globalTaskPanelTarget/)
   assert.match(app, /currentTaskPanelTarget && createPortal/)
   assert.match(app, /container=\{currentTaskPanelTarget\}/)
   assert.doesNotMatch(scene, /ref=\{onTaskPanelMount\}[\s\S]{0,150}hidden=/)
@@ -84,7 +85,11 @@ test('scene preview is read-only and single-goal admission belongs to navigation
   const dispatch = scene.slice(scene.indexOf('const handleConfirmGoal ='), scene.indexOf('const handleDirectedExploration ='))
   assert.ok(dispatch.indexOf('if (!canSendGoal)') < dispatch.indexOf('api.sendGoal'))
   assert.match(dispatch, /if \(!res\.ok\)/)
-  assert.match(scene, /onClick=\{handleConfirmGoal\}\s+disabled=\{goalSendPending \|\| goalPreviewPending \|\| !previewCurrent \|\| !canSendGoal\}/)
+  const disabled = scene.match(/onClick=\{handleConfirmGoal\}\s+disabled=\{([^}]+)\}/)?.[1]
+  assert.ok(disabled)
+  for (const gate of ['goalSendPending', 'goalHeadingEditing', 'goalYaw === undefined', 'goalPreviewPending', '!previewCurrent', '!plannedGoal', '!canSendGoal']) {
+    assert.ok(disabled.includes(gate), `goal confirmation must retain ${gate}`)
+  }
   assert.match(scene, /hasGoal \? '切换到此目标' : '开始导航'/)
   assert.doesNotMatch(scene, />重新预览<|>预览路径</)
 })

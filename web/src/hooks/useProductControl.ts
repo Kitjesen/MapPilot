@@ -21,15 +21,17 @@ function storePending(id: string | null) {
   } catch { /* The in-memory request still survives a Host restart. */ }
 }
 
-export function useProductControl(onComplete: (product: 'map' | 'nav') => void) {
+export function useProductControl(onProductChanged: (product: 'map' | 'nav' | 'inspection', restoring: boolean) => void) {
   const observe = isObservationMode()
   const [snapshot, setSnapshot] = useState<ProductControlSnapshot | null>(null)
   const [pendingId, setPendingId] = useState(readPending)
   const [operation, setOperation] = useState<ProductSwitchOperation | null>(null)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [available, setAvailable] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const submittingRef = useRef(false)
+  const sessionRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (observe) return
@@ -38,44 +40,58 @@ export function useProductControl(onComplete: (product: 'map' | 'nav') => void) 
     const poll = async () => {
       try {
         if (submittingRef.current) return
+        let missingOperation = false
         if (pendingId) {
-          const next = await fetchProductOperation(pendingId)
-          if (disposed) return
-          setAvailable(true)
-          setError('')
-          setOperation(next)
-          if (switchIsTerminal(next)) {
-            storePending(null)
-            setPendingId(null)
-            setSnapshot(null)
-            setAvailable(false)
-            if (next.state === 'succeeded') onComplete(next.request.product)
+          let next: ProductSwitchOperation | undefined
+          try {
+            next = await fetchProductOperation(pendingId)
+          } catch (cause) {
+            if (!(cause instanceof ProductControlError && cause.status === 404)) throw cause
+            missingOperation = true
           }
-        } else {
-          const next = await fetchProductControl()
           if (disposed) return
-          setSnapshot(next)
-          setAvailable(next.available)
-          setError('')
+          if (next) {
+            setOperation(next)
+            if (!switchIsTerminal(next)) {
+              setAvailable(true)
+              setError('')
+              return
+            }
+          } else {
+            setOperation(null)
+          }
+          setAvailable(false)
         }
-      } catch (cause) {
+        const next = await fetchProductControl()
         if (disposed) return
-        setAvailable(false)
-        if (pendingId && cause instanceof ProductControlError && cause.status === 404) {
+        setSnapshot(next)
+        setAvailable(next.available)
+        setError('')
+        if (missingOperation) setNotice('上次请求结果不可用，已读取机器人当前状态')
+        if (pendingId) {
           storePending(null)
           setPendingId(null)
-          setOperation(null)
-          setError('未找到切换请求，请核对当前模式后重试')
-        } else {
-          setError(pendingId ? '切换结果尚未确认，正在等待服务恢复…' : '模式切换服务未连接')
         }
+        const session = next.current.product_session_id ?? null
+        if (next.current.status === 'active' && session !== sessionRef.current) {
+          const restoring = sessionRef.current === null
+          sessionRef.current = session
+          const product = next.current.product
+          if (product === 'map' || product === 'nav' || product === 'inspection') {
+            onProductChanged(product, restoring)
+          }
+        }
+      } catch {
+        if (disposed) return
+        setAvailable(false)
+        setError(pendingId ? '切换结果尚未确认，正在等待服务恢复…' : '模式切换服务未连接')
       } finally {
         if (!disposed) timer = setTimeout(() => void poll(), pendingId ? 1_000 : 5_000)
       }
     }
     void poll()
     return () => { disposed = true; clearTimeout(timer) }
-  }, [onComplete, pendingId, observe])
+  }, [onProductChanged, pendingId, observe])
 
   const busy = submitting || Boolean(pendingId) || snapshot?.operation?.state === 'running'
   const switchProduct = useCallback(async (product: 'map' | 'nav', mapName: string | null = null, initialPose?: LocalizationInitialPose) => {
@@ -89,6 +105,7 @@ export function useProductControl(onComplete: (product: 'map' | 'nav') => void) 
     }
     storePending(request.request_id)
     setError('')
+    setNotice('')
     setOperation({ request_id: request.request_id, request, state: 'running', message: '正在提交切换…', result: null })
     let acceptedOrUnknown = true
     try {
@@ -109,12 +126,13 @@ export function useProductControl(onComplete: (product: 'map' | 'nav') => void) 
   }, [available, busy, observe, snapshot])
 
   return {
-    switchProduct, busy, operation, error,
-    message: operation ? error || operation.message
-      : pendingId ? error || '正在查询上次切换结果…'
-      : snapshot?.operation?.state === 'running' ? snapshot.operation.message : '',
+    switchProduct, busy, operation, error, available,
+    current: snapshot?.current ?? null,
+    message: ((pendingId || operation) ? error : '') || notice || (operation ? operation.message
+      : pendingId ? '正在查询上次切换结果…'
+      : snapshot?.operation?.state === 'running' ? snapshot.operation.message : ''),
     allowed: available && Boolean(snapshot) && !busy && !observe,
     reason: observe ? '只读监控' : busy ? '模式正在切换' : available ? '' : error || '正在连接模式切换服务',
-    dismiss: () => { if (!busy) { setOperation(null); setError('') } },
+    dismiss: () => { if (!busy) { setOperation(null); setError(''); setNotice('') } },
   }
 }

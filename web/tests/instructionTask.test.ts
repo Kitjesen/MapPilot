@@ -8,6 +8,7 @@ import type { InstructionTaskController } from '../src/hooks/useInstructionTask.
 import type { AgentTaskStatusResponse } from '../src/types/index.ts'
 import * as agentTask from '../src/services/agentTask.ts'
 import * as instructionTask from '../src/services/instructionTask.ts'
+import * as navigationStatus from '../src/services/navigationStatus.ts'
 
 const errorExports: Record<string, unknown> = {}
 const apiSource = readFileSync(new URL('../src/services/api.ts', import.meta.url), 'utf8')
@@ -84,12 +85,12 @@ function harness(apiOverrides: Record<string, unknown> = {}, allowed = true) {
     Error,
   })
   const runHook = exports.useInstructionTask as (options: {
-    motionStartAllowed: boolean; motionStartBlockedReason: string
+    motionStartAllowed: boolean; motionStartBlockedReason: string; enabled: boolean
   }) => InstructionTaskController
-  function render(motionAllowed = allowed) {
+  function render(motionAllowed = allowed, enabled = true) {
     cursor = 0
     effects = []
-    const controller = runHook({ motionStartAllowed: motionAllowed, motionStartBlockedReason: 'Telemetry stale' })
+    const controller = runHook({ motionStartAllowed: motionAllowed, motionStartBlockedReason: 'Telemetry stale', enabled })
     for (const effect of effects) effect()
     return controller
   }
@@ -101,6 +102,32 @@ function harness(apiOverrides: Record<string, unknown> = {}, allowed = true) {
   }
   return { render, tick, timers, requests }
 }
+
+test('standby pauses task polling and start restores it', () => {
+  const h = harness()
+  h.render().adopt('run-1', '会话任务')
+  h.render()
+  assert.equal(h.timers.size, 1)
+  h.render(true, false)
+  assert.equal(h.timers.size, 0)
+  h.render()
+  assert.equal(h.timers.size, 1)
+})
+
+test('conversation adoption polls the real run without overwriting newer updates for the same id', async () => {
+  const h = harness({ getAgentTask: async () => status({ state: 'done', summary: '真实结果' }) })
+  h.render().adopt('run-1', '会话任务')
+  h.render()
+  await h.tick()
+  const polled = h.render().task
+  assert.equal(polled?.status.state, 'done')
+  h.render().adopt('run-1', '重复快照')
+  assert.equal(h.render().task, polled)
+  h.render().adopt('run-2', '下一项任务')
+  assert.equal(h.render().task?.runId, 'run-2')
+  assert.equal(h.render().task?.instruction, '下一项任务')
+  assert.equal(h.render().task?.statusSource, 'ack')
+})
 
 test('idle dialogue reaches the owner when motion is blocked and reports idle without an execution ACK', async () => {
   const requests: Array<{ text: string; controlOnly?: boolean }> = []
@@ -465,6 +492,7 @@ test('the active task card retains an enabled dialogue composer when motion is b
     if (name === 'react') return { useRef: () => ({ current: null }), useState: (initial: unknown) => [stateSlot++ === 0 ? '现在做什么' : initial, () => {}] }
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx }
     if (name.endsWith('/instructionTask')) return instructionTask
+    if (name.endsWith('/navigationStatus')) return navigationStatus
     if (name.endsWith('.css')) return { default: {} }
     return require(name)
   } })
@@ -514,4 +542,45 @@ test('chat shows the current idle feedback once and drops it when dismissed or a
   const task: instructionTask.InstructionTask = { runId: 'run-2', instruction: '去门口', generation: 1, executor: 'agent',
     status: status({ run_id: 'run-2' }), statusSource: 'poll', cancelRequested: false, cancelError: '', pollError: '' }
   assert.doesNotMatch(render({ ...controller, task }), /当前没有正在执行的任务/)
+})
+
+test('non-scene workspaces hide the idle composer but retain active task controls and receipts', () => {
+  const require = createRequire(import.meta.url)
+  const react = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  const exports: Record<string, unknown> = {}
+  const code = ts.transpileModule(readFileSync(new URL('../src/components/InstructionTaskBar.tsx', import.meta.url), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText
+  runInNewContext(code, { exports, require: (name: string) => {
+    if (name.endsWith('/instructionTask')) return instructionTask
+    if (name.endsWith('/navigationStatus')) return navigationStatus
+    if (name.endsWith('.css')) return { default: {} }
+    return require(name)
+  } })
+  const idle = { task: null, receipt: null, sending: false, error: '', submit() {}, dismiss() {}, cancel() {} }
+  const render = (controller: object, showComposer = false): string => renderToStaticMarkup(react.createElement(exports.InstructionTaskBar, {
+    controller, locale: 'zh', showComposer, hasNativeTask: false, motionStartAllowed: true, motionStartBlockedReason: '',
+  }))
+  assert.equal(render(idle), '')
+  assert.match(render(idle, true), /想让机器人做什么/)
+  const task: instructionTask.InstructionTask = { runId: 'run-2', instruction: '去门口', generation: 1, executor: 'agent',
+    status: status({ run_id: 'run-2' }), statusSource: 'poll', cancelRequested: false, cancelError: '', pollError: '' }
+  const active = render({ ...idle, task })
+  assert.match(active, /去门口/)
+  assert.match(active, /结束任务/)
+  assert.doesNotMatch(active, /<input/)
+  const visible = (changes: Partial<AgentTaskStatusResponse>) => render({ ...idle, task: { ...task, status: status(changes) } }).split('<details')[0]
+  for (const state of ['FAILED', 'RECOVERING', 'PAUSED']) {
+    assert.match(visible({ navigation: { state, reason: 'local_blocked' } }), /局部路线受阻。/)
+  }
+  assert.match(visible({ state: 'failed', failure_reason: 'llm_timeout' }), /模型响应超时，任务没有继续执行。/)
+  assert.doesNotMatch(visible({ navigation: { state: 'EXECUTING', reason: 'path_active' } }), /Navigation status|导航状态/)
+  const unconfirmed = render({ ...idle, task: { ...task, statusSource: 'ack', status: status({ navigation: { state: 'FAILED', reason: 'local_blocked' } }) } }).split('<details')[0]
+  assert.doesNotMatch(unconfirmed, /局部路线受阻。/)
+  assert.match(render({ ...idle, sending: true }), /正在发送指令/)
+  assert.match(render({ ...idle, error: '服务未连接' }), /服务未连接/)
+  const receipt = render({ ...idle, receipt: { instruction: '现在什么状态', operation: 'query', message: '当前空闲' } })
+  assert.match(receipt, /当前空闲/)
+  assert.doesNotMatch(receipt, /<input/)
 })

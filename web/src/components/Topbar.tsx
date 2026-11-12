@@ -1,29 +1,27 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Activity, Box, Check, ChevronDown, ChevronUp, Gamepad2, GripVertical, ListChecks, Map, Navigation, Settings, SlidersHorizontal, Square, Workflow } from 'lucide-react'
-import type { SSEState, Tab } from '../types'
+import { Check, ChevronDown, ChevronUp, GripVertical, Map, MapPinned, Navigation, Settings, Square, X } from 'lucide-react'
+import type { SSEState, Tab, ToastKind } from '../types'
 import { isObservationMode } from '../services/observationMode.ts'
-import { mapLocalizationState, shortMapLabel } from '../services/mapLabel.ts'
+import { mapLocalizationLabel, mapLocalizationState, shortMapLabel } from '../services/mapLabel.ts'
 import { SettingsMenu } from './SettingsMenu'
+import { GeographicPlannerButton } from './GeographicPlanner'
+import { useMapSettings } from '../hooks/useMapSettings.ts'
 import { loadLayouts, saveLayouts } from './floatingWidgetLayout'
 import type { ResolvedTheme, Theme } from './useTheme'
 import { text, type Locale } from '../i18n'
 import styles from './Topbar.module.css'
 
 const WORKSPACE_PAGES = [
-  { key: 'scene', en: 'Scene', zh: '现场', icon: Box },
-  { key: 'console', en: 'Control', zh: '控制台', icon: Gamepad2 },
-  { key: 'map', en: 'Maps', zh: '地图', icon: Map },
-  { key: 'inspection', en: 'Tasks', zh: '巡检任务', icon: ListChecks },
-  { key: 'slam', en: 'Localization', zh: '定位诊断', icon: Activity },
-  { key: 'dataflow', en: 'Data', zh: '数据诊断', icon: Workflow },
-  { key: 'planner', en: 'Planning', zh: '规划参数', icon: SlidersHorizontal },
+  { key: 'mapping', en: 'Mapping', zh: '建图', icon: MapPinned },
+  { key: 'scene', en: 'Navigation', zh: '导航', icon: Navigation },
 ] as const
-const OPEN_DOCK_WIDTH = 920
-const COLLAPSED_DOCK_WIDTH = 380
+const INITIAL_DOCK_WIDTH = 380
 
 interface TopbarProps {
   sseState: SSEState
+  standby?: boolean
+  localNowS: number
   activeTab: Tab
   onTabChange: (tab: Tab) => void
   theme: Theme
@@ -32,16 +30,19 @@ interface TopbarProps {
   locale: Locale
   onLocaleChange: (locale: Locale) => void
   onStop: () => void
+  showToast: (message: string, kind?: ToastKind) => void
 }
 export function Topbar(props: TopbarProps) {
-  const { sseState, activeTab, onTabChange, locale } = props
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  // Keep the scene primary. The compact identity pill expands only on an explicit click.
+  const { sseState, activeTab, onTabChange, locale, standby = false } = props
+  const [localSettingsOpen, setSettingsOpen] = useState(false)
+  const [closedSettingsRequest, setClosedSettingsRequest] = useState(0)
+  const mapSettings = useMapSettings()
+  const settingsOpen = localSettingsOpen || (mapSettings?.request ?? 0) > closedSettingsRequest
+  // Mouse hover reveals the dock; touch and keyboard retain the explicit toggle.
   const [collapsed, setCollapsed] = useState(true)
   const [dragging, setDragging] = useState(false)
-  const [collapsedWidth, setCollapsedWidth] = useState(COLLAPSED_DOCK_WIDTH)
+  const [dockWidth, setDockWidth] = useState(INITIAL_DOCK_WIDTH)
   const dockRef = useRef<HTMLElement>(null)
-  const [now, setNow] = useState(() => Date.now())
   const [position, setPosition] = useState(() => {
     const layout = loadLayouts().operatorDock
     return { x: layout?.x ?? 16, y: layout?.y ?? 14 }
@@ -49,24 +50,16 @@ export function Topbar(props: TopbarProps) {
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null)
   const suppressClickRef = useRef(false)
   const workspaceMenu = useRef<HTMLDetailsElement>(null)
-  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const mapInfoMenu = useRef<HTMLDetailsElement>(null)
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false); setClosedSettingsRequest(mapSettings?.request ?? 0)
+  }, [mapSettings?.request])
   const observe = isObservationMode()
-  const currentPage = WORKSPACE_PAGES.find(page => page.key === activeTab) ?? WORKSPACE_PAGES[0]
+  const currentPage = WORKSPACE_PAGES.find(page => page.key === activeTab) ?? WORKSPACE_PAGES[1]
   const activeMap = sseState.session?.active_map?.trim() || null
   const mapLabel = shortMapLabel(activeMap) ?? text(locale, 'No active map', '未激活地图')
-  const localizationState = mapLocalizationState(sseState, now / 1000)
-  const localizationLabel = {
-    disconnected: text(locale, 'Disconnected', '连接断开'),
-    waiting: text(locale, 'Waiting for data', '等待数据'),
-    stale: text(locale, 'Data stale', '数据已过期'),
-    tracking: text(locale, 'Tracking', '定位跟踪中'),
-    initializing: text(locale, 'Initializing', '初始化中'),
-    relocalizing: text(locale, 'Relocalizing', '重定位中'),
-    degraded: text(locale, 'Degraded', '定位退化'),
-    lost: text(locale, 'Lost', '定位丢失'),
-    no_odometry: text(locale, 'Waiting for odometry', '等待里程计'),
-    unknown: text(locale, 'Unknown', '未知'),
-  }[localizationState]
+  const localizationState = mapLocalizationState(sseState, props.localNowS)
+  const localizationLabel = mapLocalizationLabel(localizationState, locale)
   const sessionMode = sseState.session?.mode
     ? text(locale, {
       idle: 'Idle',
@@ -80,35 +73,30 @@ export function Topbar(props: TopbarProps) {
       exploring: '探索',
     }[sseState.session.mode])
     : null
-  const compactContext = [activeMap ?? mapLabel, sessionMode].filter(Boolean).join(', ')
-  const connectionNotice = sseState.connected ? '' : sseState.lastTruthAt
-    ? text(locale, 'Connection lost · reconnecting', '连接中断，正在重连')
-    : text(locale, 'Waiting for robot connection', '等待机器人连接')
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
+  const compactContext = [text(locale, currentPage.en, currentPage.zh), activeMap ?? mapLabel, sessionMode].filter(Boolean).join(', ')
+  const connectionLabel = standby ? text(locale, 'Standby', '待机')
+    : sseState.connected ? text(locale, 'Realtime data connected', '实时数据已连接')
+      : text(locale, 'Realtime data disconnected', '实时数据未连接')
+  const connectionNotice = standby || sseState.connected ? '' : sseState.lastTruthAt
+    ? text(locale, 'Realtime data connection lost · reconnecting', '实时数据连接中断，正在重连')
+    : text(locale, 'Waiting for runtime data', '等待运行服务数据')
 
   useEffect(() => {
     const element = dockRef.current
-    if (!collapsed || !element) return
-    const observer = new ResizeObserver(() => setCollapsedWidth(element.getBoundingClientRect().width))
+    if (!element) return
+    if (collapsed) for (const menu of element.querySelectorAll<HTMLDetailsElement>('details[data-hover-menu]')) menu.open = false
+    const observer = new ResizeObserver(() => setDockWidth(element.getBoundingClientRect().width))
     observer.observe(element)
     return () => observer.disconnect()
   }, [collapsed])
 
-  const dockWidth = useCallback((isCollapsed: boolean) => {
-    const available = Math.max(0, window.innerWidth - 16)
-    return Math.min(isCollapsed ? collapsedWidth : OPEN_DOCK_WIDTH, available)
-  }, [collapsedWidth])
   const dockHeight = useCallback((isCollapsed: boolean) => {
     if (isCollapsed) return 56
     return window.innerWidth <= 700 ? 370 : 320
   }, [])
 
   const clampPosition = useCallback((x: number, y: number) => {
-    const width = dockWidth(collapsed)
+    const width = Math.min(dockWidth, Math.max(0, window.innerWidth - 16))
     const height = dockHeight(collapsed)
     return {
       x: Math.max(8, Math.min(Math.max(8, window.innerWidth - width - 8), x)),
@@ -156,7 +144,7 @@ export function Topbar(props: TopbarProps) {
       operatorDock: {
         x: savedPosition.x,
         y: savedPosition.y,
-        w: dockWidth(collapsed),
+        w: dockWidth,
         h: dockHeight(collapsed),
         z: 20,
       },
@@ -169,28 +157,46 @@ export function Topbar(props: TopbarProps) {
     return () => window.removeEventListener('resize', onResize)
   }, [clampPosition])
 
-  useEffect(() => {
-    const dismissOutside = (event: PointerEvent) => {
-      const menu = workspaceMenu.current
-      if (menu?.open && !menu.contains(event.target as Node)) menu.open = false
-    }
-    const dismissEscape = (event: KeyboardEvent) => {
-      const menu = workspaceMenu.current
-      if (event.key === 'Escape' && menu?.open) {
-        menu.open = false
-        menu.querySelector('summary')?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', dismissOutside)
-    document.addEventListener('keydown', dismissEscape)
-    return () => {
-      document.removeEventListener('pointerdown', dismissOutside)
-      document.removeEventListener('keydown', dismissEscape)
-    }
-  }, [])
-
   const dockPosition = clampPosition(position.x, position.y)
   const dockStyle = { left: dockPosition.x, top: dockPosition.y }
+
+  useEffect(() => {
+    const dock = dockRef.current
+    if (!dock) return
+    let opening: ReturnType<typeof setTimeout>
+    let closing: ReturnType<typeof setTimeout>
+    const clear = () => { clearTimeout(opening); clearTimeout(closing) }
+    const enter = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse') return
+      clear()
+      opening = setTimeout(() => { if (!dragRef.current) setCollapsed(false) }, 220)
+    }
+    const leave = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse') return
+      clear()
+      closing = setTimeout(() => {
+        if (dragRef.current || (dock.contains(document.activeElement) && document.activeElement?.matches(':focus-visible'))) return
+        setCollapsed(true)
+      }, 180)
+    }
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || dock.querySelector('details[open]')) return
+      clear()
+      setCollapsed(true)
+      requestAnimationFrame(() => dock.querySelector<HTMLButtonElement>('button[data-dock-drag]')?.focus())
+    }
+    dock.addEventListener('pointerenter', enter)
+    dock.addEventListener('pointerleave', leave)
+    dock.addEventListener('pointerdown', clear)
+    dock.addEventListener('keydown', key)
+    return () => {
+      clear()
+      dock.removeEventListener('pointerenter', enter)
+      dock.removeEventListener('pointerleave', leave)
+      dock.removeEventListener('pointerdown', clear)
+      dock.removeEventListener('keydown', key)
+    }
+  }, [])
 
   return (
     <>
@@ -209,7 +215,7 @@ export function Topbar(props: TopbarProps) {
         }}>
         <Navigation className={styles.compactMark} size={22} strokeWidth={1.9} aria-hidden="true" />
         <span className={styles.compactIdentity}>
-          <span className={styles.compactMapName} aria-hidden="true">{mapLabel}</span>
+          <span className={styles.compactMapName} aria-hidden="true">{text(locale, currentPage.en, currentPage.zh)}{activeMap ? ` · ${mapLabel}` : ''}</span>
           {connectionNotice && <span id="operator-connection-notice" className={styles.compactConnection} role="status">{connectionNotice}</span>}
         </span>
         <ChevronDown className={styles.compactChevron} size={18} aria-hidden="true" />
@@ -218,18 +224,15 @@ export function Topbar(props: TopbarProps) {
         <span className={styles.dragHandle} data-dock-drag title={text(locale, 'Drag controls', '拖动操作坞')} aria-hidden="true">
           <GripVertical size={13} />
         </span>
-        <button className={styles.logo} onClick={() => {
-          if (collapsed) setCollapsed(false)
-          else if (activeTab === 'scene') setCollapsed(true)
-          else onTabChange('scene')
-        }}
-          aria-label={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, activeTab === 'scene' ? 'LingTu — collapse controls' : 'LingTu — return to scene', activeTab === 'scene' ? 'LingTu · 收起操作坞' : 'LingTu · 返回现场')}
-          title={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, activeTab === 'scene' ? 'Collapse controls' : 'Return to scene', activeTab === 'scene' ? '收起操作坞' : '返回现场')}>
+        <button className={styles.logo} onClick={() => setCollapsed(value => !value)}
+          aria-label={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, 'Collapse controls', '收起操作坞')}
+          title={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, 'Collapse controls', '收起操作坞')}>
           <Navigation size={24} strokeWidth={1.8} aria-hidden="true" />
         </button>
         <nav className={styles.workspace} aria-label={text(locale, 'Workspace', '工作区')}>
-        {observe ? <span className={styles.viewLabel}>{text(locale, 'Scene', '现场')}</span> : (<>
+        {observe ? <span className={styles.viewLabel}>{text(locale, 'Observation', '只读监控')}</span> : (<>
           <details ref={workspaceMenu} className={styles.workspaceMenu} name="lingtu-menu"
+            data-hover-menu
             onBlur={event => {
               if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
             }}
@@ -253,8 +256,7 @@ export function Topbar(props: TopbarProps) {
               <ChevronDown size={13} />
             </summary>
             <div className={styles.workspacePanel} role="menu" aria-label={text(locale, 'Choose workspace', '选择工作区')}>
-              {WORKSPACE_PAGES.map((page, index) => <div key={page.key}>
-                {index === 4 && <div className={styles.groupLabel}>{text(locale, 'Diagnostics', '诊断与调试')}</div>}
+              {WORKSPACE_PAGES.map(page => <div key={page.key}>
                 <button role="menuitem" aria-current={activeTab === page.key ? 'page' : undefined}
                   onClick={() => {
                     onTabChange(page.key)
@@ -271,51 +273,68 @@ export function Topbar(props: TopbarProps) {
             </div>
           </details>
         </>)}
+        {!observe && <GeographicPlannerButton locale={locale} className={styles.pageButton} />}
         </nav>
         <div className={styles.right}>
-        <span className={sseState.connected ? styles.online : styles.offline} role="status"
-          title={text(locale, 'Realtime connection', '实时连接状态')}>
-          {sseState.connected ? text(locale, 'Connected', '已连接') : text(locale, 'Disconnected', '未连接')}
-        </span>
+        <details ref={mapInfoMenu} className={styles.mapInfoMenu} name="lingtu-menu"
+          data-hover-menu
+          onBlur={event => {
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false
+          }}>
+          <summary className={styles.connectionTrigger} aria-label={text(locale, 'Map and connection info', '地图与连接信息')}
+            title={text(locale, 'Map and connection info', '地图与连接信息')}>
+            <span className={standby || sseState.connected ? styles.online : styles.offline} role="status">
+              {connectionLabel}
+            </span>
+            <ChevronDown size={12} aria-hidden="true" />
+          </summary>
+          <section className={styles.mapContext} aria-label={text(locale, 'Current map', '当前地图')}>
+            <div className={styles.contextHeading}>
+              <span className={styles.contextBrand}>{'LingTu'}</span>
+              <span className={styles.contextLabel}>{text(locale, 'Current map', '当前地图')}</span>
+              <button className={styles.iconButton} aria-label={text(locale, 'Close map info', '关闭地图信息')}
+                onClick={() => {
+                  if (mapInfoMenu.current) {
+                    mapInfoMenu.current.open = false
+                    mapInfoMenu.current.querySelector('summary')?.focus()
+                  }
+                }}><X size={17} aria-hidden="true" /></button>
+            </div>
+            <strong className={styles.mapName} title={activeMap ?? undefined}>{mapLabel}</strong>
+            <dl className={styles.mapFacts}>
+              {sessionMode && <div><dt>{text(locale, 'Mode', '模式')}</dt><dd>{sessionMode}</dd></div>}
+              <div><dt>{text(locale, 'Realtime data', '实时数据')}</dt><dd>{connectionLabel}</dd></div>
+              <div><dt>{text(locale, 'Localization', '定位')}</dt><dd data-attention={['stale', 'degraded', 'lost'].includes(localizationState) || undefined}>{localizationLabel}</dd></div>
+            </dl>
+            {activeMap && <details className={styles.mapIdentity}>
+              <summary>{text(locale, 'Map identifier', '地图标识')}</summary>
+              <code>{activeMap}</code>
+            </details>}
+            {!observe && <button className={styles.mapAction} onClick={() => {
+              onTabChange('map')
+              setCollapsed(true)
+            }}>
+              <Map size={17} strokeWidth={1.7} aria-hidden="true" />
+              {text(locale, 'Open maps', '打开地图库')}<ChevronDown size={14} aria-hidden="true" />
+            </button>}
+          </section>
+        </details>
         {observe ? <a className={styles.pageButton} href="/" title={text(locale, 'Open goal selection; no motion until you confirm a goal', '打开选点工作区，确认目标后才会运动')}>
           <Navigation size={16} />{text(locale, 'Navigate', '进入导航')}
         </a> : null}
         {sseState.safetyState?.estop && <span className={styles.estop}>{text(locale, 'E-stop active', '急停中')}</span>}
         <button className={styles.iconButton} aria-label={text(locale, 'Settings', '设置')}
-          aria-expanded={settingsOpen} onClick={() => setSettingsOpen(value => !value)}><Settings size={18} strokeWidth={1.7} /></button>
+          aria-expanded={settingsOpen} onClick={() => settingsOpen ? closeSettings() : setSettingsOpen(true)}><Settings size={18} strokeWidth={1.7} /></button>
         <button className={styles.iconButton} aria-label={text(locale, 'Collapse controls', '收起操作坞')}
           title={text(locale, 'Collapse controls', '收起操作坞')}
           onClick={() => setCollapsed(true)}><ChevronUp size={18} strokeWidth={1.7} /></button>
         </div>
-        <SettingsMenu open={settingsOpen} onClose={closeSettings}
+        <SettingsMenu open={settingsOpen} onClose={closeSettings} sseState={sseState} localNowS={props.localNowS} showToast={props.showToast}
           theme={props.theme} resolvedTheme={props.resolvedTheme} onThemeChange={props.onThemeChange}
           locale={locale} onLocaleChange={props.onLocaleChange} />
       </div>
       <div id="scene-actions-slot" className={styles.sceneActionsSlot}
-        aria-label={text(locale, 'Scene actions', '现场操作')} />
-      {!collapsed && <section className={styles.mapContext} aria-label={text(locale, 'Current map', '当前地图')}>
-        <div className={styles.contextHeading}>
-          <span className={styles.contextBrand}>{'LingTu'}</span>
-          <span className={styles.contextLabel}>{text(locale, 'Current map', '当前地图')}</span>
-        </div>
-        <strong className={styles.mapName} title={activeMap ?? undefined}>{mapLabel}</strong>
-        <dl className={styles.mapFacts}>
-          {sessionMode && <div><dt>{text(locale, 'Mode', '模式')}</dt><dd>{sessionMode}</dd></div>}
-          <div><dt>{text(locale, 'Connection', '连接')}</dt><dd>{sseState.connected ? text(locale, 'Connected', '已连接') : text(locale, 'Disconnected', '未连接')}</dd></div>
-          <div><dt>{text(locale, 'Localization', '定位')}</dt><dd data-attention={['stale', 'degraded', 'lost'].includes(localizationState) || undefined}>{localizationLabel}</dd></div>
-        </dl>
-        {activeMap && <details className={styles.mapIdentity}>
-          <summary>{text(locale, 'Map identifier', '地图标识')}</summary>
-          <code>{activeMap}</code>
-        </details>}
-        {!observe && <button className={styles.mapAction} onClick={() => {
-          onTabChange('map')
-          setCollapsed(true)
-        }}>
-          <Map size={17} strokeWidth={1.7} aria-hidden="true" />
-          {text(locale, 'Open maps', '打开地图库')}<ChevronDown size={14} aria-hidden="true" />
-        </button>}
-      </section>}
+        aria-label={text(locale, 'Workspace actions', '当前业务操作')} />
     </header>
       {!observe && createPortal(<button className={styles.emergencyStop} onClick={props.onStop}
         aria-label={text(locale, 'Emergency stop', '紧急停止机器人')}

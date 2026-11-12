@@ -1,5 +1,355 @@
 # LingTu Web — UI and interaction design
 
+## Business workspaces — 2026-11-10 (current)
+
+Primary navigation contains four workspaces: Control, Mapping, Navigation and
+Inspection. The capsule names the current workspace; map identity and the actual
+runtime Product remain separate context. Selecting a workspace only changes the
+view. Starting mapping, using a map and dispatching a task retain explicit actions.
+
+- Control: camera, an explicit keyboard/gamepad entry, and robot status. Manual
+  input mounts only after the operator opens it and releases on leaving the page.
+- Mapping: start, save and saved maps. The mapping page cannot pick navigation goals.
+- Navigation: choose a map, localize and choose a goal. Real mapping mode still
+  blocks goal dispatch. Point and heading preview keep their existing admission.
+- Inspection: existing route, task progress and result workbench.
+
+Map management is a child of Mapping or Navigation and returns to its origin.
+Scanning overlays, follow-camera and viewpoint controls belong in the right-side
+Display menu, not alongside business actions. Keep the independent Stop control and
+current task feedback available across workspaces.
+
+Localization diagnostics, data diagnostics and planning parameters open inside
+Settings / Diagnostics. They reuse existing data sources and controls, offer a back
+action, and do not become primary workspaces. Existing satellite/fusion details stay
+available within localization diagnostics.
+
+## Robot conversation — 2026-11-10
+
+The conversation composer puts input above a single compact toolbar: attachments,
+history, model name, thinking level and send. Model and thinking choices open
+upward from their current values, with keyboard navigation and Escape dismissal.
+The thinking glyph adapts T3 Code's MIT-licensed leaf component; its fixed source
+and license live beside `components/agentConversation/EffortGlyph.tsx`.
+Options come from the active Agent provider; changing the model
+changes its supported thinking choices. Keep the selected model between messages.
+Enter sends, Shift+Enter inserts a newline, and IME composition never sends a turn.
+Pending retries retain their original message ID, model, thinking and attachments.
+
+Attachment chips show name, size and removal; history keeps their metadata.
+The current limits are four files per message and 10 MiB per file. Support text,
+code, images and Kimi document extraction without adding a separate upload screen.
+Assistant replies use the existing escaped Markdown renderer. Long history scrolls
+inside the card while the composer remains usable on short screens. Connection
+failures describe the actual unavailable service rather than showing raw backend
+errors. Tool progress and final replies use conversation polling; token streaming
+is not yet presented by this card. Chat availability does not establish robot
+motion readiness.
+
+During point-cloud editing the conversation composer is hidden, while its draft,
+history and any active run remain owned by the existing hook. Task feedback and
+the independent robot Stop remain available. Leaving editing restores the composer.
+
+## Light surfaces and hover intent — 2026-11-09
+
+The scene canvas is white with a light gray grid. Preserve the multicolor point-cloud
+palette. Cards use white surfaces, subtle borders and shadows; selected controls use
+a pale blue-gray fill with dark text. Camera imagery retains its original pixels.
+
+The launcher and transient menus wait 220 ms before opening on mouse hover and close
+180 ms after the pointer leaves the trigger and content. Crossing into the content
+cancels closing. A click immediately after hover does not reverse the opening.
+Keyboard and touch use native activation; Escape dismisses the innermost surface.
+Map switching, cloud settings and the layer inspector open explicitly by click so
+passing the pointer does not replace the working view. Explicit configuration panels
+stay open until closed; transient hover menus disappear on exit.
+
+## Operating controls — 2026-11-09 (current)
+
+Scene tools open Record or History directly. There is no separate operation overview,
+task summary grid, or second live camera. The map PiP owns live observation; task and
+robot details stay in their existing panels. Record/History use compact header actions,
+with heading focus after switching. Diagnostics mount only while expanded.
+
+The Include video checkbox sits beside recording controls so the operator can see
+what will be captured before starting. Previewing the camera does not enable video
+recording. Preserve recorder readiness, incomplete-session recovery, selection,
+history playback and download checks. Missing data remains unavailable, not zero.
+
+Connection and localization labels share the timestamped snapshot interpretation.
+Manual status refresh updates the same source as live events. Connection alone does
+not imply localization or motion readiness. Fresh later events replace refreshed data.
+
+The current task owns cancellation. Its visible cancel action keeps confirmation,
+request progress and waiting-for-stop feedback until a terminal result arrives.
+Instruction-owned tasks retain their own parent-task cancellation. Software Stop is
+independent. Failed or blocked tasks expose one short reason in the collapsed task
+bar; identifiers and raw diagnostics remain in details.
+
+## Map gallery — 2026-11-10
+
+The saved-map workspace uses the full viewport. The library attaches to the left
+viewport edge and display settings attach to the right, with full-height panels.
+Mouse hover or native click/keyboard activation slides the relevant panel out,
+and leaving hides it. Each panel can be pinned independently, with the preference
+retained in this browser. Panel opening and closing preserve the map framing. The initial
+visual reference was Raul's [Shader Dial](https://www.inspora.design/posts/shader-dial).
+Library rows show a thumbnail, name, file size, update time and status icons. Cleaning
+state has an icon with a tooltip and accessible label, not a repeated sentence.
+Search filters the library rows while retaining the selected map and camera view.
+Navigation-artifact icons use green for ready, blue for processing and amber for
+attention, retaining their shape and accessible label. Point counts appear below
+the list. Patch counts, save history and management actions remain in details.
+
+REA captured the reference page and its embedded video; the original interactive
+shader source and timing are not available. Hover, keyboard focus and touch
+selection load the selected map's complete PCD in the same workspace. Selection
+uses the existing read-only artifact API and preserves explicit navigation
+admission. All MapView entry points use this integrated viewer. Editing returns to
+it. Each library row offers rename for that map, subject to management access and
+the active-map restriction. A compact, persistent tool strip exposes Crop, Clean,
+No-go and the pending Surface Fill entry. Crop opens the existing editor in box
+selection mode. Clean opens its cleaning parameters after the full cloud loads.
+No-go directly targets its section in Map Settings. Selection-specific delete/keep
+actions and draft undo/save controls appear in the editor. Crop and Clean now run
+on the same gallery canvas and the already-loaded complete cloud, retaining the
+camera, zoom, point size, opacity, height cutoff, grid and source color range.
+Entering selection never forces a top view. A projected rectangle creates a 3D
+bounding box; the orange box and highlighted points show its actual scope. This
+can include front and back points along the view direction and is not an occlusion
+mask. Height and XY bounds remain adjustable. The selection card is light and
+compact, draggable by its header, keyboard movable, and constrained above the
+editor footer and within the viewport. Side library/settings docks hide while
+editing to preserve the selected source. Original/draft, undo, recovery, save-as
+and navigation rebuild retain their existing transaction behavior. Display controls remain
+in the right panel. Rebuild and navigation actions stay in map details.
+
+Manual surface filling means drawing ground support or wall blocking geometry.
+The tool strip marks it as pending until drawing, persistence and native navigation
+consumption are connected. Automatic support filling is a separate preview feature.
+No-go editing currently uses numeric 3D box bounds.
+
+Thumbnails come from the saved map's read-only preview API, including inactive
+maps. Sample at most 24,000 points, draw a transparent isometric image for the row
+and use those sampled coordinates for quick feedback while the full file loads.
+Cache thumbnails by map name and content epoch for the page lifetime, serialize
+native reads and load rows when visible. Complete PCDs use the existing versioned
+artifact reader, with parsing and bounds calculation in a worker. Retain at most
+two decoded full clouds for selection back and forth. A 160 ms selection delay
+avoids full downloads for rows the pointer only crosses. Failed complete reads
+keep their error visible and cannot advertise the sampled preview as complete.
+
+The centre uses OrbitControls and the actual saved PCD or native OctoMap. The full
+PCD layer keeps its typed coordinate buffer, transforms the coordinate basis once
+on the object and computes height colors on the GPU. Shared coordinate and color
+functions remain authoritative. Bounds from the worker also supply a conservative
+bounding sphere, avoiding another full scan during first rendering.
+Drag to rotate and scroll or pinch to zoom. Keyboard arrows pan, +/− zoom, and Home
+restores the initial view; there is no central button strip or map-name caption.
+A small, uncaptioned XYZ indicator sits above and to the right of Stop and follows
+the camera in the map's coordinate frame, with red X,
+green Y and blue Z up. Use thin axis lines and colored letters with no circular
+backgrounds. Window resizing preserves orientation and relative
+zoom. Camera changes share one animation frame with the map and XYZ indicator.
+Orbit damping uses the existing scene's 0.1 factor and respects reduced motion.
+The current full cloud keeps the same vertices, point size and opacity while
+rotating, zooming, damping and idle. Interaction does not switch to a sampled
+index or schedule a later density restoration. Cropping and cleaning still
+display their current draft data. The loaded coordinates and stored map retain
+their full data.
+An idle saved-map view needs no continuous render loop.
+
+The settings panel uses black text on white, compact single-row sliders with
+2 px muted-blue tracks and 9 px knobs, and smaller selection buttons. Keep their
+keyboard focus and touch hit areas. Both panels slide over 460 ms with deceleration
+and a short content reveal. Rows use an animated selection mark and thumbnail
+feedback. Reduced-motion preferences disable transitions. The panel switches
+between the complete cloud and the actual saved OctoMap,
+and directly controls point size, opacity, upper display height, reference grid
+spacing and displayed voxel size. Voxel sizes aggregate occupied native leaves
+for display only; they do not rebuild or change map resolution. A map without
+OctoMap disables that choice. Switching maps clears the old height cutoff.
+The full-height slider endpoint always shows all source heights.
+
+Missing durable cleaning evidence says unknown; filenames and unrelated save history are
+not evidence. The native metadata timestamp describes processing/update time,
+not original acquisition time. Missing timestamps stay unrecorded.
+
+Details and actions retain existing save history, retry, processing, optimization,
+download, rename and deletion behavior. Unpublished saves remain discoverable by
+name. An old successful job cannot mark a missing map ready. Page-owned polling
+continues while details are closed. Readiness never authorizes motion.
+
+The Scene workspace retains its compact map picker. Both surfaces use the same
+status meanings: check for ready navigation artifacts, spinner for processing,
+and an alert for incomplete data or unavailable status. Selection and readiness
+remain separate. Popovers stay within the viewport on phones; their contents
+scroll when needed. Closing a menu never hides the underlying map workspace.
+Load failures remain visible even while the library menu is closed.
+
+The top dock sizes to its actual content in both collapsed and expanded states.
+An empty scene-action slot is hidden. Position clamping and saved layout width use
+the measured width, without reserving an empty 920 px bar on other workspaces.
+
+The idle instruction composer belongs to Scene. Saved maps, recording, tuning
+and inspection management do not show it. Existing task state, stop/end actions,
+pending submission feedback and receipts remain visible across workspaces;
+the console retains its own chat input. Browsing maps never starts a new task.
+
+## Configuration cards — 2026-11-09 (current)
+
+The supplied Acme usage-card reference now guides cloud-display and map-parameter
+cards: a quiet gray shell, white inner surface, white raised segmented selection,
+prominent values with secondary units, and a gray action footer. Blue is a control
+accent; the approved point-cloud height colors and saved values stay unchanged.
+Use real controls only, without decorative usage charts or invented metrics.
+Cloud settings may cover the task composer while open, but remain below Stop.
+Cloud-display labels sit above prominent values and each 44 px slider. Keep the
+palette selector in the header. Hover and focus highlight the associated parameter;
+values and the rendering update immediately, without counting animations. Hide
+redundant group legends visually while retaining their accessible names, and
+keep the default panel compact enough to show its footer without scrolling.
+Saved-cloud settings offer height-based color palettes only. Remove the redundant
+height/monochrome switch; old monochrome preferences return to multicolor height
+without resetting point size, opacity, background or grid.
+
+Settings categories share a sliding selected surface (220 ms). Scene, legend,
+preview notes and no-go disclosures interpolate their natural height with native
+details semantics. Reduced-motion preferences remove these transitions. Browsers
+without intrinsic-size interpolation keep immediate functional disclosure. Keep
+rendered values immediate; animation must not delay parameter application.
+
+## Stream usage — 2026-11-09
+
+The compact revision uses a 960 px workbench: a maximum 440 px left column holds
+bandwidth, filters and streams; the right column holds camera and the selected
+stream inspector. Stack the columns below 760 px. Use one UI font family throughout
+this workbench, 13 px body/secondary text, 16 px headings and 28 px primary values;
+retain SVG axis scaling for legibility. The bandwidth card has a single surface,
+one summary row, a short proportion bar and compact category labels. A fixed footer
+shows coverage or the highlighted category without changing the card's geometry.
+No-frame video uses a compact status row; it keeps the measurable video element and
+retry controls. Sampling explanations and raw fields remain available in disclosures.
+
+The live Data workspace places a bandwidth card above the stream list. Its total
+and stacked segments summarize observed bytes per second by catalog category,
+independently of the list filter. Report observed/catalog coverage; missing or stale
+observations are unavailable, while measured zero remains zero. Do not add message
+frequencies across categories or imply day/month history without stored aggregates.
+
+Hover and keyboard focus link segments, category labels and matching stream rows.
+Clicking a category toggles the existing filter; viewing a stream selects its
+inspector. Neither action changes recording checkboxes. Keep unhighlighted text
+readable, reserve a fixed readout area, and keep segment hit regions stable during
+highlight animation. Preview data belongs only to the explicitly labelled test page.
+
+The idle instruction composer uses the same neutral shell, white input and blue
+send action. Omit the redundant heading when it has no close control, keep 44 px
+input/send targets, and let errors or status text expand its natural height.
+Examples only fill the input. Task feedback, receipts and details use theme colors
+with semantic warning/error text; retain their existing lifecycle controls.
+
+## Bento surfaces and soft-glass choices — 2026-11-08
+
+This direction supersedes the earlier warm-charcoal confirmation treatment.
+Task bars and task confirmations use neutral theme-aware surfaces, compact rounded
+corners and contrasting circular icons. Confirmed task state retains its text,
+small color cue and restrained motion; no completion percentage is inferred.
+Point-size and opacity cards emphasize their existing numeric values and thin
+colored native sliders. The labels remain associated with the range inputs.
+The two parameter cards share one row; their native slider hit areas remain44px.
+Background choices use compact44px rows with icon and label side by side. Appearance
+settings reduce section padding and cap theme previews at84px without cropping;
+only the appearance tab drops the fixed minimum panel height.
+
+Settings categories sit beside the dialog title, with the close control fixed at
+the far end. Long localized labels scroll within the category strip on narrow
+screens. The scene dock groups spatial, top-down and fit-map controls at its right
+edge as distinct 40 px icons with accessible names and hover titles. Mapping menus
+retain their text labels. Preserve the 920 px dock width and existing drag bounds.
+
+The LingTu map-information card starts closed independently of the scene dock.
+The connection-status disclosure opens it on demand; its close control, Escape,
+outside click and dock collapse dismiss it. Keep measured connection/localization
+values and the existing map-library entry unchanged.
+
+The right-side island contains camera, layers and display as direct 44 px actions
+in one compact 52 px row. Camera has one show/hide entry and a short truthful
+status. Before a frame is available, keep its measurable media container mounted
+but transparent; do not show an empty preview or enlargement. Live video opens
+below the stable island. Teleoperation stays a separate action. Menus remain
+outside the clipped media area, and compact windows avoid the expanded dock.
+
+Map settings use a two-column grid for the four surface-preview parameters, with
+units beside short labels. Keep preview-only scope visible; details and no-go
+coordinates expand on demand. Do not change numeric bounds or map mutation gates.
+Modal focus traversal includes disclosure summaries and excludes closed content.
+
+## Approved saved-cloud appearance and drag — 2026-11-09
+
+Keep the user's approved saved-cloud preset: multicolor height palette, 1.1 CSS px
+points, 29% opacity, theme background and coordinate grid. Height colors remain
+blue → cyan → green → yellow → red, with the existing per-map percentile display
+range. Stored user choices override defaults; reset uses this approved preset.
+The preset is shared by saved-map and recording cloud views, not by world-unit
+live-cloud rendering. Three-dimensional dragging rotates near-side geometry with
+the pointer horizontally and vertically; preserve 2D panning and click thresholds.
+
+Theme and point-cloud background choices use a localized, very pale peach/violet
+surface: quiet dashed unselected tiles, a brighter selected tile and a top-right
+round check. Preserve theme previews and native radio/checkbox semantics. The
+glass appearance is drawn within the choice group; the scene behind it stays
+sharp. Do not copy a popover pointer onto a centered settings dialog.
+
+References: [Bento2](https://www.shadcnblocks.com/block/bento2) and
+[Kyle Thacker's soft-glass picker](https://www.inspora.design/posts/soft-glass-workspace-picker).
+REA public-page/video observations guide the visual implementation; private
+component source and original animation timing were not obtained.
+
+## Task card and confirmation — 2026-11-08
+
+The current native navigation task uses a shallow borderless bar in the existing
+SceneView task slot or global task slot. Confirmed execution has two slow crossing
+cyan light fields; paused feedback is still amber, failure is a soft red pulse.
+Pending requests and stale feedback do not animate as execution. Reduced motion
+keeps state color without movement.
+
+Resume and cancellation use the shared product ConfirmModal, not browser confirm.
+Keep one title, one consequence sentence and two actions. Short confirmations use
+a compact 344 px opaque themed surface, 18 px padding/corners and aligned copy.
+Input forms retain 380 px. The backdrop only dims by 8%; neither it nor the dialog
+blurs the workspace. There is no outer border or duplicate close icon. Native
+dialog focus starts on the back action and returns to the opener on dismissal.
+Confirmation belongs to the task that opened it; check current task and motion
+admission again before dispatch. Accepted requests still await robot confirmation.
+
+Next UI work, in order:
+
+- [x] Integrate the animated task bar into the existing production task slots.
+- [x] Replace task browser confirmations and unify the shared confirmation surface.
+- [ ] Reveal one translated failure reason on the task bar; keep IDs and raw diagnostics in details.
+- [ ] Make Browse / Select target discoverable without opening the more menu.
+- [ ] Check and then adjust short-screen coexistence of task details, goal/heading controls and camera.
+
+Full-page verification uses the real App with local task data and disconnected
+transports. It establishes presentation and interaction, not field motion readiness.
+
+### Inspora reference refinement — 2026-11-08
+
+Reference: https://www.inspora.design/posts/agent-dashboard (Jessy Barret).
+REA observed a motion video, not DOM task controls. Reuse its warm charcoal,
+rounded row selection and small orange accents; transition durations here are
+local choices, not recovered source values.
+
+Task confirmations use a compact opaque warm charcoal surface and amber primary
+action, while other shared dialogs retain their theme. Backgrounds stay sharp.
+Appearance theme cards use a borderless selected surface and a small rounded
+check. Point-cloud background radios use a two-column selection grid; coordinate
+grid keeps its native checkbox with a small orange check and row feedback.
+Selection means a real preference is selected, never that a robot task completed.
+Preserve radio/checkbox keyboard behavior, existing callbacks, 44 px targets and
+reduced-motion support. Do not copy the video's task-removal effect onto settings.
+
 ## Connection feedback and responsive workspace — 2026-10-22
 
 The compact map launcher owns the disconnected connection notice. Before the
@@ -167,8 +517,10 @@ themselves around the current task instead of turning the scene into a dashboard
 
 - The map or point cloud fills the workspace. Do not reserve permanent columns,
   full-width status bars, explanatory banners, or a large settings panel around it.
-- The top-left launcher is a compact white capsule. It opens on click and contains
-  navigation between workspaces and uncommon actions. It does not open on hover.
+- The top-left launcher is a compact white capsule. Mouse hover or click expands
+  it. Workspace, map-information and display dropdowns also open on mouse hover;
+  touch and keyboard keep their native click/activation behavior. Hover only
+  reveals choices: selecting a workspace or executing an action remains explicit.
 - The camera appears by default as a compact top-right picture-in-picture card.
   It has one visible close/reopen control. Opening it subscribes to media only;
   it does not start a camera process or recording.
@@ -226,7 +578,7 @@ legend, toast, or status card.
 Use the shared tokens and self-hosted fonts in `src/App.css`.
 
 - Light workspace: `#f4f3ef`; white surfaces; `#202321` primary text; `#626761`
-  secondary text. The map canvas may retain its dark spatial background.
+  secondary text. The scene canvas uses a white spatial background and light gray grid.
 - Dark workspace: `#181818` canvas; `#212121` surfaces; `#ededed` text.
 - Normal controls are monochrome. Muted amber marks a relevant hold or warning.
   Red is reserved for Stop, errors, and destructive actions. Point-cloud palettes
@@ -301,7 +653,7 @@ that the full collision geometry is clear. A reference grid is not a live map.
 The saved-map viewer uses the full canvas and small floating controls. The point-cloud
 inspector starts closed and contains only these groups:
 
-- Color: height Z or a single color. Color never implies a semantic class.
+- Color: multicolor height Z palettes. Color never implies a semantic class.
 - Point rendering: point size and opacity with aligned values and units.
 - Scene: background and coordinate grid, collapsed until opened.
 - Display height: an upper map-Z cutoff with a readable slider and editable metre
@@ -367,3 +719,34 @@ navigation, real camera freshness, robot stop, accessibility conformance, or dep
 The 2026-10-18 implementation review uses the retained 903 PCD and an explicitly
 recorded NX frame. Browser visual verification is still required; the existence of
 the fixture and passing source checks are not visual acceptance.
+
+
+## Independent sensor cards — 2026-11-12 (current)
+
+Sensor types open as independent cards beside chat. Each has its own close,
+collapse, and expand actions; duplicate opens focus the existing card and retain
+its selection and samples. Collapsing retains sampling, closing releases that
+card's input, and Host IMU recording continues independently. The compact sensor
+picker anchors above the chat control or below the workspace toolbar, supports
+search and keyboard selection, and marks already-open cards.
+
+Use the existing light/dark palette, restrained colored icons, 12–13 px body/title
+text, 30 px primary numeric readings, and 10–11 px supporting information. Camera,
+LiDAR, thermal and acoustic content each get a dedicated presentation. Device
+controls and pixel/source detail remain accessible inside disclosure rows. Do not
+show synthetic readings outside the explicitly labeled development preview.
+
+
+## Sensor interaction and density — 2026-11-13 (current)
+
+Use the custom SensorMark vector family throughout sensor entry points. Numeric
+cards use a portal multichannel picker; different physical units stay in separate
+plot groups. IMU defaults to stacked axes; each group can fold or overlay its axes.
+Use timestamped inspection, explicit gaps, time-window zoom and review controls.
+
+Normal cards resize from the right, bottom and corner. Pointer resize follows the
+pointer without easing; settle/expand/fold transitions remain short and respect
+reduced motion. Saved dimensions share the existing widget-layout store. Compact
+views retain status and selected readings; reduce secondary content before hiding
+plots. Keep recording stop actions and device errors available. Do not clear data
+or restart subscriptions when changing the display layout.

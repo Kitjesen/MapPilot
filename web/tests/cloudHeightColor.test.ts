@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as THREE from 'three'
-import { cloudHeightRange, cloudColorRange, writeCloudHeightColor } from '../src/services/cloudHeightColor.ts'
+import { CLOUD_HEIGHT_GLSL, HEIGHT_COLORS, cloudHeightRange, cloudColorRange, writeCloudHeightColor } from '../src/services/cloudHeightColor.ts'
 import { setHeightColorRange } from '../src/components/scene3d/layers/heightColor.ts'
 import { updateCloudHeightRange } from '../src/components/scene3d/layers/layerUtils.ts'
 import { createOctomapLayer } from '../src/components/scene3d/layers/octomapLayer.ts'
@@ -85,6 +85,41 @@ test('display percentiles ignore isolated extreme heights without changing map b
   assert.deepEqual(cloudColorRange([0, 0, 8, 0, 0, 8]), { min: 8, max: 8 })
   assert.deepEqual(cloudColorRange([0, 0, 1, .05, 0, 0, 2, .05], 4), { min: 1, max: 2 })
   assert.equal(cloudColorRange([]), null)
+})
+
+test('saved point and voxel colors span the main heights while retaining isolated extremes', () => {
+  const heights = [-100, ...Array.from({ length: 101 }, (_, i) => i / 25), 100]
+  const source = heights.flatMap((z, i) => [i / 5, 0, z])
+  const original = [...source]
+  const range = cloudColorRange(source)!
+  const points = createSavedMapLayer(source, SAVED_MAP_Z_FLOOR, SAVED_MAP_Z_CEIL)!
+  const cells = new Float32Array(heights.flatMap((z, i) => [i / 5, 0, z, .1]))
+  const mesh = createOctomapLayer({ resolution: .1, cells,
+    bounds: { min: [0, 0, -100], max: [11, 1, 100] } }, 0, 0, 'height', 1, Infinity)!
+  assert.equal(points.geometry.getAttribute('position').count, heights.length)
+  assert.equal(mesh.count, heights.length)
+  assert.deepEqual(source, original)
+  const colors = points.geometry.getAttribute('color').array
+  assert.deepEqual(Array.from(colors.slice(0, 3)), colorAt(range.min, range.min, range.max))
+  const unique = new Set(heights.filter(z => z >= 0 && z <= 4)
+    .map(z => colorAt(z, range.min, range.max).map(v => v.toFixed(2)).join(',')))
+  assert.ok(unique.size > 90, 'main structure uses a continuous multicolor ramp')
+  for (let i = 0; i < mesh.count; i++) {
+    const color = new THREE.Color()
+    mesh.getColorAt(i, color)
+    const expected = colorAt(cells[i * 4 + 2], range.min, range.max)
+    assert.ok(color.toArray().every((v, channel) => Math.abs(v - expected[channel]) < .15))
+  }
+  points.geometry.dispose(); (points.material as THREE.Material).dispose()
+  mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose(); mesh.dispose()
+})
+
+test('CPU and GPU use the same height palette', () => {
+  for (let i = 0; i < HEIGHT_COLORS.length; i++) {
+    const cpu = colorAt(i, 0, HEIGHT_COLORS.length - 1)
+    assert.ok(cpu.every((value, channel) => Math.abs(value - HEIGHT_COLORS[i][channel]) < 1e-6))
+    assert.ok(CLOUD_HEIGHT_GLSL.includes(`vec3 h${i} = vec3(${HEIGHT_COLORS[i].map(v => v.toFixed(2)).join(', ')});`))
+  }
 })
 
 test('GPU height colors compose with fading and cube edges; range changes reuse geometry and shaders', () => {

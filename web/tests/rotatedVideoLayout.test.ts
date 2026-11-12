@@ -23,3 +23,8 @@ test('quarter-turn video also fits a portrait preview without clipping', () => {
     rotation: 90, width: 400, height: 300,
   })
 })
+
+test('cover fills landscape and rotated previews without stretching', () => {
+  assert.deepEqual(fitRotatedVideo(400, 225, 400, 300, 0, 'cover'), {rotation:0,width:400,height:300})
+  assert.deepEqual(fitRotatedVideo(400, 225, 400, 300, 90, 'cover'), {rotation:90,width:400 / .75,height:400})
+})

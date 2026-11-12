@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-CN" data-theme="light"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stream usage interaction check</title>
+<div id="root"></div><pre id="result" hidden></pre>
+<script type="module">
+import './recording-preview.tsx'
+const results = [], report = document.querySelector('#result')
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+const until = async predicate => { for (let i=0;i<60;i++) { if (predicate()) return; await wait(100) } throw Error('Timed out waiting for UI') }
+const check = (name, pass) => { results.push({name,pass}); if (!pass) throw Error(name) }
+const originalFetch = window.fetch
+let state = 'live'
+window.fetch = async (...args) => {
+  const response = await originalFetch(...args)
+  if (!String(args[0]).includes('/recordings/streams') || state === 'live') return response
+  if (state === 'error') return Response.json({error:'Demo observer unavailable'}, {status:503})
+  const body = await response.json()
+  body.topics = body.topics.map(item=>({...item,bytes_per_second:0,rate_hz:0}))
+  return Response.json(body)
+}
+try {
+  await until(()=>document.querySelector('details[aria-label="数据诊断"] summary'))
+  document.querySelector('details[aria-label="数据诊断"] summary').click()
+  await until(()=>document.querySelector('[aria-label="分类带宽占比"] button'))
+  const card = document.querySelector('[aria-label="数据流量分析"]')
+  const categories = [...card.querySelectorAll('[aria-label="流量分类"] button')]
+  const robot = categories.find(button=>button.textContent.startsWith('机器人'))
+  robot.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}))
+  await wait(30)
+  check('hover links category, chart and matching rows without filtering',
+    card.querySelectorAll('[data-active="true"]').length===2
+    && document.querySelectorAll('[data-usage-active="true"]').length===2
+    && document.querySelectorAll('[role="listitem"]').length===8)
+  robot.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:document.body}))
+  await wait(30)
+  check('leaving clears the temporary highlight', card.querySelectorAll('[data-active="true"]').length===0)
+  state='error'
+  await until(()=>!card.querySelector('[aria-label="分类带宽占比"] button'))
+  check('failed observation hides old bandwidth instead of presenting stale values', card.textContent.includes('等待实时数据') && !card.textContent.includes('MiB/s'))
+  state='zero'
+  await until(()=>card.textContent.includes('当前无流量'))
+  check('observed zero stays distinct from unavailable', card.textContent.includes('0B/s') && !card.querySelector('[aria-label="分类带宽占比"] button'))
+  state='live'
+  await until(()=>card.querySelector('[aria-label="分类带宽占比"] button'))
+  check('fresh observation restores the five category segments', card.querySelectorAll('[aria-label="分类带宽占比"] button').length===5)
+  report.dataset.result='pass'
+} catch(error) { report.dataset.result='fail'; results.push({error:String(error)}) }
+finally { window.fetch=originalFetch; report.hidden=false; report.textContent=JSON.stringify(results,null,2) }
+</script></html>

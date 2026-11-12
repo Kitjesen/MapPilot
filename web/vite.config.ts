@@ -19,6 +19,7 @@ export default defineConfig({
       allow: [fileURLToPath(new URL('..', import.meta.url))],
     },
     proxy: {
+      '/_AMapService': `http://${ROBOT_HOST}`,
       '/api': `http://${ROBOT_HOST}`,
       '/ws': { target: `ws://${ROBOT_HOST}`, ws: true },
       '/mcp': `http://${ROBOT_HOST}`,

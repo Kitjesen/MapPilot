@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><title>903 地图核对说明</title><style>body{max-width:850px;margin:50px auto;font:17px/1.8 system-ui;color:#273746}code{overflow-wrap:anywhere}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}</style><body>
+<h1>此前测试实际使用的文件</h1><p>名称：903room_v6_corridor。两份文件的 2026-10-25 取回脚本都指向机器人同名地图目录。当前截图是否同一地图，仍须结合现场布局确认。</p>
+<p>显示点云：<code>D:/inovxio/brain/lingtu/build/nav-field-20261025/active-v6-map.pcd</code><br>规划输入：<code>D:/inovxio/brain/lingtu/build/nav-field-20261025/active-v6.octomap.ot</code></p>
+<h2>统计怎么读</h2><table><tr><th>测试组</th><th>请求数</th><th>生成路线</th></tr><tr><td>先前固定目标</td><td>8</td><td>8</td></tr><tr><td>主要连通区域内，40 对双向请求</td><td>80</td><td>80</td></tr><tr><td>目标偏移测试</td><td>20</td><td>20</td></tr><tr><td>六组其他区域接主区域，双向</td><td>12</td><td>3</td></tr><tr><td>合计</td><td>120</td><td>111</td></tr></table>
+<p>原图与上轮“仅恢复一段走廊地面”的候选图统计相同，因此之前两列都写了 3/12、111/120。不是 3/123/12，也不是新增 240 个请求。9 次失败含 5 次无路和 4 次超时；超时不能证明物理不连通。</p>
+<p>使用灵途修改版 OctoPlanner3D 原生全局规划。页面展示保存的测试结果，没有运行 SCAN、动力学或机器狗运动。</p><p><a href="/tests/903-inspect.html">回到可旋转地图</a></p>
+</body></html>

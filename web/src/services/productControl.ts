@@ -11,7 +11,7 @@ export interface ProductSwitchRequest {
 
 export interface ProductSwitchOperation {
   request_id: string
-  request: ProductSwitchRequest
+  request: ProductSwitchRequest | { request_id: string; action: 'stop'; expected_product_session_id: string }
   state: 'running' | 'succeeded' | 'failed' | 'interrupted'
   message: string
   result: { product_session_id?: string; ok?: boolean } | null

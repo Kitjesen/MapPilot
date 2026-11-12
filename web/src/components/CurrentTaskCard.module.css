@@ -1,24 +1,51 @@
 .card {
-  --text: #f4f6f8;
-  --text-dim: #aeb6bf;
-  --text-faint: #7f8994;
-  --border: rgb(255 255 255 / 16%);
+  --flow-a: rgb(120 137 155 / 5%);
+  --flow-b: rgb(153 168 188 / 4%);
+  --flow-wash: rgb(171 187 207 / 3%);
   right: 50%;
   bottom: calc(var(--statusbar-h) + 18px);
   width: min(600px, calc(100vw - 32px));
-  min-height: 72px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 8px 12px;
   color: var(--text);
-  background: rgb(23 27 31 / 96%);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  box-shadow: 0 14px 42px rgb(0 0 0 / 30%);
+  background: var(--bg-layer-1);
+  isolation: isolate;
+  border: 0;
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
   transform: translateX(50%);
-  backdrop-filter: blur(18px);
 }
+
+.flow { position: absolute; inset: 0; z-index: -1; border-radius: inherit; overflow: hidden; pointer-events: none; background: radial-gradient(ellipse at 20% 100%, var(--flow-wash), transparent 85%); }
+.flow::before,
+.flow::after {
+  content: '';
+  position: absolute;
+  inset: -110% -30%;
+  filter: blur(10px);
+  animation: task-liquid-a 4.8s ease-in-out infinite;
+  animation-play-state: paused;
+}
+.flow::before { background: radial-gradient(ellipse at 50% 110%, transparent 26%, var(--flow-a) 42%, var(--flow-b) 50%, transparent 66%); }
+.flow::after {
+  background: radial-gradient(ellipse at 50% -10%, transparent 28%, var(--flow-b) 42%, var(--flow-a) 52%, transparent 68%);
+  opacity: .65;
+  animation-name: task-liquid-b;
+  animation-duration: 6.2s;
+}
+.card[data-visual-state='executing'] { --flow-a: rgb(67 152 162 / 10%); --flow-b: rgb(117 158 200 / 7%); --flow-wash: rgb(154 225 234 / 4%); --state-color: #008f85; }
+.card[data-visual-state='executing'] .flow::before,
+.card[data-visual-state='executing'] .flow::after { animation-play-state: running; }
+.card[data-visual-state='paused'] { --flow-a: rgb(220 169 77 / 10%); --flow-b: rgb(229 189 153 / 7%); --flow-wash: rgb(245 221 173 / 4%); --state-color: #bc7021; }
+.card[data-visual-state='failed'] { --flow-a: rgb(226 109 123 / 10%); --flow-b: rgb(235 132 154 / 7%); --flow-wash: rgb(249 164 173 / 4%); --state-color: var(--red); }
+.card[data-visual-state='failed'] .flow::before { background: radial-gradient(ellipse at 50% 75%, var(--flow-a), transparent 65%); animation: task-failure 4s ease-in-out infinite; }
+.card[data-visual-state='failed'] .flow::after { animation-play-state: paused; }
+@keyframes task-liquid-a { 0%, 100% { transform: translate3d(-12%, 8%, 0) rotate(-7deg) scale(1.1); } 50% { transform: translate3d(14%, -8%, 0) rotate(7deg) scale(1.25); } }
+@keyframes task-liquid-b { 0%, 100% { transform: translate3d(12%, -5%, 0) rotate(9deg) scale(1.15); } 50% { transform: translate3d(-16%, 10%, 0) rotate(-9deg) scale(1.3); } }
+@keyframes task-failure { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
 
 .floating {
   position: absolute;
@@ -35,28 +62,48 @@
 .taskIdentity {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }
 
 .taskIcon {
-  width: 52px;
-  height: 52px;
+  width: 32px;
+  height: 32px;
   display: grid;
   flex: 0 0 auto;
   place-items: center;
   color: var(--text);
-  background: rgb(255 255 255 / 6%);
-  border-radius: 14px;
+  background: var(--control-bg);
+  border-radius: 50%;
 }
 
-.taskIcon svg { width: 23px; height: 23px; }
+.taskIcon svg { width: 18px; height: 18px; color: inherit; }
 
 .taskCopy {
-  display: grid;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
   gap: 3px;
+}
+
+.taskHeading {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  gap: 12px;
+}
+
+.visibleReason {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--state-color, var(--warn));
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .taskName,
@@ -65,15 +112,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.stateLabel::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; vertical-align: middle; background: var(--state-color, var(--text-faint)); }
 
 .taskName {
   color: var(--text);
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 15px;
+  font-weight: 600;
   line-height: 1.25;
 }
 
 .stateLabel {
+  flex-shrink: 0;
   color: var(--text-dim);
   font-size: 13px;
   font-weight: 450;
@@ -82,9 +131,9 @@
 
 .active,
 .success { color: var(--text); }
-.danger { color: #ffb4ad; }
+.danger { color: var(--red); }
 .muted { color: var(--text-dim); }
-.waiting { color: #e7c58b; }
+.waiting { color: var(--warn); }
 
 .primaryControl,
 .moreButton,
@@ -95,25 +144,40 @@
   flex: 0 0 auto;
   border: 0;
   cursor: pointer;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 180ms var(--ease-out), background-color 160ms ease, color 160ms ease, box-shadow 180ms ease;
 }
+
+.primaryControl::before, .moreButton::before, .cancelButton::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: radial-gradient(ellipse, rgb(224 241 255 / 24%), transparent 72%);
+  opacity: 0; transform: scale(.4); pointer-events: none;
+  transition: opacity 260ms ease-out, transform 320ms var(--ease-out);
+}
+.primaryControl:active:not(:disabled), .moreButton:active, .cancelButton:active:not(:disabled) { transform: translateY(1px) scale(.93); transition-duration: 70ms; }
+.primaryControl:active:not(:disabled)::before, .moreButton:active::before, .cancelButton:active:not(:disabled)::before { opacity: 1; transform: scale(1.7); transition-duration: 70ms; }
+.pendingIcon { animation: task-control-wait 900ms linear infinite; }
+@keyframes task-control-wait { to { transform: rotate(360deg); } }
 
 .primaryControl {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 40px;
   padding: 0;
-  color: #15191d;
-  background: #fff;
+  color: var(--text);
+  background: var(--control-bg);
   border-radius: 50%;
-  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+  box-shadow: none;
 }
 
-.primaryControl:hover:not(:disabled) { background: #e9edf1; }
-.primaryControl:active:not(:disabled) { transform: scale(0.96); }
+.primaryControl:hover:not(:disabled) { background: var(--control-hover); }
 
 .disclosure { flex: 0 0 auto; }
 .moreButton {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 40px;
   padding: 0;
   color: var(--text-dim);
   background: transparent;
@@ -121,14 +185,14 @@
   list-style: none;
 }
 .moreButton::-webkit-details-marker { display: none; }
-.moreButton:hover { color: var(--text); background: rgb(255 255 255 / 7%); }
-.disclosure[open] .moreButton { color: var(--text); background: rgb(255 255 255 / 9%); }
+.moreButton:hover { color: var(--text); background: var(--bg-layer-3); }
+.disclosure[open] .moreButton { color: var(--text); background: var(--bg-layer-3); }
 
 .primaryControl:disabled,
 .cancelButton:disabled { opacity: 0.42; cursor: not-allowed; }
 .primaryControl:focus-visible,
 .moreButton:focus-visible,
-.cancelButton:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.cancelButton:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 .panel {
   position: absolute;
@@ -139,11 +203,13 @@
   overflow: auto;
   padding: 16px;
   color: var(--text);
-  background: #171b1f;
-  border: 1px solid var(--border);
+  background: var(--bg-layer-1);
+  border: 0;
   border-radius: 16px;
-  box-shadow: 0 16px 38px rgb(0 0 0 / 32%);
+  box-shadow: var(--shadow-lg);
+  animation: task-details-enter 160ms var(--ease-out);
 }
+@keyframes task-details-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
 .guidance { margin: 0; font-size: 14px; line-height: 1.55; }
 .reason { margin: 7px 0 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
@@ -161,25 +227,15 @@
 .meta dd { min-width: 0; margin: 0; color: var(--text-dim); overflow-wrap: anywhere; }
 .meta code { font: inherit; font-family: var(--font-mono, monospace); }
 
-.panelActions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
 .cancelButton {
-  min-height: 38px;
-  gap: 7px;
-  padding: 0 12px;
-  color: #e2e6ea;
-  background: rgb(255 255 255 / 6%);
-  border-radius: 10px;
-  font-size: 13px;
-  font-weight: 550;
+  width: 36px;
+  height: 40px;
+  padding: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border-radius: 12px;
 }
-.cancelButton:hover:not(:disabled) { color: #ffb4ad; background: rgb(255 180 173 / 9%); }
+.cancelButton:hover:not(:disabled) { color: var(--red); background: var(--red-glow); }
 
 .srOnly {
   position: absolute;
@@ -193,22 +249,37 @@
   border: 0;
 }
 
+.confirmation {
+  width: 360px;
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--bg-layer-2);
+  box-shadow: var(--shadow-lg);
+}
+
 @media (max-width: 640px) {
   .card {
     bottom: calc(var(--statusbar-h) + 12px);
     width: calc(100vw - 20px);
-    min-height: 64px;
+    min-height: 56px;
     gap: 6px;
-    padding: 6px 8px;
+    padding: 8px 10px;
     border-radius: 18px;
   }
-  .taskIdentity { gap: 9px; }
-  .taskIcon { width: 48px; height: 48px; border-radius: 12px; }
+  .taskIdentity { gap: 6px; }
   .taskName { font-size: 15px; }
-  .primaryControl { width: 44px; height: 44px; }
-  .moreButton { width: 38px; height: 38px; }
+  .primaryControl { width: 44px; height: 40px; }
+  .moreButton { width: 32px; height: 40px; }
+}
+
+@media (max-width: 420px) {
+  .taskHeading { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .taskName { max-width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .primaryControl:active:not(:disabled) { transform: none; }
+  .card[data-visual-state] .flow::before, .card[data-visual-state] .flow::after { animation: none; transform: none; }
+  .pendingIcon, .panel { animation: none; }
+  .primaryControl:active:not(:disabled), .moreButton:active, .cancelButton:active:not(:disabled) { transform: none; }
+  .primaryControl::before, .moreButton::before, .cancelButton::before { transition: none; transform: none; }
 }

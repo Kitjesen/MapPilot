@@ -1,15 +1,7 @@
 /* Modal — theme-aware product dialog with restrained depth. */
 
-.backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgb(0 0 0 / 28%);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+.dialog::backdrop {
+  background: rgb(4 8 12 / 8%);
   animation: fade var(--duration-ui, 160ms) var(--ease-out);
 }
 
@@ -19,19 +11,22 @@
 }
 
 .dialog {
-  position: relative;
-  width: 420px;
-  max-width: calc(100vw - 48px);
-  padding: 28px 28px 24px;
-  background: var(--glass-hi);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: 344px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 18px;
+  background: var(--bg-layer-1);
+  border: 0;
+  border-radius: 18px;
   box-shadow: var(--shadow-lg);
-  animation: dialogIn var(--duration-panel, 180ms) var(--ease-out);
   color: var(--text);
 }
+.dialog:has(input) { width: 380px; }
+.dialog[open] { animation: dialogIn var(--duration-panel, 180ms) var(--ease-out); }
 
 @keyframes dialogIn {
   from { opacity: 0; transform: translateY(6px) scale(0.99); }
@@ -45,19 +40,17 @@
 .header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 6px;
+  gap: 10px;
 }
 
 .iconWrap {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  background: var(--bg-layer-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--control-bg);
   color: var(--text);
   flex-shrink: 0;
   box-shadow: none;
@@ -66,13 +59,12 @@
 .iconWrapDanger {
   composes: iconWrap;
   background: var(--red-glow);
-  border-color: color-mix(in srgb, var(--red) 30%, transparent);
   color: var(--red);
   box-shadow: none;
 }
 
 .title {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: 0;
   color: var(--text);
@@ -80,38 +72,15 @@
   line-height: 1.3;
 }
 
-.closeBtn {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  color: var(--text-faint);
-  cursor: pointer;
-  transition: color var(--duration-ui, 160ms) var(--ease-out), background var(--duration-ui, 160ms) var(--ease-out);
-}
-
-.closeBtn:hover {
-  background: var(--bg-layer-2);
-  color: var(--text);
-}
-
-.closeBtn:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 2px;
-}
-
 .body {
-  margin-top: 16px;
+  margin-top: 6px;
   color: var(--text-dim);
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.5;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
+.dialog[data-has-icon="true"]:not(:has(input)) .body { margin-left: 38px; }
 
 .body strong {
   color: var(--text);
@@ -119,6 +88,7 @@
 }
 
 .input {
+  min-height: 44px;
   width: 100%;
   margin-top: 14px;
   padding: 12px 14px;
@@ -153,21 +123,22 @@
 
 .actions {
   display: flex;
-  gap: 10px;
-  margin-top: 22px;
+  gap: 8px;
+  margin-top: 14px;
   justify-content: flex-end;
 }
 
 .btnBase {
-  padding: 10px 18px;
-  border-radius: 10px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: 12px;
   font-family: var(--font-ui);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
   transition: background var(--duration-ui, 160ms) var(--ease-out), border-color var(--duration-ui, 160ms) var(--ease-out), color var(--duration-ui, 160ms) var(--ease-out), transform var(--duration-ui, 160ms) var(--ease-out);
-  border: 1px solid transparent;
+  border: 0;
 }
 
 .btnBase:focus-visible {
@@ -182,8 +153,7 @@
 
 .btnCancel {
   composes: btnBase;
-  background: var(--bg-layer-2);
-  border-color: var(--border);
+  background: transparent;
   color: var(--text-dim);
 }
 
@@ -194,16 +164,16 @@
 
 .btnPrimary {
   composes: btnBase;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--control-bg);
+  border-color: var(--control-bg);
+  color: var(--text);
   box-shadow: none;
 }
 
 .btnPrimary:hover:not(:disabled) {
   transform: translateY(-1px);
-  background: var(--accent-dim);
-  border-color: var(--accent-dim);
+  background: var(--control-hover);
+  border-color: var(--control-hover);
   box-shadow: none;
 }
 
@@ -231,8 +201,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backdrop, .dialog { animation: none; }
-  .closeBtn, .input, .btnBase { transition: none; }
+  .dialog::backdrop, .dialog[open] { animation: none; }
+  .input, .btnBase { transition: none; }
   .btnPrimary:hover:not(:disabled), .btnPrimary:active:not(:disabled),
   .btnDanger:hover:not(:disabled), .btnDanger:active:not(:disabled) { transform: none; }
 }

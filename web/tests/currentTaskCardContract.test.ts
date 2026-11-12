@@ -21,6 +21,33 @@ function taskGuidance(state: string, changes: Record<string, unknown> = {}): str
   }) as string
 }
 
+test('state lighting follows confirmed task status and stops for stale or unconfirmed control', () => {
+  const source = readFileSync(new URL('../src/components/CurrentTaskCard.tsx', import.meta.url), 'utf8')
+  const file = ts.createSourceFile('CurrentTaskCard.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let value: ts.Expression | undefined
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === 'visualState') value = node.initializer
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  assert.ok(value)
+  const code = ts.transpileModule(`(${value.getText(file)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  const base = { stale: false, snapshot: { found: true }, status: {}, task: { state: 'EXECUTING' },
+    terminal: false, pendingAction: null, cancelState: 'idle', waitingForRoute: false }
+  const visual = (changes: Record<string, unknown>) => runInNewContext(code, { ...base, ...changes })
+  assert.equal(visual({}), 'executing')
+  assert.equal(visual({ task: { state: 'PAUSED' } }), 'paused')
+  assert.equal(visual({ task: { state: 'FAILED' }, terminal: true, cancelState: 'requested' }), 'failed')
+  for (const changes of [{ stale: true }, { snapshot: null }, { snapshot: { found: false } }, { status: null }]) {
+    assert.equal(visual(changes), 'unknown')
+  }
+  for (const changes of [{ pendingAction: 'pause' }, { pendingAction: 'resume' }, { cancelState: 'requested' }, { waitingForRoute: true }]) {
+    assert.equal(visual(changes), 'waiting')
+  }
+  for (const state of ['PLANNING', 'RECOVERING', 'UNKNOWN', 'SUCCESS', 'CANCELLED']) assert.equal(visual({ task: { state } }), 'idle')
+  assert.equal(visual({ terminal: true }), 'idle')
+})
+
 test('confirmed cancellation replaces pending stop guidance only after the terminal result', () => {
   assert.equal(taskGuidance('EXECUTING', { cancelState: 'requested' }), '等待机器人确认停车')
   assert.equal(taskGuidance('CANCELLED', { terminal: true, cancelState: 'requested' }), '任务已取消')
@@ -113,7 +140,7 @@ test('task bar presents one current task without inventing a destination', () =>
   assert.doesNotMatch(card, /status legend|state legend/i)
 })
 
-test('feedback interruption keeps task-specific cancellation discoverable in details', () => {
+test('feedback interruption keeps task-specific cancellation discoverable', () => {
   const card = readFileSync(
     new URL('../src/components/CurrentTaskCard.tsx', import.meta.url),
     'utf8',

@@ -6,15 +6,22 @@
  *   - 不做装饰性动画(没有旋转球、卫星天空图)— 信息密度优先
  *   - 一个 accent 只用在:活动指示点 + 链接高亮,其余全部 neutral
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { sensorRequest } from '../services/sensors.ts'
 import { ChevronDown } from 'lucide-react'
+import type { Locale } from '../i18n'
+import { mapLocalizationLabel, mapLocalizationState } from '../services/mapLabel.ts'
 import type { SSEState } from '../types'
 import styles from './LocalizationCard.module.css'
 
 type TabKey = 'slam' | 'gnss' | 'fusion'
 
 interface LocalizationCardProps {
+  embedded?: boolean
+  initialTab?: TabKey
   sseState: SSEState
+  localNowS: number
+  locale: Locale
 }
 
 function fmtInt(n: number | undefined): string {
@@ -54,11 +61,11 @@ function object(data: Record<string, unknown>, key: string): Record<string, unkn
     : {}
 }
 
-export function LocalizationCard({ sseState }: LocalizationCardProps) {
-  const [tab, setTab] = useState<TabKey>('slam')
+export function LocalizationCard({ sseState, localNowS, locale, initialTab = 'slam', embedded = false }: LocalizationCardProps) {
+  const [tab, setTab] = useState<TabKey>(initialTab)
 
   return (
-    <div className={styles.card}>
+    <div className={embedded ? styles.embedded : styles.card}>
       <div className={styles.tabs} role="tablist">
         {(['slam', 'gnss', 'fusion'] as TabKey[]).map((t) => (
           <button
@@ -73,8 +80,8 @@ export function LocalizationCard({ sseState }: LocalizationCardProps) {
         ))}
       </div>
       <div className={styles.body}>
-        {tab === 'slam' && <SlamPanel sseState={sseState} />}
-        {tab === 'gnss' && <GnssPanel sseState={sseState} />}
+        {tab === 'slam' && <SlamPanel sseState={sseState} localNowS={localNowS} locale={locale} />}
+        {tab === 'gnss' && <GnssPanel localNowS={localNowS} />}
         {tab === 'fusion' && <FusionPanel sseState={sseState} />}
       </div>
     </div>
@@ -100,7 +107,7 @@ function modeLabel(mode: string): string {
 
 /* ─── SLAM panel ───────────────────────────────────────────────── */
 
-function SlamPanel({ sseState }: { sseState: SSEState }) {
+function SlamPanel({ sseState, localNowS, locale }: LocalizationCardProps) {
   const odom = sseState.odometry
   const slam = sseState.slamStatus
   const diag = sseState.slamDiag?.data ?? {}
@@ -113,10 +120,10 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
   const vx = fmt(odom?.vx, 2)
   const mode = slam?.mode ?? '离线'
   const hasOdometry = connected && odom != null
-  const poseFresh = sseState.session?.pose_fresh
-  const odometryStatus = !connected ? '连接断开'
-    : !hasOdometry ? '等待里程计'
-    : poseFresh === false ? '数据已过期' : '已收到里程计'
+  const localizationState = mapLocalizationState(sseState, localNowS)
+  const poseFresh = sseState.stateSnapshot?.localization?.pose_fresh
+  const odometryStatus = mapLocalizationLabel(localizationState, locale)
+  const stale = localizationState === 'stale'
   const processedHz = num(diag, 'processed_scan_hz') ?? slam?.slam_hz
   const lidarHz = num(diag, 'lidar_input_hz')
   const imuHz = num(diag, 'imu_input_hz')
@@ -142,13 +149,13 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
 
   return (
     <>
-      <Header title="定位里程计" live={hasOdometry && poseFresh !== false} status={odometryStatus} />
+      <Header title="定位里程计" live={localizationState === 'tracking'} status={odometryStatus} />
 
       <div className={styles.grid}>
         <Field label="X · Y" value={`${posX}, ${posY}`} unit="m" />
         <Field label="航向" value={yawDeg} unit="°" />
         <Field label="线速度" value={vx} unit="m/s" />
-        <Field label="数据时效" value={!connected ? '连接断开' : !hasOdometry ? '未收到' : poseFresh === false ? '已过期' : poseFresh === true ? '最新' : '未报告'} dim={poseFresh !== true || !connected} />
+        <Field label="数据时效" value={!connected ? '连接断开' : !hasOdometry ? '未收到' : stale ? '已过期' : poseFresh === true ? '最新' : '未报告'} dim={poseFresh !== true || !connected || stale} />
       </div>
       <details className={styles.details}>
         <summary>定位详情<ChevronDown size={14} /></summary>
@@ -177,69 +184,41 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
 
 /* ─── GNSS panel ───────────────────────────────────────────────── */
 
-type FixType =
-  | 'NO_FIX' | 'SINGLE' | 'DGPS' | 'PPS'
-  | 'RTK_FIXED' | 'RTK_FLOAT' | 'ESTIMATED' | 'MANUAL' | 'SIMULATION'
-
-interface GnssStatusData {
-  fix_type?: FixType
-  num_sat?: number
-  num_sat_used?: number
-  hdop?: number
-  age_s?: number
-  rtcm_age_s?: number
-  horizontal_std_m?: number
-  link_ok?: boolean
-  east?: number
-  north?: number
-}
-
-function fixLabel(fix: FixType | undefined): string {
-  switch (fix) {
-    case 'RTK_FIXED':  return 'RTK FIX'
-    case 'RTK_FLOAT':  return 'RTK FLOAT'
-    case 'DGPS':       return 'DGPS'
-    case 'SINGLE':     return 'SINGLE'
-    case 'ESTIMATED':  return 'DR'
-    case 'SIMULATION': return 'SIM'
-    default:           return '无定位'
-  }
-}
-
-function GnssPanel({ sseState }: { sseState: SSEState }) {
-  const events = sseState.events as unknown as Array<{ type?: string } & GnssStatusData>
-  const evt = events.slice().reverse().find((e) => e?.type === 'gnss_status')
-  const hasData = evt != null && !!evt.link_ok
-
-  if (!hasData) {
-    return (
-      <>
-        <Header title="GNSS 卫星" live={false} status="离线" />
-        <Empty
-          text="接收机未连接"
-          hint={<>启用 <code>gnss.enabled</code> in robot_config.yaml</>}
-        />
-      </>
-    )
-  }
-
-  const fix = evt.fix_type ?? 'NO_FIX'
-  const isLive = fix === 'RTK_FIXED' || fix === 'RTK_FLOAT'
-
-  return (
-    <>
-      <Header title="GNSS 卫星" live={isLive} status={fixLabel(fix)} />
-
-      <div className={styles.grid}>
-        <Field label="卫星" value={`${evt.num_sat_used ?? 0}/${evt.num_sat ?? 0}`} />
-        <Field label="HDOP" value={fmt(evt.hdop, 2)} />
-        <Field label="水平精度" value={fmt(evt.horizontal_std_m, 3)} unit="m" />
-        <Field label="差分龄" value={fmt(evt.rtcm_age_s, 1)} unit="s" />
-        <Field label="E" value={fmt(evt.east, 2)} unit="m" />
-        <Field label="N" value={fmt(evt.north, 2)} unit="m" />
-      </div>
-    </>
-  )
+function GnssPanel({ localNowS }: { localNowS: number }) {
+  const [snapshot, setSnapshot] = useState<{ data: Record<string, unknown>; receivedAt: number } | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const abort = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    async function poll() {
+      try {
+        const started = Date.now() / 1000
+        const data = await sensorRequest('/api/v1/geography/location', abort.signal)
+        if (abort.signal.aborted) return
+        setSnapshot({ data, receivedAt: started }); setError('')
+      } catch (cause) {
+        if (abort.signal.aborted) return
+        setSnapshot(null); setError(String(cause))
+      } finally { if (!abort.signal.aborted) timer = setTimeout(() => void poll(), 1000) }
+    }
+    void poll()
+    return () => { abort.abort(); clearTimeout(timer) }
+  }, [])
+  const data = snapshot?.data
+  const age = typeof data?.age_s === 'number' ? data.age_s + Math.max(0, localNowS - snapshot!.receivedAt) : undefined
+  const ready = data?.state === 'ready' && age !== undefined && age <= 3
+  const location = ready ? object(data!, 'location') : {}
+  const states: Record<string, string> = { unavailable: '来源未连接', invalid: '来源数据无效', no_fix: '尚未定位', stale: '定位已过期' }
+  return <>
+    <Header title="GNSS 定位" live={ready} status={ready ? '已定位' : error ? '读取失败' : data?.state === 'ready' ? '定位已过期' : states[String(data?.state)] ?? '正在读取'} />
+    {ready ? <div className={styles.grid}>
+      <Field label="纬度" value={fmt(num(location, 'latitude'), 7)} unit="°" />
+      <Field label="经度" value={fmt(num(location, 'longitude'), 7)} unit="°" />
+      <Field label="精度" value={fmt(num(location, 'accuracy_m'), 3)} unit="m" />
+      <Field label="定位类型" value={({ 1: 'SINGLE', 2: 'DGPS', 4: 'RTK FIX', 5: 'RTK FLOAT' } as Record<number, string>)[num(location, 'fix_type') ?? 0] ?? String(location.fix_type ?? '—')} />
+      <Field label="观测年龄" value={fmt(age, 1)} unit="s" />
+    </div> : <Empty text={error || '暂无有效地理位置'} hint="读取原生 GNSS 保存的 WGS84 位置，不打开或重新配置接收机。" />}
+  </>
 }
 
 /* ─── Fusion panel ─────────────────────────────────────────────── */

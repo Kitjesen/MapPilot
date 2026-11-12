@@ -1,0 +1,19 @@
+import type { CSSProperties, ReactNode } from 'react'
+import type { SensorId } from '../../services/sensors.ts'
+
+const marks: Record<SensorId, ReactNode> = {
+  imu: <><ellipse cx="16" cy="16" rx="13" ry="7" transform="rotate(-35 16 16)" fill="none" stroke="currentColor" strokeWidth="2.2" /><ellipse cx="16" cy="16" rx="7" ry="13" transform="rotate(-35 16 16)" fill="none" stroke="currentColor" strokeWidth="2.2" opacity=".45" /><circle cx="16" cy="16" r="4.8" fill="currentColor" /><circle cx="27" cy="9" r="2.5" fill="var(--text)" /></>,
+  motors: <><circle cx="16" cy="16" r="12.5" fill="none" stroke="currentColor" strokeWidth="1.6" opacity=".35" />{[0,120,240].map(angle => <path key={angle} transform={`rotate(${angle} 16 16)`} d="M17 12C16 6 23 5 26 10C28 14 24 18 20 17C20 14 19 13 17 12Z" fill="currentColor" />)}<circle cx="16" cy="16" r="3.2" fill="var(--text)" /></>,
+  joints: <><path d="M7 24L16 16L25 7" fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" opacity=".35" /><path d="M7 24L16 16L25 7" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /><circle cx="7" cy="24" r="4" fill="currentColor" /><circle cx="25" cy="7" r="4" fill="currentColor" /><circle cx="16" cy="16" r="5.5" fill="var(--bg-layer-1)" /><circle cx="16" cy="16" r="3.8" fill="var(--text)" /></>,
+  voltages: <><rect x="4" y="8" width="23" height="17" rx="5" fill="currentColor" opacity=".2" /><path d="M8 5H21M29 13V20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><path d="M18 8L11 18H16L14 26L23 15H18L20 8Z" fill="currentColor" /></>,
+  camera: <><rect x="3" y="7" width="26" height="21" rx="7" fill="currentColor" opacity=".2" /><path d="M11 5H21" stroke="currentColor" strokeWidth="3" strokeLinecap="round" /><circle cx="16" cy="17" r="8" fill="currentColor" /><circle cx="16" cy="17" r="4.5" fill="var(--bg-layer-1)" /><circle cx="17" cy="16" r="2.5" fill="var(--text)" /><circle cx="25" cy="11" r="1.5" fill="currentColor" /></>,
+  lidar: <><path d="M16 28C3 28 0 14 7 7L16 16L25 7C32 14 29 28 16 28Z" fill="currentColor" opacity=".18" /><path d="M6 22A12 12 0 0 1 23 5M9 20A8 8 0 0 1 21 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><path d="M16 17L26 7" stroke="currentColor" strokeWidth="2" /><circle cx="16" cy="17" r="4" fill="var(--text)" /><circle cx="26" cy="7" r="2.5" fill="currentColor" /></>,
+  gnss: <><circle cx="16" cy="16" r="10" fill="currentColor" opacity=".16" /><path d="M3 16H8M24 16H29M16 3V8M16 24V29" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /><circle cx="16" cy="16" r="5" fill="currentColor" /><circle cx="16" cy="16" r="1.8" fill="var(--bg-layer-1)" /><path d="M7 7A13 13 0 0 1 25 7" fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".55" /></>,
+  thermal: <><path d="M16 2C20 9 12 10 20 15C26 19 24 29 16 30C6 29 5 20 11 15C15 12 13 7 16 2Z" fill="currentColor" opacity=".25" /><path d="M17 10C21 16 12 18 15 23C16 26 22 23 21 20C26 26 19 32 13 28C7 24 12 17 17 10Z" fill="currentColor" /></>,
+  acoustic: <>{[7,11,16,21,25].map((x,i) => <rect key={x} x={x-1.5} y={[12,8,3,8,12][i]} width="3" height={[8,16,26,16,8][i]} rx="1.5" fill={i === 2 ? 'var(--text)' : 'currentColor'} opacity={i === 0 || i === 4 ? .5 : 1} />)}</>,
+  semantic: <><rect x="3" y="4" width="12" height="12" rx="4" fill="currentColor" /><rect x="18" y="4" width="11" height="12" rx="4" fill="currentColor" opacity=".3" /><rect x="3" y="19" width="12" height="10" rx="4" fill="currentColor" opacity=".3" /><path d="M19 25L23 20L29 27H19Z" fill="var(--text)" /></>,
+}
+
+export function SensorMark({ sensor, size = 30, style }: { sensor: SensorId; size?: number; style?: CSSProperties }) {
+  return <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true" style={style} data-sensor-mark={sensor}>{marks[sensor]}</svg>
+}

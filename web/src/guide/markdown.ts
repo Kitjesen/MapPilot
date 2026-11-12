@@ -7,6 +7,7 @@ export type Heading = {
 export type MarkdownRenderOptions = {
   pageId: string
   resolveDocumentLink: (href: string) => string | undefined
+  renderImages?: boolean
 }
 
 type RawHeading = {
@@ -98,7 +99,10 @@ function inlineMarkdown(value: string, options: MarkdownRenderOptions): string {
 
   html = html.replace(/&lt;br\s*\/?&gt;/gi, '<br>')
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<span class="markdown-image-alt">$1</span>')
+  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_match, alt: string, target: string) =>
+    options.renderImages && /^(?:https?:\/\/|\/(?!\/))/i.test(target)
+      ? `<img class="markdown-image" src="${target}" alt="${alt}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+      : `<span class="markdown-image-alt">${alt}</span>`)
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, target: string) => {
     const guideTarget = options.resolveDocumentLink(target)
     if (!guideTarget && isLocalSourceReference(target)) {
@@ -107,7 +111,8 @@ function inlineMarkdown(value: string, options: MarkdownRenderOptions): string {
     const href = guideTarget ?? safeHref(target)
     const external = /^https?:\/\//.test(href)
     const attributes = external ? ' target="_blank" rel="noreferrer"' : ''
-    return `<a href="${href}"${attributes}>${label}</a>`
+    const kind = external ? 'link-capsule external-link' : 'link-capsule app-link'
+    return `<a class="${kind}" href="${href}"${attributes}><span class="link-capsule-icon" aria-hidden="true">${external ? '↗' : '›'}</span><span>${label}</span></a>`
   })
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')

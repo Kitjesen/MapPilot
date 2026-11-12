@@ -5,7 +5,58 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 import { fetchRecordingStreams } from '../src/services/api.ts'
 import { readRecordingPreferences, writeRecordingPreferences } from '../src/services/recordingPreferences.ts'
-import { filterRecordingTopics, formatSampleAge, formatStreamBytes, formatStreamRate, streamFields } from '../src/services/recordingStreams.ts'
+import { filterRecordingTopics, formatSampleAge, formatStreamBytes, formatStreamRate, streamFields, summarizeStreamUsage } from '../src/services/recordingStreams.ts'
+import type { RecordingLiveTopic, RecordingTopic } from '../src/types/index.ts'
+
+const usageTopics: RecordingTopic[] = [
+  { topic: '/robot/joint_states', group: 'robot' },
+  { topic: '/slam/odometry', group: 'localization' },
+  { topic: '/imu/raw', group: 'robot' },
+  { topic: '/camera/image', group: 'camera' },
+].map(topic => ({ ...topic, label: topic.topic, type_name: 'Fixture', replayable: true, default_selected: true }))
+
+const usageObservations: RecordingLiveTopic[] = usageTopics.map((topic, index) => ({
+  topic: topic.topic, type_name: topic.type_name, message_count: 10, bytes_received: 1000,
+  rate_hz: 30, bytes_per_second: (index + 1) * 100, last_sample_age_ms: 10, source_time_ns: 100, preview: {},
+}))
+
+test('stream usage sums bandwidth by catalog group in catalog order', () => {
+  assert.deepEqual(summarizeStreamUsage(usageTopics, [...usageObservations].reverse()), {
+    groups: [
+      { group: 'robot', bytesPerSecond: 400, observedCount: 2, topicCount: 2 },
+      { group: 'localization', bytesPerSecond: 200, observedCount: 1, topicCount: 1 },
+      { group: 'camera', bytesPerSecond: 400, observedCount: 1, topicCount: 1 },
+    ],
+    bytesPerSecond: 1000, observedCount: 4, topicCount: 4,
+  })
+})
+
+test('stream usage preserves partial coverage, unknown groups and observed zero', () => {
+  assert.deepEqual(summarizeStreamUsage(usageTopics, [usageObservations[0], { ...usageObservations[1], bytes_per_second: 0 }]), {
+    groups: [
+      { group: 'robot', bytesPerSecond: 100, observedCount: 1, topicCount: 2 },
+      { group: 'localization', bytesPerSecond: 0, observedCount: 1, topicCount: 1 },
+      { group: 'camera', bytesPerSecond: null, observedCount: 0, topicCount: 1 },
+    ],
+    bytesPerSecond: 100, observedCount: 2, topicCount: 4,
+  })
+  assert.equal(summarizeStreamUsage(usageTopics, [{ ...usageObservations[0], bytes_per_second: 0 }]).bytesPerSecond, 0)
+})
+
+test('stream usage ignores unknown topics and invalid bandwidth observations', () => {
+  const invalid = usageObservations.map((item, index) => ({ ...item, bytes_per_second: [NaN, Infinity, -1, -Infinity][index] }))
+  invalid.push({ ...usageObservations[0], topic: '/unknown', bytes_per_second: 9999 })
+  assert.deepEqual(summarizeStreamUsage(usageTopics, invalid), {
+    groups: [
+      { group: 'robot', bytesPerSecond: null, observedCount: 0, topicCount: 2 },
+      { group: 'localization', bytesPerSecond: null, observedCount: 0, topicCount: 1 },
+      { group: 'camera', bytesPerSecond: null, observedCount: 0, topicCount: 1 },
+    ],
+    bytesPerSecond: null, observedCount: 0, topicCount: 4,
+  })
+  assert.equal(summarizeStreamUsage(usageTopics, []).bytesPerSecond, null)
+  assert.deepEqual(summarizeStreamUsage([], usageObservations), { groups: [], bytesPerSecond: null, observedCount: 0, topicCount: 0 })
+})
 
 test('live inspection uses its read-only endpoint without creating a recording', async () => {
   const original = globalThis.fetch
@@ -75,10 +126,12 @@ test('live inspector distinguishes absent observations from zero rates and rende
     assert.deepEqual(streamFields({ pose: { position: { x: 1, y: 2 } } }), [['pose.position.x', '1'], ['pose.position.y', '2']])
     const { RecordingPanel } = await server.ssrLoadModule('/src/components/RecordingPanel.tsx')
     const workbench = renderToStaticMarkup(createElement(RecordingPanel, {
+      view: 'record', onViewChange: () => {},
       locale: 'zh', status: { state: 'failed', recording: false, available: true, healthy: false },
       statusError: null, showToast: () => {}, refreshStatus: async () => {},
     }))
-    assert.match(workbench, /数据工作区/)
-    assert.doesNotMatch(workbench, />失败</)
+    assert.match(workbench, /录制控制/)
+    assert.match(workbench, />失败</)
+    assert.match(workbench, /开始录制/)
   } finally { await server.close() }
 })

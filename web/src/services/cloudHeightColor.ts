@@ -13,6 +13,14 @@ export const CLOUD_HEIGHT_GRADIENT = `linear-gradient(to right, ${HEIGHT_COLORS.
   color => `rgb(${color.map(channel => Math.round(channel * 255)).join(' ')})`,
 ).join(', ')})`
 
+export const CLOUD_HEIGHT_GLSL = `vec3 cloudHeightColor(float ratio) {
+  float t = clamp(ratio, 0.0, 1.0) * ${(HEIGHT_COLORS.length - 1).toFixed(1)};
+  ${HEIGHT_COLORS.map((rgb, i) => `vec3 h${i} = vec3(${rgb.map(v => v.toFixed(2)).join(', ')});`).join('\n  ')}
+  ${HEIGHT_COLORS.slice(0, -1).map((_, i) =>
+    `if (t <= ${(i + 1).toFixed(1)}) return mix(h${i}, h${i + 1}, t - ${i.toFixed(1)});`).join('\n  ')}
+  return h${HEIGHT_COLORS.length - 1};
+}`
+
 export function cloudHeightRange(points: ArrayLike<number>): { min: number; max: number } | null {
   let min = Infinity, max = -Infinity
   for (let i = 0; i + 2 < points.length; i += 3) {

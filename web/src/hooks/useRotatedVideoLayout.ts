@@ -18,6 +18,7 @@ export function fitRotatedVideo(
   videoWidth: number,
   videoHeight: number,
   rotationDegrees: number,
+  fit: 'contain' | 'cover' = 'contain',
 ): RotatedVideoBox {
   const rotation = normalizeVideoRotation(rotationDegrees)
   const quarterTurn = rotation === 90 || rotation === 270
@@ -26,10 +27,11 @@ export function fitRotatedVideo(
   const containerAspect = containerWidth > 0 && containerHeight > 0
     ? containerWidth / containerHeight
     : displayAspect
-  const displayWidth = containerAspect > displayAspect
+  const constrainHeight = fit === 'cover' ? containerAspect < displayAspect : containerAspect > displayAspect
+  const displayWidth = constrainHeight
     ? containerHeight * displayAspect
     : containerWidth
-  const displayHeight = containerAspect > displayAspect
+  const displayHeight = constrainHeight
     ? containerHeight
     : containerWidth / displayAspect
   return {
@@ -44,6 +46,7 @@ export function useRotatedVideoLayout(
   videoRef: RefObject<HTMLVideoElement | null>,
   rotationDegrees: number,
   enabled: boolean,
+  fit: 'contain' | 'cover' = 'contain',
 ): { ready: boolean; style: CSSProperties } {
   const rotation = normalizeVideoRotation(rotationDegrees)
   const [box, setBox] = useState<RotatedVideoBox | null>(null)
@@ -63,6 +66,7 @@ export function useRotatedVideoLayout(
         video.videoWidth,
         video.videoHeight,
         rotation,
+        fit,
       ))
     }
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null
@@ -78,7 +82,7 @@ export function useRotatedVideoLayout(
       video.removeEventListener('resize', update)
       if (!observer) window.removeEventListener('resize', update)
     }
-  }, [containerRef, enabled, rotation, videoRef])
+  }, [containerRef, enabled, rotation, videoRef, fit])
 
   const current = box?.rotation === rotation ? box : null
   return {

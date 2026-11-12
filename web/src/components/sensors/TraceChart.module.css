@@ -1,0 +1,123 @@
+.chart { min-width: 0; font-size: 11px; }
+.controls { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; padding: 5px 0 9px; }
+.controls > button:last-child { margin-left: auto; }
+.controls button, .channelMenu > button { min-height: 28px; }
+.channelMenu > button { display: flex; align-items: center; gap: 5px; background: var(--bg-layer-2) !important; color: var(--text) !important; border-radius: 8px; padding: 5px 8px; }
+.channelMenu b { font-size: 10px; font-weight: 500; opacity: .7; }
+.mode { display: flex; gap: 1px; padding: 2px; border-radius: 8px; background: var(--bg-layer-2); }
+.mode button { padding: 3px 6px; min-height: 24px; border-radius: 6px; font-size: 10px; }
+.mode button[aria-pressed='true'] { background: var(--bg-layer-1); color: var(--text); box-shadow: 0 1px 3px #0000000a; }
+.stackGlyph { font-size: 13px; line-height: 1; }
+.timeControls { display: flex; align-items: center; gap: 5px; margin-bottom: 10px; }
+.timeControls label { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.timeControls input { min-width: 25px; width: 100%; height: 3px; accent-color: var(--sensor-color, #6285b5); cursor: ew-resize; }
+.timeControls output { min-width: 38px; color: var(--text-dim); font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.timeControls button { padding: 3px 4px; }
+.timeControls .follow { font-size: 10px; white-space: nowrap; color: var(--sensor-color); }
+.channelPanel { position: fixed; z-index: 130; width: min(320px, calc(100vw - 24px)); max-height: min(380px, calc(100dvh - 160px)); display: flex; flex-direction: column; box-sizing: border-box; padding: 10px; background: var(--bg-layer-1); color: var(--text); border: 1px solid var(--border); border-radius: 13px; box-shadow: var(--shadow-lg); font: 11px var(--font-ui); animation: appear 130ms ease-out; }
+.channelPanel button { font: inherit; border: 0; color: var(--text-dim); background: transparent; border-radius: 6px; padding: 4px 6px; cursor: pointer; }
+.channelPanel button:hover { background: var(--bg-layer-2); color: var(--text); }
+.channelPanel :is(button,input):focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.search { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px; background: var(--bg-layer-2); color: var(--text-dim); }
+.search input { width: 100%; min-width: 0; font: inherit; color: var(--text); border: 0; background: transparent; outline: 0; }
+.selectActions { display: flex; gap: 4px; padding: 7px 0 3px; }
+.selectActions button:last-child { margin-left: auto; }
+.channelOptions { overflow: auto; scrollbar-width: thin; }
+.channelOptions section + section { margin-top: 9px; }
+.channelOptions header { display: flex; align-items: center; justify-content: space-between; padding: 5px 2px; font-size: 10px; color: var(--text-dim); }
+.channelOptions section > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; }
+.channelOptions label { position: relative; display: flex; align-items: center; gap: 5px; padding: 7px 6px; cursor: pointer; border-radius: 7px; background: var(--bg-layer-2); }
+.channelOptions label:has(input:checked) { background: color-mix(in srgb, var(--text) 8%, var(--bg-layer-1)); }
+.channelOptions label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channelOptions input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.channelOptions i { display: grid; place-items: center; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 4px; flex-shrink: 0; }
+.channelOptions i svg { opacity: 0; }
+.channelOptions input:checked + i svg { opacity: 1; }
+.channelOptions label:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.groups { max-height: max(110px, calc(100cqh - 260px)); overflow: auto; scrollbar-width: thin; }
+.group { min-width: 0; }
+.group + .group { margin-top: 10px; }
+.groupToggle { display: flex !important; align-items: center; gap: 5px !important; padding: 5px 0 !important; width: 100%; text-align: left; }
+.groupToggle strong { font-size: 11px; font-weight: 550; color: var(--text); }
+.groupToggle > span { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+.groupToggle small { color: var(--text-dim); font-size: 9px; margin-left: 5px; }
+.groupToggle svg { transition: transform 150ms ease; }
+.group[data-folded='true'] .groupToggle svg { transform: rotate(-90deg); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 5px 0; font-size: 10px; font-variant-numeric: tabular-nums; }
+.legend > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.legend i { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; }
+.legend > span > span { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.legend b { font-size: 11px; color: var(--text); font-weight: 500; }
+.plotRow { display: grid; grid-template-columns: 32px minmax(0,1fr); min-width: 0; align-items: stretch; }
+.yAxis { display: flex; flex-direction: column; justify-content: space-between; padding: 7px 4px 8px 0; font-size: 9px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.plotRow svg { width: 100%; height: 116px; display: block; overflow: hidden; cursor: crosshair; touch-action: pan-y; user-select: none; }
+.plotRow path { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.plotRow text { fill: var(--text-dim); font: 11px var(--font-ui); }
+.grid { stroke: var(--border); stroke-width: .65; stroke-dasharray: 2 5; }
+.cursor { stroke: var(--text); stroke-width: .8; stroke-dasharray: 3 3; }
+.chart[data-layout='stack'] .plotRow svg { height: 54px; }
+.strip { margin-bottom: 4px; }
+.strip .legend { padding-bottom: 0; }
+.xAxis { display: flex; justify-content: space-between; gap: 2px; margin: 4px 0 8px 32px; color: var(--text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.inspect { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 6px; margin-top: 4px; color: var(--text-dim); font-size: 9px; }
+.inspect button { padding: 0 3px; font-size: 9px; }
+.gesture { opacity: .8; }
+.compactHint { display: none; font-size: 9px; color: var(--text-dim); margin: 5px 0; }
+.empty { color: var(--text-dim); text-align: center; padding: 24px 6px; }
+@container sensor-card (max-width: 340px) {
+  .xAxis [data-intermediate='true'] { display: none; }
+  .mode button > span:last-child, .gesture { display: none; }
+  .legend { gap: 5px 8px; }
+  .controls { gap: 3px; }
+}
+@container sensor-card (max-height: 390px) {
+  .chart[data-layout='stack'] .plotRow svg { height: 32px; }
+  .plotRow svg { height: 78px; }
+  .legend { padding-top: 3px; }
+  .group + .group { margin-top: 4px; }
+  .gesture { display: none; }
+  .groups { max-height: max(90px, calc(100cqh - 180px)); }
+}
+@container sensor-card (max-height: 250px) {
+  .plotRow, .xAxis, .timeControls, .inspect { display: none; }
+  .groups { max-height: 85px; }
+  .chart[data-layout='stack'] .groupBody { display: flex; flex-wrap: wrap; gap: 0 8px; }
+  .strip { margin-bottom: 0; }
+  .groupToggle { padding: 2px 0 !important; }
+  .groupToggle small { display: none; }
+  .controls { padding: 2px 0 4px; }
+  .compactHint { display: block; }
+}
+@keyframes appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .channelPanel { animation: none; } .groupToggle svg { transition: none; } }
+
+.groupClip { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 160ms ease, opacity 140ms ease; }
+.groupClip > .groupBody { min-height: 0; overflow: hidden; }
+.group[data-folded='true'] .groupClip { grid-template-rows: 0fr; opacity: 0; pointer-events: none; }
+.chart[data-layout='stack'] .strip { display: grid; grid-template-columns: 66px minmax(0,1fr); align-items: center; gap: 3px; }
+.chart[data-layout='stack'] .strip .legend { padding: 0; }
+.chart[data-layout='stack'] .strip .legend > span { flex-wrap: wrap; gap: 3px; }
+.chart[data-layout='stack'] .strip .legend b { flex-basis: 100%; padding-left: 9px; }
+.chart[data-layout='stack'] .xAxis { margin-left: 101px; }
+@container sensor-card (max-width: 300px) { .xAxis > span:not(:first-child):not(:last-child) { display: none; } .chart[data-layout='stack'] .strip { grid-template-columns: 54px minmax(0,1fr); } .chart[data-layout='stack'] .xAxis { margin-left: 89px; } }
+@container sensor-card (max-height: 250px) { .chart[data-layout='stack'] .strip { display: block; } .chart[data-layout='stack'] .strip .legend b { flex-basis: auto; padding-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .groupClip { transition: none; } }
+
+.timeControls input { appearance: none; border-radius: 3px; background: var(--bg-layer-3); }
+.timeControls input::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; border: 2px solid var(--bg-layer-1); border-radius: 50%; background: var(--sensor-color, #6285b5); box-shadow: 0 0 0 1px var(--sensor-color, #6285b5); }
+.timeControls input::-moz-range-thumb { width: 8px; height: 8px; border: 2px solid var(--bg-layer-1); border-radius: 50%; background: var(--sensor-color, #6285b5); }
+
+.compactReadings { display: none; }
+@container sensor-card (max-height: 250px) {
+  .groups, .mode { display: none; }
+  .compactReadings { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px 6px; padding: 3px 0; }
+  .compactReadings > span { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 3px; min-width: 0; }
+  .compactReadings small { font-size: 9px; white-space: nowrap; }
+  .compactReadings b { font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 500; }
+  .compactReadings em { font-size: 8px; font-style: normal; color: var(--text-dim); }
+  .compactHint { margin: 2px 0; }
+  .compactHint button { padding: 0 3px; margin-left: 4px; font-size: 9px; }
+}
+@container sensor-card (max-height: 205px) { .compactHint { display: none; } }
+
+@container sensor-card (max-height: 205px) { .chart[data-pinned='true'] .compactHint, .chart[data-review='true'] .compactHint { display: block; } }

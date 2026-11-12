@@ -1,3 +1,10 @@
+export interface PcdCloud {
+  positions: Float32Array
+  bounds: { min: [number, number, number]; max: [number, number, number] }
+  colorRange: { min: number; max: number }
+  sourceCount: number | null
+}
+
 export function pcdCameraDistance(radius: number, aspect: number): number {
   // Fit the bounding sphere to the narrower field of view, with room at the edges.
   const halfFov = Math.atan(Math.tan(Math.PI / 8) * Math.min(1, aspect))

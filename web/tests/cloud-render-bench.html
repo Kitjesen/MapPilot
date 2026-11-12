@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>点云绘制性能对照</title>
+<style>body{margin:20px;font:14px system-ui;color:#171717}canvas{max-width:100%;border:1px solid #ddd}pre{white-space:pre-wrap;max-width:1000px}</style>
+<h1>点云绘制性能对照</h1>
+<p>使用完整保存点云，固定 800×600、DPR 1、点大小 2。同步等待 GPU 的绘制耗时不等于交互帧率。</p>
+<pre id="status">正在加载完整点云…</pre>
+<script type="module" src="./cloud-render-bench.ts"></script>
+</html>

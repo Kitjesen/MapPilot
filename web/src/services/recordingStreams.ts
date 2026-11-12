@@ -1,5 +1,27 @@
 import { text, type Locale } from '../i18n.ts'
-import type { RecordingTopic } from '../types/index.ts'
+import type { RecordingLiveTopic, RecordingTopic } from '../types/index.ts'
+
+export function summarizeStreamUsage(topics: RecordingTopic[], observations: RecordingLiveTopic[]) {
+  const observed = new Map(observations.map(item => [item.topic, item]))
+  const groups = new Map<string, { group: string; bytesPerSecond: number | null; observedCount: number; topicCount: number }>()
+  let bytesPerSecond: number | null = null
+  let observedCount = 0
+  for (const topic of topics) {
+    let usage = groups.get(topic.group)
+    if (!usage) {
+      usage = { group: topic.group, bytesPerSecond: null, observedCount: 0, topicCount: 0 }
+      groups.set(topic.group, usage)
+    }
+    usage.topicCount += 1
+    const rate = observed.get(topic.topic)?.bytes_per_second
+    if (rate === undefined || !Number.isFinite(rate) || rate < 0) continue
+    usage.bytesPerSecond = (usage.bytesPerSecond ?? 0) + rate
+    usage.observedCount += 1
+    bytesPerSecond = (bytesPerSecond ?? 0) + rate
+    observedCount += 1
+  }
+  return { groups: [...groups.values()], bytesPerSecond, observedCount, topicCount: topics.length }
+}
 
 export function formatStreamRate(value: number | undefined): string {
   return value === undefined || !Number.isFinite(value) ? '—' : `${value.toFixed(value < 10 ? 1 : 0)} Hz`

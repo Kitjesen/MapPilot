@@ -5,15 +5,17 @@ import { resetAllLayouts } from '../src/components/floatingWidgetLayout.ts'
 
 const settings = readFileSync(new URL('../src/components/SettingsMenu.tsx', import.meta.url), 'utf8')
 
-test('primary navigation and More retain every page without exposing controls in observation mode', () => {
+test('primary navigation contains four business workspaces and diagnostics belong to settings', () => {
   const topbar = readFileSync(new URL('../src/components/Topbar.tsx', import.meta.url), 'utf8')
   assert.match(topbar, /const observe = isObservationMode\(\)/)
   assert.match(topbar, /observe \? <span[^>]*className=\{styles.viewLabel\}/)
   assert.match(topbar, /name="lingtu-menu"/)
   assert.match(topbar, /onTabChange\(page.key\)/)
-  for (const tab of ['scene', 'console', 'map', 'slam', 'inspection', 'dataflow', 'planner']) {
+  for (const tab of ['console', 'mapping', 'scene', 'inspection']) {
     assert.match(topbar, new RegExp(`key: '${tab}'`))
   }
+  for (const tab of ['map', 'slam', 'dataflow', 'planner']) assert.doesNotMatch(topbar, new RegExp(`key: '${tab}'`))
+  assert.match(settings, /value: 'diagnostics'/)
   assert.doesNotMatch(topbar, /debug_nav|role="tablist"|>LingTu</)
   assert.doesNotMatch(settings, /WORKSPACE_PAGES|onNavigateTab|authLogin|authCheck|Sign Out|OtaModal|alert\(|localStorage\.clear\(/)
 })

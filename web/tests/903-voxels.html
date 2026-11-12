@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>903 清理后的 OctoMap</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f7f9;color:#243442;font:14px/1.6 system-ui,sans-serif}main{height:100vh;display:grid;grid-template-columns:minmax(0,1fr) 310px}#view{position:relative;min-width:0}canvas{display:block}aside{padding:20px;overflow:auto;background:white;border-left:1px solid #dce2e8}h1{font-size:22px;margin:0 0 12px}h2{font-size:15px;margin:22px 0 8px}code{font-size:11px;overflow-wrap:anywhere}.hint{font-size:12px;color:#617281}.badge{position:absolute;top:16px;left:16px;background:#fffffff2;padding:10px 14px;border-radius:6px;max-width:85%;pointer-events:none}.actions{display:flex;gap:7px;flex-wrap:wrap}button,select,input{font:inherit}button{padding:7px 10px;border:1px solid #cbd6df;background:#eef3f6;border-radius:5px;cursor:pointer}select{width:100%;padding:6px}input[type=number]{width:80px;padding:4px}label{display:block;margin:9px 0}#status{padding:10px;background:#f1f5f7;white-space:pre-line}.warning{color:#966214}a{color:#1768a0}@media(max-width:680px){main{grid-template-columns:minmax(0,1fr) 245px}aside{padding:12px}}
+</style></head><body><main><div id="view"><div class="badge"><strong>实际导航体素 · OctoMap · 5 cm</strong><br><span id="loaded">正在读取占据格…</span></div></div><aside>
+<h1>清理后的规划地图</h1><label>地图版本<select id="source"><option value="clean">最新：DUFO + 孤立点过滤</option><option value="dufo">对照：仅 DUFO 清理</option></select></label>
+<code id="map-name"></code><p class="hint">每个方块是 OctoMap 中的占据格。完整读取占据数据，按下面的高度范围显示，不用点云代替。</p>
+<div class="actions"><button id="perspective">三维整图</button><button id="top">俯视整图</button><button id="detail">放大通道</button></div>
+<h2>显示高度（地图坐标，米）</h2><label>最低 <input id="low" type="number" value="-0.8" step="0.1"> 最高 <input id="high" type="number" value="0.8" step="0.1"></label><div class="actions"><button id="floor">地面与机身附近</button><button id="full">全部高度</button></div>
+<p class="hint">左键旋转 · 右键平移 · 滚轮缩放。高度裁切只影响显示，不改规划地图。</p>
+<h2>实际规划结果</h2><div id="status">正在载入…</div><p class="warning">候选地图尚未通过导航替换验收，未部署到 Go2。</p>
+<h2>来源</h2><code id="source-path"></code><p class="hint">直接读取完整概率 octomap.ot，保留占据叶的实际尺寸，地图最小分辨率为 5 cm。未删格、未按视角抽样。空白可能是自由或未知空间，不能仅凭空白认定可走。</p>
+<p><a href="/tests/903-inspect.html?map=dufo">查看点云对照（不是体素图）</a></p>
+</aside></main><script type="module" src="/tests/903-voxels.ts"></script></body></html>

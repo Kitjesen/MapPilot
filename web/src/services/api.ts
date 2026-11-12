@@ -2,7 +2,7 @@ import { dashboardFetch } from './observationMode.ts'
 import type { RecordingSeriesQuery, RecordingSeriesResponse } from '../types/recordingSeries.ts'
 import type { RecordingCameraFrame, RecordingSceneInfoResponse, RecordingSceneQuery, RecordingSceneResponse } from '../types/recordingScene.ts'
 import type { StairAnnotation, StairListResponse } from '../types/stairs.ts'
-import type { MapEditOperation, MapEditSource } from '../types/mapEdit.ts'
+import type { MapEditOperation, MapEditPreview, MapEditSource } from '../types/mapEdit.ts'
 import { MapEditSaveUnconfirmed, mapEditWireOperations } from './mapEdit.ts'
 import { fetchMapPreview } from './mapPreview.ts'
 import { parsePcd } from './pcdPreview.ts'
@@ -474,8 +474,11 @@ export async function fetchNavigationDdsSnapshot(): Promise<NavigationDdsSnapsho
   )
 }
 
-export async function fetchLocations(): Promise<LocationsResponse> {
-  return fetchJson<LocationsResponse>(apiPath('locations', '/api/v1/locations'))
+export async function fetchLocations(mapId?: string, query?: string): Promise<LocationsResponse> {
+  const search = new URLSearchParams()
+  if (mapId) search.set('map_id', mapId)
+  if (query) search.set('q', query)
+  return fetchJson<LocationsResponse>(apiPath('locations', '/api/v1/locations') + (search.size ? `?${search}` : ''))
 }
 
 export async function fetchInspectionRoutes(mapId?: string | null): Promise<InspectionRouteListResponse> {
@@ -1036,6 +1039,7 @@ export interface MapSaveOperationStatus {
   message?: string | null
   cancel_requested?: boolean | null
   source_saved?: boolean | null
+  source_operation_id?: string | null
   processing?: {
     optimization?: MapSaveProcessingStep
     cleanup?: MapSaveProcessingStep
@@ -1061,11 +1065,11 @@ export interface WaitForMapSaveOptions {
   onProgress?: (result: SaveMapResult) => void
 }
 
-function mapSaveOperationPath(operationId: string, action?: 'retry' | 'cancel'): string {
+function mapSaveOperationPath(operationId: string, action?: 'retry' | 'cancel' | 'process' | 'reoptimize'): string {
   const encoded = encodeURIComponent(operationId)
   const fallback = `/api/v1/maps/operations/{operation_id}${action ? `/${action}` : ''}`
   const template = apiPath(
-    action === 'retry' ? 'map_operation_retry' : action === 'cancel' ? 'map_operation_cancel' : 'map_operation_status',
+    action ? `map_operation_${action}` : 'map_operation_status',
     fallback,
   ).replace(/%7Boperation_id%7D/gi, '{operation_id}')
   return template.includes('{operation_id}')
@@ -1177,8 +1181,19 @@ export async function cancelMapSaveOperation(operationId: string): Promise<SaveM
 }
 
 export async function processMapSaveOperation(operationId: string): Promise<SaveMapResult> {
-  return readMapSaveResponse(await dashboardFetch(`/api/v1/maps/operations/${encodeURIComponent(operationId)}/process`, {
+  return readMapSaveResponse(await dashboardFetch(mapSaveOperationPath(operationId, 'process'), {
     method: 'POST',
+  }))
+}
+
+export async function reoptimizeMapSaveOperation(
+  operationId: string,
+  requestId = makeRequestId('map-reoptimize'),
+): Promise<SaveMapResult> {
+  return readMapSaveResponse(await dashboardFetch(mapSaveOperationPath(operationId, 'reoptimize'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request_id: requestId }),
   }))
 }
 
@@ -1298,6 +1313,22 @@ export interface EditedMapResponse extends MapLifecycleResponse {
   point_count_scope?: 'preview_sample'
 }
 
+export async function previewEditedMap(source: MapEditSource, operations: readonly MapEditOperation[], signal?: AbortSignal): Promise<MapEditPreview> {
+  const res = await dashboardFetch(mapNamedPath('map_edit_preview', '/api/v1/maps/{name}/edit_preview', source.name), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ expected_source_content_epoch: source.contentEpoch, operations: mapEditWireOperations(operations) }),
+  })
+  const data = await res.json()
+  if (!res.ok || !(data.ok || data.success)) throw new Error(data.message || '清洗预览失败')
+  const validPoints = (value: unknown): value is number[] => Array.isArray(value) && value.length % 3 === 0 && value.every(Number.isFinite)
+  if (data.source_content_epoch !== source.contentEpoch || data.frame_id !== source.frameId
+    || !validPoints(data.preview_points) || !validPoints(data.preview_removed)
+    || !Number.isSafeInteger(data.point_count) || data.point_count < 0
+    || !Number.isSafeInteger(data.removed_points) || data.removed_points < 0
+    || typeof data.preview_sample !== 'boolean') throw new Error('清洗预览与当前地图不匹配，请重新加载地图。')
+  return data as MapEditPreview
+}
+
 export async function saveEditedMap(source: Pick<MapEditSource, 'name' | 'contentEpoch'>, name: string, operations: readonly MapEditOperation[]): Promise<EditedMapResponse> {
   let res: Response
   try {
@@ -1398,6 +1429,13 @@ export async function resetMapCloud(): Promise<MapLifecycleResponse> {
 
 export async function fetchSavedMapPointsResponse(name: string): Promise<MapPointsResponse> {
   return fetchJson<MapPointsResponse>(mapPointsPath(name))
+}
+
+export async function fetchMapEditCloud(name: string, contentEpoch: number, signal?: AbortSignal) {
+  const preview = await fetchMapPreview(name, contentEpoch, signal)
+  const points = parsePcd(preview.buffer)
+  if (!points || points.length < 3) throw new Error('地图点云为空或格式不支持')
+  return { points: Array.from(points), frameId: preview.frameId, contentEpoch: preview.contentEpoch }
 }
 
 export async function fetchSavedMapPointCloud(name: string): Promise<SavedMapPointCloud> {

@@ -280,3 +280,14 @@ test('read polling reports an outage and resumes only after its bounded interval
   assert.equal(calls, 2)
   stop()
 })
+
+
+test('measurement discovery preserves the source failure reason from FastAPI detail', async () => {
+  const previous = globalThis.fetch
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ detail: 'source adapter unavailable' }), { status: 503 })
+    await assert.rejects(listMeasurements(), /source adapter unavailable/)
+    globalThis.fetch = async () => new Response(JSON.stringify({ detail: { reason: 'source disconnected', sensor_id: 'thermal' } }), { status: 503 })
+    await assert.rejects(listMeasurements(), /source disconnected/)
+  } finally { globalThis.fetch = previous }
+})

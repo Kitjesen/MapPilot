@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>903 保存地图核对</title>
+<style>
+*{box-sizing:border-box}body{margin:0;color:#263442;font:14px/1.55 system-ui,sans-serif;background:#f6f7f8}main{display:grid;grid-template-columns:minmax(0,1fr) 330px;height:100vh}#view{position:relative;min-width:0}canvas{display:block}aside{padding:20px;overflow:auto;border-left:1px solid #dde1e5;background:white}h1{font-size:21px;margin:0 0 8px}h2{font-size:15px;margin:22px 0 8px}.hint{color:#607080;font-size:12px}button,select,input{font:inherit}button{background:#edf1f5;border:1px solid #cbd4dd;border-radius:5px;padding:7px 10px;cursor:pointer}button:hover{background:#e0e8ef}label{display:block;margin:8px 0}input[type=number]{width:80px;padding:4px}select{width:100%;padding:6px}.buttons{display:flex;flex-wrap:wrap;gap:7px}.badge{position:absolute;top:14px;left:16px;padding:8px 12px;background:#ffffffed;border-radius:6px;max-width:75%;pointer-events:none}.key{width:14px;height:3px;display:inline-block;vertical-align:middle;margin-right:5px}#outcome{background:#f3f5f7;padding:10px;margin-top:10px;white-space:pre-line}code{overflow-wrap:anywhere;font-size:11px}details{margin:12px 0}a{color:#1768a0}.warn{color:#976300}#pick{position:absolute;left:16px;bottom:16px;background:#fffffff0;padding:8px 12px;border-radius:5px;pointer-events:none}
+</style></head><body><main><div id="view"><div class="badge"><strong>本地保存图核对 · 离线</strong><br><span id="loaded">正在读取 903 原始点云…</span></div><div id="pick">左键旋转 · 右键平移 · 滚轮缩放 · 双击点云显示坐标</div></div><aside>
+<h1 id="title">确认我们看的哪张图</h1><div>保存名称：<b id="map-name">903room_v6_corridor</b></div><p class="hint" id="description">这是此前测试所用的本地留存文件。保存名称和取回记录指向 903；请结合现场布局确认，不凭另一张截图认定同图。</p>
+<p><a id="alternate" href="/tests/903-inspect.html?map=dufo">查看新 DUFOMap 清理候选</a></p>
+<p><a href="/tests/903-voxels.html">查看最新清理后的规划体素（OctoMap）</a></p>
+<div class="buttons"><button id="top">俯视整图</button><button id="perspective">三维查看</button><button id="repair">上轮修复走廊 A</button></div>
+<h2>点云显示高度（米）</h2><label>最低 <input id="low" type="number" value="-0.8" step="0.1"> 最高 <input id="high" type="number" value="0.8" step="0.1"></label><div class="buttons"><button id="floor">地面附近</button><button id="full">全部高度</button></div><p class="hint">高度裁切会隐藏部分点。判断“是不是缺地图”前，请切换全部高度。</p>
+<h2>图层</h2><label><input id="cloud" type="checkbox" checked> <span id="cloud-label">原始保存点云（完整读取，无抽样）</span></label><label><input id="graph" type="checkbox"> 蓝色路网通道</label><label><input id="old" type="checkbox" checked> <span class="key" style="background:#c9484e"></span><span id="old-label">原图跨地图路线</span></label><label><input id="candidate" type="checkbox"> <span class="key" style="background:#21866b"></span><span id="candidate-label">走廊修复候选路线</span></label><label><input id="markers" type="checkbox" checked> 六组跨区域测试位置</label>
+<h2>六组位置，每组测两个方向</h2><select id="pair"><option value="">选择一组查看坐标与结果</option></select><div id="outcome">A→B 和 B→A 是两次请求。
+六组共 12 次，原图与局部候选均成功 3 次、失败 9 次。
+连线只用于标明两个测试位置，不代表可通行路线。</div>
+<h2>当前使用的规划</h2><div>灵途修改版 OctoPlanner3D<br>三维静态全局路线 · Go2 几何</div><p class="hint">原图 5 cm；名义搜索间距 10 cm。这里显示已保存的原生测试结果；没有运行 SCAN 或连接机器人，也不会下发行走。</p>
+<details><summary>实际文件与来源</summary><p class="hint" id="source-description">2026-10-25 的取回脚本分别从机器人 /var/lib/lingtu/maps/903room_v6_corridor/ 复制以下文件。</p><code id="source-files">build/nav-field-20261025/active-v6-map.pcd<br>build/nav-field-20261025/active-v6.octomap.ot</code></details>
+<p><a href="/tests/903-inspect-report.html" target="_blank">查看本次解释与文件位置</a></p>
+</aside></main><script type="module" src="/tests/903-inspect.ts"></script></body></html>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as api from '../services/api'
 import { observeAuthoritativeTruth } from '../services/authoritativeTruth'
+import { latestNavigationStatus } from '../services/navigationStatus'
 import type {
   AppBootstrapResponse,
   AppCapabilitiesResponse,
@@ -197,7 +198,7 @@ function snapshotSceneGraph(scene: Awaited<ReturnType<typeof api.fetchSceneGraph
   }
 }
 
-export function useSSE(url: string = '/api/v1/events') {
+export function useSSE(url: string = '/api/v1/events', enabled = true) {
   const [jointTelemetry] = useState(createJointTelemetryStream)
   const [state, setState] = useState<SSEState>(() => ({ ...INITIAL_STATE, jointTelemetry }))
   const esRef = useRef<EventSource | null>(null)
@@ -206,11 +207,13 @@ export function useSSE(url: string = '/api/v1/events') {
   const initialSnapshotFallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const trafficTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const truthTimer = useRef<ReturnType<typeof setInterval> | null>(null)
-  const refreshInFlight = useRef(false)
+  const refreshInFlight = useRef<Promise<string | null> | null>(null)
   const trafficInFlight = useRef(false)
   const trafficDiscoveryInFlight = useRef(false)
   const trafficEndpointRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
+  // Responses from a stopped connection must not update a restarted session.
+  const connectionEpoch = useRef(0)
   const everConnectedRef = useRef(false)
   const initialSnapshotSeenRef = useRef(false)
   const lastEventIdRef = useRef<number | null>(null)
@@ -218,98 +221,113 @@ export function useSSE(url: string = '/api/v1/events') {
   const connectRef = useRef<() => void>(() => {})
   const refreshRef = useRef<(reason: string, mode?: SnapshotRefreshMode) => void>(() => {})
 
-  const refreshSnapshot = useCallback(async (
+  const refreshSnapshot = useCallback((
     reason: string,
     mode: SnapshotRefreshMode = 'full',
   ) => {
-    if (refreshInFlight.current) return
-    refreshInFlight.current = true
-    try {
-      const includeState = mode !== 'auxiliary'
-      const includeAuxiliary = mode !== 'truth'
-      let stateReceivedAt: number | null = null
-      const statePromise: Promise<StateResponse | null> = includeState
-        ? api.fetchState().then(snapshot => {
-            stateReceivedAt = Date.now()
-            return snapshot
-          })
-        : Promise.resolve(null)
-      const [stateResult, pathResult, sceneResult, locationsResult] = await Promise.allSettled([
-        statePromise,
-        includeAuxiliary ? api.fetchPath() : Promise.resolve(null),
-        includeAuxiliary ? api.fetchSceneGraph() : Promise.resolve(null),
-        includeAuxiliary ? api.fetchLocations() : Promise.resolve(null),
-      ])
-      if (!mountedRef.current) return
+    if (!enabled || !mountedRef.current) return Promise.resolve(null)
+    if (refreshInFlight.current) return refreshInFlight.current
+    const epoch = connectionEpoch.current
+    refreshInFlight.current = (async () => {
+      try {
+        const includeState = mode !== 'auxiliary'
+        const includeAuxiliary = mode !== 'truth'
+        let stateReceivedAt: number | null = null
+        const statePromise: Promise<StateResponse | null> = includeState
+          ? api.fetchState().then(snapshot => {
+              stateReceivedAt = Date.now()
+              return snapshot
+            })
+          : Promise.resolve(null)
+        const [stateResult, pathResult, sceneResult, locationsResult] = await Promise.allSettled([
+          statePromise,
+          includeAuxiliary ? api.fetchPath() : Promise.resolve(null),
+          includeAuxiliary ? api.fetchSceneGraph() : Promise.resolve(null),
+          includeAuxiliary ? api.fetchLocations() : Promise.resolve(null),
+        ])
+        if (!mountedRef.current || epoch !== connectionEpoch.current) return null
 
-      const statePayload = stateResult.status === 'fulfilled' ? stateResult.value : null
-      const pathPayload = pathResult.status === 'fulfilled' ? pathResult.value : null
-      const scenePayload = sceneResult.status === 'fulfilled' ? sceneResult.value : null
-      const locationsPayload: LocationsResponse | null =
-        locationsResult.status === 'fulfilled' ? locationsResult.value : null
+        const statePayload = stateResult.status === 'fulfilled' ? stateResult.value : null
+        const pathPayload = pathResult.status === 'fulfilled' ? pathResult.value : null
+        const scenePayload = sceneResult.status === 'fulfilled' ? sceneResult.value : null
+        const locationsPayload: LocationsResponse | null =
+          locationsResult.status === 'fulfilled' ? locationsResult.value : null
 
-      const failures = [stateResult, pathResult, sceneResult, locationsResult]
-        .filter(result => result.status === 'rejected').length
-      const odometry = statePayload ? snapshotOdometry(statePayload) : null
-      const safety = statePayload ? snapshotSafety(statePayload) : null
+        const failures = [stateResult, pathResult, sceneResult, locationsResult]
+          .filter(result => result.status === 'rejected').length
+        const odometry = statePayload ? snapshotOdometry(statePayload) : null
+        const safety = statePayload ? snapshotSafety(statePayload) : null
 
-      const refreshedAt = Date.now()
-      setState(prev => {
-        const truth = !includeState
-          ? {
-              authoritativeStateSeen: prev.authoritativeStateSeen,
-              lastTruthAt: prev.lastTruthAt,
-              truthError: prev.truthError,
-            }
-          : observeAuthoritativeTruth(
-              prev,
-              statePayload
-                ? { ok: true }
-                : {
-                    ok: false,
-                    error: stateResult.status === 'rejected'
-                      ? stateResult.reason
-                      : 'authoritative_state_missing',
-                  },
-              refreshedAt,
-            )
-        return {
-          ...prev,
-          ...truth,
-          odometry: statePayload ? odometry : prev.odometry,
-          safetyState: safety ?? prev.safetyState,
-          session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
-          navigationStatus: statePayload?.navigation ?? prev.navigationStatus,
-          visualServoStatus: statePayload?.visual_servo ?? prev.visualServoStatus,
-          lease: statePayload?.lease ?? prev.lease,
-          stateSnapshot: statePayload ?? prev.stateSnapshot,
-          stateSnapshotReceivedAt: statePayload ? stateReceivedAt : prev.stateSnapshotReceivedAt,
-          globalPath: pathPayload
+        const refreshedAt = Date.now()
+        setState(prev => {
+          if (statePayload && prev.stateSnapshot && statePayload.ts < prev.stateSnapshot.ts) return prev
+          const truth = !includeState
             ? {
-                type: 'global_path',
-                points: pathPayload.path,
-                frame_id: pathPayload.frame_id ?? null,
-                stamp_s: pathPayload.ts ?? null,
+                authoritativeStateSeen: prev.authoritativeStateSeen,
+                lastTruthAt: prev.lastTruthAt,
+                truthError: prev.truthError,
               }
-            : prev.globalPath,
-          sceneGraph: scenePayload ? snapshotSceneGraph(scenePayload) : prev.sceneGraph,
-          locations: locationsPayload ?? prev.locations,
-          lastRefreshAt: refreshedAt,
+            : observeAuthoritativeTruth(
+                prev,
+                statePayload
+                  ? { ok: true }
+                  : {
+                      ok: false,
+                      error: stateResult.status === 'rejected'
+                        ? stateResult.reason
+                        : 'authoritative_state_missing',
+                    },
+                refreshedAt,
+              )
+          return {
+            ...prev,
+            ...truth,
+            odometry: statePayload ? odometry : prev.odometry,
+            safetyState: safety ?? prev.safetyState,
+            session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
+            navigationStatus: latestNavigationStatus(prev.navigationStatus, statePayload?.navigation),
+            visualServoStatus: statePayload?.visual_servo ?? prev.visualServoStatus,
+            lease: statePayload?.lease ?? prev.lease,
+            stateSnapshot: statePayload ?? prev.stateSnapshot,
+            stateSnapshotReceivedAt: statePayload ? stateReceivedAt : prev.stateSnapshotReceivedAt,
+            globalPath: pathPayload
+              ? {
+                  type: 'global_path',
+                  points: pathPayload.path,
+                  frame_id: pathPayload.frame_id ?? null,
+                  stamp_s: pathPayload.ts ?? null,
+                }
+              : prev.globalPath,
+            sceneGraph: scenePayload ? snapshotSceneGraph(scenePayload) : prev.sceneGraph,
+            locations: locationsPayload ?? prev.locations,
+            lastRefreshAt: refreshedAt,
+            lastRefreshReason: reason,
+            refreshError: failures > 0 ? `${failures}_snapshot_fetch_failed` : null,
+          }
+        })
+        return stateResult.status === 'rejected'
+          ? stateResult.reason instanceof Error ? stateResult.reason.message : String(stateResult.reason)
+          : failures > 0 ? `${failures}_snapshot_fetch_failed` : null
+      } catch (err) {
+        if (!mountedRef.current || epoch !== connectionEpoch.current) return null
+        setState(prev => ({
+          ...prev,
+          refreshError: err instanceof Error ? err.message : String(err),
           lastRefreshReason: reason,
-          refreshError: failures > 0 ? `${failures}_snapshot_fetch_failed` : null,
-        }
-      })
-    } catch (err) {
-      if (!mountedRef.current) return
-      setState(prev => ({
-        ...prev,
-        refreshError: err instanceof Error ? err.message : String(err),
-        lastRefreshReason: reason,
-      }))
-    } finally {
-      refreshInFlight.current = false
-    }
-  }, [])
+        }))
+        return err instanceof Error ? err.message : String(err)
+      } finally {
+        if (epoch === connectionEpoch.current) refreshInFlight.current = null
+      }
+    })()
+    return refreshInFlight.current
+  }, [enabled])
+
+  const refresh = useCallback(async () => {
+    await refreshInFlight.current
+    const error = await refreshSnapshot('manual_status_refresh', 'truth')
+    if (error) throw new Error(error)
+  }, [refreshSnapshot])
 
   const queueRefresh = useCallback((reason: string, mode: SnapshotRefreshMode = 'full') => {
     if (refreshTimer.current) return
@@ -328,11 +346,13 @@ export function useSSE(url: string = '/api/v1/events') {
   const discoverTrafficEndpoint = useCallback(async (): Promise<string | null> => {
     if (trafficDiscoveryInFlight.current) return trafficEndpointRef.current
     trafficDiscoveryInFlight.current = true
+    const epoch = connectionEpoch.current
     try {
       const [bootstrapResult, capabilitiesResult] = await Promise.allSettled([
         api.fetchAppBootstrap(),
         api.fetchAppCapabilities(),
       ])
+      if (!mountedRef.current || epoch !== connectionEpoch.current) return null
       const bootstrap = bootstrapResult.status === 'fulfilled' ? bootstrapResult.value : null
       const capabilities = capabilitiesResult.status === 'fulfilled' ? capabilitiesResult.value : null
       if (mountedRef.current) {
@@ -345,7 +365,7 @@ export function useSSE(url: string = '/api/v1/events') {
       }
       return endpoint
     } finally {
-      trafficDiscoveryInFlight.current = false
+      if (epoch === connectionEpoch.current) trafficDiscoveryInFlight.current = false
     }
   }, [])
 
@@ -354,11 +374,13 @@ export function useSSE(url: string = '/api/v1/events') {
     if (!endpoint) return
     if (trafficInFlight.current) return
     trafficInFlight.current = true
+    const epoch = connectionEpoch.current
     try {
       const traffic = await api.fetchAppTraffic(endpoint)
-      if (!mountedRef.current) return
+      if (!mountedRef.current || epoch !== connectionEpoch.current) return
       setState(prev => ({ ...prev, traffic }))
     } catch (err) {
+      if (!mountedRef.current || epoch !== connectionEpoch.current) return
       const message = err instanceof Error ? err.message : String(err)
       if (message.includes('HTTP 404') || message.includes('HTTP 405')) {
         trafficEndpointRef.current = null
@@ -372,7 +394,7 @@ export function useSSE(url: string = '/api/v1/events') {
       }
       // Traffic is diagnostic; keep the main realtime path alive if it is unavailable.
     } finally {
-      trafficInFlight.current = false
+      if (epoch === connectionEpoch.current) trafficInFlight.current = false
     }
   }, [])
 
@@ -387,7 +409,7 @@ export function useSSE(url: string = '/api/v1/events') {
     esRef.current = es
 
     es.onopen = () => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || esRef.current !== es) return
       lastReliableSeqRef.current = null
       jointTelemetry.setConnected(true)
       setState(prev => ({ ...prev, connected: true, lastError: null }))
@@ -406,7 +428,7 @@ export function useSSE(url: string = '/api/v1/events') {
     }
 
     es.onmessage = (e: MessageEvent) => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || esRef.current !== es) return
       // Handle NDJSON: each line is a JSON object
       const lines = (e.data as string).split('\n').filter(l => l.trim())
       for (const line of lines) {
@@ -452,11 +474,14 @@ export function useSSE(url: string = '/api/v1/events') {
                 }
                 const d = evt.data || {}
                 const snapshot = d as unknown as StateResponse
+                if (!isInitialSnapshot && prev.stateSnapshot && snapshot.ts < prev.stateSnapshot.ts) break
+                next.stateSnapshot = snapshot
+                next.stateSnapshotReceivedAt = Date.now()
                 next.odometry = snapshotOdometry(snapshot)
                 const safety = snapshotSafety(snapshot)
                 if (safety) next.safetyState = safety
                 if (d.session)  next.session = d.session as never
-                if (d.navigation) next.navigationStatus = d.navigation as never
+                if (snapshot.navigation) next.navigationStatus = isInitialSnapshot ? snapshot.navigation : latestNavigationStatus(prev.navigationStatus, snapshot.navigation)
                 if (d.visual_servo) next.visualServoStatus = d.visual_servo as never
                 if (d.lease) next.lease = d.lease as never
                 Object.assign(next, observeAuthoritativeTruth(prev, { ok: true }))
@@ -474,7 +499,7 @@ export function useSSE(url: string = '/api/v1/events') {
                 next.safetyState = { type: 'safety_state', ...(evt.data as object || evt) } as never
                 break
               case 'navigation_status':
-                next.navigationStatus = (evt.data ?? evt) as never
+                next.navigationStatus = latestNavigationStatus(prev.navigationStatus, (evt.data ?? evt) as never)
                 break
               case 'inspection_task_event':
                 next.inspectionTaskEvent = event as never
@@ -569,7 +594,7 @@ export function useSSE(url: string = '/api/v1/events') {
     }
 
     es.onerror = () => {
-      if (!mountedRef.current) return
+      if (!mountedRef.current || esRef.current !== es) return
       jointTelemetry.setConnected(false)
       clearInitialSnapshotFallback()
       es.close()
@@ -596,22 +621,32 @@ export function useSSE(url: string = '/api/v1/events') {
   }, [refreshSnapshot])
 
   useEffect(() => {
+    if (!enabled) return
+    const epoch = connectionEpoch.current
     mountedRef.current = true
     connect()
     return () => {
       mountedRef.current = false
+      connectionEpoch.current = epoch + 1
+      refreshInFlight.current = null
+      trafficInFlight.current = false
+      trafficDiscoveryInFlight.current = false
       jointTelemetry.setConnected(false)
       if (refreshTimer.current) clearTimeout(refreshTimer.current)
+      refreshTimer.current = null
       clearInitialSnapshotFallback()
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      reconnectTimer.current = null
       if (esRef.current) {
         esRef.current.close()
         esRef.current = null
       }
+      setState(prev => ({ ...prev, connected: false, authoritativeStateSeen: false, lastTruthAt: null }))
     }
-  }, [clearInitialSnapshotFallback, connect, jointTelemetry])
+  }, [clearInitialSnapshotFallback, connect, jointTelemetry, enabled])
 
   useEffect(() => {
+    if (!enabled) return
     let cancelled = false
     const startTrafficPolling = async () => {
       const endpoint = await discoverTrafficEndpoint()
@@ -628,9 +663,10 @@ export function useSSE(url: string = '/api/v1/events') {
         trafficTimer.current = null
       }
     }
-  }, [discoverTrafficEndpoint, refreshTraffic])
+  }, [discoverTrafficEndpoint, refreshTraffic, enabled])
 
   useEffect(() => {
+    if (!enabled) return
     truthTimer.current = setInterval(() => {
       refreshRef.current('authoritative_truth_poll', 'truth')
     }, AUTHORITATIVE_TRUTH_REFRESH_MS)
@@ -640,7 +676,7 @@ export function useSSE(url: string = '/api/v1/events') {
         truthTimer.current = null
       }
     }
-  }, [])
+  }, [enabled])
 
-  return state
+  return { ...(enabled ? state : INITIAL_STATE), jointTelemetry, refresh }
 }

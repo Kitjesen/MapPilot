@@ -1,0 +1,50 @@
+.dialog, .dialog:has(input) { width: 880px; padding: 18px; border-radius: 22px; box-sizing: border-box; }
+:where(.dialog) button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 6px 10px; border: 0; border-radius: 10px; background: var(--bg-layer-2); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+:where(.dialog) button:hover { background: color-mix(in srgb, var(--text) 8%, var(--bg-layer-1)); }
+.dialog button:disabled { opacity: .45; cursor: default; }
+.dialog :is(button, input, select):focus-visible { outline: 2px solid #749dd4; outline-offset: 2px; }
+.dialog .close { margin-left: auto; background: transparent; }
+.tabs { display: flex; gap: 4px; margin: 8px 0 12px; }
+.tabs button { background: transparent; color: var(--text-dim); }
+.tabs button[aria-selected='true'] { background: #eaf1fa; color: #365c8c; }
+.taskSnapshot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px; margin-top: 10px; border-radius: 12px; background: var(--bg-layer-2); font-size: 12px; }
+.mapChoice { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 12px; }
+.mapChoice span { flex-shrink: 0; }
+.mapChoice select { min-width: 0; max-width: 420px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-layer-1); color: var(--text); font: inherit; }
+.routeSource { font-size: 12px; color: var(--text-dim); }
+.routeSource summary { width: fit-content; cursor: pointer; padding: 3px 0; }
+.routeSource .mapChoice { margin: 8px 0 0; }
+.routeSource .error { font-size: 12px; color: var(--text-dim); margin: 6px 0 0; }
+.toolbar, .toolbar > div, .points header, .footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.toolbar { padding: 8px 0 12px; font-size: 12px; }
+.toolbar b { font-weight: 400; margin-left: 10px; color: var(--text-faint); }
+.layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(240px, 1fr); gap: 12px; }
+.mapPanel { position: relative; min-height: 300px; overflow: hidden; border-radius: 15px; background: var(--bg-layer-2); }
+.mapCanvas { position: absolute; inset: 0; }
+.mapPlaceholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; color: var(--text-faint); }
+.mapPlaceholder strong { font-size: 14px; font-weight: 500; }
+.mapPlaceholder span { font-size: 12px; }
+.mapMessage { position: absolute; bottom: 10px; left: 10px; right: 10px; padding: 6px 10px; border-radius: 9px; background: var(--bg-layer-1); font-size: 12px; box-shadow: 0 2px 8px #00000008; }
+.points { min-width: 0; }
+.points header { padding: 5px 0 8px; font-size: 13px; }
+.points header > span { padding: 2px 7px; border-radius: 7px; color: #657c9c; background: #eaf1fa; font-size: 11px; }
+.points ol { list-style: none; padding: 0; margin: 0; max-height: 260px; overflow-y: auto; }
+.points li { display: flex; gap: 9px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--text) 7%, transparent); }
+.number { flex-shrink: 0; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #eaf1fa; color: #587cad; font-size: 11px; }
+.pointText { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.pointText strong { font-size: 13px; font-weight: 550; }
+.pointText span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.pointText small { font-size: 10px; color: var(--text-faint); }
+.pointActions { display: flex; align-items: flex-start; gap: 1px; }
+.pointActions button { padding: 5px; min-height: 27px; background: transparent; }
+.empty { display: grid; place-items: center; align-content: center; gap: 10px; min-height: 210px; font-size: 13px; color: var(--text-faint); }
+.entry { display: grid; grid-template-columns: 1fr 1fr 1fr 1.1fr auto auto; align-items: end; gap: 8px; margin-top: 12px; }
+.entry label { display: grid; gap: 4px; min-width: 0; font-size: 11px; }
+.entry input, .entry select { width: 100%; min-width: 0; box-sizing: border-box; height: 34px; border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); border-radius: 9px; background: var(--bg-layer-1); color: var(--text); padding: 6px 8px; font: inherit; font-size: 12px; }
+.dialog .add { background: #e4edfa; color: #365c8c; }
+.footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--text) 7%, transparent); font-size: 12px; }
+.error, .notice { margin-top: 10px; font-size: 12px; }
+.error { color: var(--red); }
+.notice { color: #507c60; }
+@media (max-width: 700px) { .layout { grid-template-columns: 1fr; } .mapPanel { min-height: 220px; } .points ol { max-height: 180px; } .empty { min-height: 65px; } .entry { grid-template-columns: 1fr 1fr; } .dialog, .dialog:has(input) { padding: 14px; } }
+@media (pointer: coarse) { .dialog button, .entry input, .entry select { min-height: 44px; } .pointActions button { min-width: 36px; } }

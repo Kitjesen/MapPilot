@@ -6,20 +6,17 @@ import { useSSE } from './hooks/useSSE'
 import { useToast } from './hooks/useToast'
 import { useProductControl } from './hooks/useProductControl'
 import { Topbar } from './components/Topbar'
-import { CameraFeed } from './components/CameraFeed'
-import { ChatPanel } from './components/ChatPanel'
-import { LocalizationCard } from './components/LocalizationCard'
-import { StatusBar } from './components/StatusBar'
+import { useMenuDismiss } from './components/menuEvents.ts'
+import { MapSettingsProvider } from './components/MapSettings.tsx'
 const MapView = lazy(() => import('./components/MapView').then(m => ({ default: m.MapView })))
-const SlamStatusPanel = lazy(() => import('./components/SlamStatusPanel').then(m => ({ default: m.SlamStatusPanel })))
 import { SceneView } from './components/SceneView'
-const PlannerTuning = lazy(() => import('./components/PlannerTuning').then(m => ({ default: m.PlannerTuning })))
-import { RobotStatusPanel } from './components/RobotStatusPanel'
-const RuntimeDataflowView = lazy(() => import('./components/RuntimeDataflowView').then(m => ({ default: m.RuntimeDataflowView })))
-const InspectionWorkbench = lazy(() => import('./components/InspectionWorkbench').then(m => ({ default: m.InspectionWorkbench })))
 import { CurrentTaskCard } from './components/CurrentTaskCard'
 import { InstructionTaskBar } from './components/InstructionTaskBar'
+import { AgentConversation } from './components/AgentConversation'
+import { SensorMonitorProvider } from './components/SensorMonitor'
+import { SharedConversation } from './components/SharedConversation'
 import { useInstructionTask } from './hooks/useInstructionTask'
+import { useAgentConversation } from './hooks/useAgentConversation'
 import { instructionTaskCanDismiss } from './services/instructionTask'
 import { useTheme } from './components/useTheme'
 import { readStoredLocale, text, writeStoredLocale, type Locale } from './i18n'
@@ -33,7 +30,7 @@ import {
   MotionGateReason,
   evaluateMotionAction,
 } from './services/motionTruth'
-import type { InspectionRoute, Tab } from './types'
+import type { Tab } from './types'
 import './App.css'
 
 const MOTION_TRUTH_MAX_AGE_MS = 7_000
@@ -62,25 +59,21 @@ function motionBlockedMessage(reason: string, locale: Locale): string {
 }
 
 function Dashboard() {
+  const appRef = useRef<HTMLDivElement>(null)
+  useMenuDismiss(appRef)
   const [mapEntry] = useState(() => initialMapEntry(window.location.search))
   const [taskPanelTarget, setTaskPanelTarget] = useState<HTMLDivElement | null>(null)
   const [globalTaskPanelTarget, setGlobalTaskPanelTarget] = useState<HTMLDivElement | null>(null)
   const [elevationSubscription, setElevationSubscription] = useState(false)
-  const sseState = useSSE(
-    elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
-  )
   const { toasts, show: showToast, dismiss } = useToast()
   const { theme, resolvedTheme, setTheme } = useTheme()
   const [locale, setLocale] = useState<Locale>(() => readStoredLocale())
-  const [uptimeSeconds, setUptimeSeconds] = useState(0)
   const [nowMs, setNowMs] = useState(() => Date.now())
-  const liveNavigation = liveNavigationStatus(sseState, nowMs / 1000)
-  const activeTaskId = liveNavigation?.task.task_id
   const [activeTab, setActiveTab] = useState<Tab>(mapEntry.tab)
-  const currentTaskPanelTarget = activeTab === 'scene' ? taskPanelTarget : globalTaskPanelTarget
+  const [mapReturnTab, setMapReturnTab] = useState<'scene' | 'mapping'>('scene')
+  const sceneWorkspace = activeTab === 'scene' || activeTab === 'mapping'
+  const currentTaskPanelTarget = sceneWorkspace ? taskPanelTarget : globalTaskPanelTarget
   const [selectedSavedMap, setSelectedSavedMap] = useState<string | null>(mapEntry.map)
-  const [sceneRoute, setSceneRoute] = useState<InspectionRoute | null>(null)
-  const [selectedInspectionRouteId, setSelectedInspectionRouteId] = useState<string | null>(null)
   const mapEditorExitGuard = useRef<((proceed: () => void) => void) | null>(null)
   const handleMapEditorExitGuardChange = useCallback((guard: ((proceed: () => void) => void) | null) => {
     mapEditorExitGuard.current = guard
@@ -89,35 +82,36 @@ function Dashboard() {
     if (mapEditorExitGuard.current) mapEditorExitGuard.current(proceed)
     else proceed()
   }, [])
-  const handleShowRoute = useCallback((route: InspectionRoute) => {
-    leaveMapEditor(() => {
-      setSceneRoute(route)
-      setActiveTab('scene')
+  const handleProductChanged = useCallback((product: 'map' | 'nav' | 'inspection', restoring: boolean) => {
+    setActiveTab(current => {
+      if (restoring && current !== 'scene') return current
+      return product === 'map' ? 'mapping' : 'scene'
     })
-  }, [leaveMapEditor])
-  const handleProductChanged = useCallback(() => setActiveTab('scene'), [])
+  }, [])
   const productControl = useProductControl(handleProductChanged)
+  const standby = productControl.available && productControl.current?.status === 'stopped' && !productControl.busy
+  const sseState = useSSE(
+    elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
+    !standby,
+  )
+  const liveNavigation = liveNavigationStatus(sseState, nowMs / 1000)
+  const activeTaskId = liveNavigation?.task.task_id
   const handleOpenSavedMap = useCallback((name: string | null) => {
     leaveMapEditor(() => {
+      setMapReturnTab(activeTab === 'mapping' ? 'mapping' : 'scene')
       setSelectedSavedMap(name)
       setActiveTab('map')
     })
-  }, [leaveMapEditor])
+  }, [activeTab, leaveMapEditor])
   const handleTabChange = useCallback((tab: Tab) => {
     const proceed = () => {
+      if (tab === 'map') setMapReturnTab(activeTab === 'mapping' ? 'mapping' : 'scene')
       setSelectedSavedMap(null)
       setActiveTab(tab)
     }
     if (tab === activeTab) proceed()
     else leaveMapEditor(proceed)
   }, [activeTab, leaveMapEditor])
-  const handleOpenInspection = useCallback((routeId: string | null) => {
-    leaveMapEditor(() => {
-      setSelectedInspectionRouteId(routeId)
-      setSelectedSavedMap(null)
-      setActiveTab('inspection')
-    })
-  }, [leaveMapEditor])
   const [estopResetIssuedAt, setEstopResetIssuedAt] = useState<number | null>(null)
   const estop = sseState.safetyState?.estop ?? false
   const motionTruth = {
@@ -152,9 +146,11 @@ function Dashboard() {
     : motionBlockedMessage(estopResetGate.reason, locale)
   const estopResetBusy = estopResetIssuedAt !== null && estop
   const instructionTask = useInstructionTask({
+    enabled: !standby,
     motionStartAllowed: motionStartGate.allowed,
     motionStartBlockedReason,
   })
+  const agentConversation = useAgentConversation(instructionTask.adopt, !standby, sseState.agentMessage)
   const nativeTaskIdentity = useSyncExternalStore(
     currentNavigationTaskStore.subscribe,
     currentNavigationTaskStore.getSnapshot,
@@ -167,7 +163,6 @@ function Dashboard() {
 
   useEffect(() => {
     const t = setInterval(() => {
-      setUptimeSeconds(s => s + 1)
       setNowMs(Date.now())
     }, 1000)
     return () => clearInterval(t)
@@ -254,10 +249,17 @@ function Dashboard() {
   }, [estop, estopResetIssuedAt, locale, motionStartGate.allowed, showToast])
 
   return (
-    <div className="app">
+    <SensorMonitorProvider sseState={sseState} localNowS={nowMs / 1000} locale={locale} onAnalyze={(id, start, end) => {
+      const prompt = `请读取 IMU 记录 ${id} 中 ${start.toFixed(3)} 到 ${end.toFixed(3)} 秒的观测，并用 Python 分析角速度和加速度。说明缺失数据与时间间断。`
+      agentConversation.setDraft(agentConversation.draft.trim() ? `${agentConversation.draft}\n\n${prompt}` : prompt)
+      agentConversation.setOpen(true)
+    }}>
+    <div ref={appRef} className="app">
       <Topbar
         sseState={sseState}
-        activeTab={activeTab}
+        standby={standby}
+        localNowS={nowMs / 1000}
+        activeTab={activeTab === 'map' ? mapReturnTab : activeTab}
         onTabChange={handleTabChange}
         theme={theme}
         resolvedTheme={resolvedTheme}
@@ -265,55 +267,23 @@ function Dashboard() {
         locale={locale}
         onLocaleChange={handleLocaleChange}
         onStop={handleStop}
+        showToast={showToast}
       />
 
-      <main className="main-content" key={activeTab}>
-        <Suspense fallback={<div className="view-loading" role="status">{text(locale, 'Loading view…', '正在打开视图…')}</div>}>
-        {activeTab === 'console' && (
-          <div className="console-canvas" role="tabpanel" id="panel-console">
-            <div className="console-grid">
-              <section className="console-camera" aria-label="camera feed">
-                <CameraFeed
-                  onResetEstop={handleResetEstop}
-                  estop={estop}
-                  resetBusy={estopResetBusy}
-                  resetAllowed={estopResetGate.allowed}
-                  resetBlockedReason={estopResetBlockedReason}
-                  sseState={sseState}
-                  locale={locale}
-                />
-              </section>
-              <section className="console-localization" aria-label="localization">
-                <LocalizationCard sseState={sseState} />
-              </section>
-              <section className="console-mode" aria-label="robot status">
-                <RobotStatusPanel
-                  sseState={sseState}
-                  showToast={showToast}
-                  locale={locale}
-                  motionStartAllowed={motionStartGate.allowed}
-                  motionStartBlockedReason={motionStartBlockedReason}
-                />
-              </section>
-              <section className="console-chat" aria-label="assistant">
-                <ChatPanel
-                  controller={instructionTask}
-                  sseState={sseState}
-                  motionStartAllowed={motionStartGate.allowed}
-                  motionStartBlockedReason={motionStartBlockedReason}
-                />
-              </section>
-            </div>
-          </div>
-        )}
-        {activeTab === 'scene' && (
+      <main className="main-content" data-scene={sceneWorkspace} key={activeTab}>
+        {(productControl.message || standby) && <div className="product-transition" role="status">
+          <span>{productControl.message ? productControl.message : text(locale, 'Standby. Ready to start mapping.', '机器人待机中，可以开始建图。')}</span>
+          {standby && <button disabled={!productControl.allowed} onClick={() => void productControl.switchProduct('map')}>{text(locale, 'Start mapping', '开始建图')}</button>}
+          {!standby && !productControl.busy && <button onClick={productControl.dismiss} aria-label="关闭模式切换提示">关闭</button>}
+        </div>}
+        {!standby && <Suspense fallback={<div className="view-loading" role="status">{text(locale, 'Loading view…', '正在打开视图…')}</div>}>
+        {sceneWorkspace && (
           <>
-          {productControl.message && <div className="product-transition" role="status">
-            <span>{productControl.message}</span>
-            {!productControl.busy && <button onClick={productControl.dismiss}>关闭</button>}
-          </div>}
           <SceneView
+            workspace={activeTab === 'mapping' ? 'mapping' : 'navigation'}
             instructionStatus={instructionTask.task?.status ?? null}
+            onResetEstop={handleResetEstop}
+            resetEstopReason={estopResetBusy ? text(locale, 'Waiting for confirmation', '等待解除确认') : estopResetBlockedReason}
             onTaskPanelMount={setTaskPanelTarget}
             sseState={sseState}
             showToast={showToast}
@@ -326,9 +296,6 @@ function Dashboard() {
             onElevationSubscriptionChange={setElevationSubscription}
             onOpenSavedMap={handleOpenSavedMap}
             onMapEditorExitGuardChange={handleMapEditorExitGuardChange}
-            initialRoute={sceneRoute}
-            onRouteSaved={setSceneRoute}
-            onOpenInspection={handleOpenInspection}
             onStartMapping={() => void productControl.switchProduct('map')}
             productSwitchAllowed={productControl.allowed}
             productSwitchReason={productControl.reason}
@@ -338,40 +305,37 @@ function Dashboard() {
         {activeTab === 'map' && (
           <MapView
             initialSelectedMap={selectedSavedMap}
+            onMapEditorExitGuardChange={handleMapEditorExitGuardChange}
             onUseMap={(name, pose) => void productControl.switchProduct('nav', name, pose)}
             productSwitchAllowed={productControl.allowed}
             productSwitchReason={productControl.reason}
-            productSwitchMessage={productControl.message}
-            onReturnLive={() => handleTabChange('scene')}
+            onReturnLive={() => handleTabChange(mapReturnTab)}
+            returnLabel={mapReturnTab === 'mapping' ? text(locale, 'Mapping', '建图') : text(locale, 'Navigation', '导航')}
             session={sseState.session}
             slamDiag={sseState.slamDiag?.data ?? null}
             showToast={showToast}
             locale={locale}
           />
         )}
-        {activeTab === 'slam' && <SlamStatusPanel sseState={sseState} showToast={showToast} locale={locale} />}
-        {activeTab === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
-        {activeTab === 'inspection' && (
-          <InspectionWorkbench sseState={sseState} showToast={showToast} locale={locale}
-            onShowRoute={handleShowRoute} initialRouteId={selectedInspectionRouteId} />
-        )}
-        {activeTab === 'planner' && <PlannerTuning showToast={showToast} />}
-
-        </Suspense>
+        </Suspense>}
       </main>
 
-      <div className="global-task-slot" ref={setGlobalTaskPanelTarget} />
-      {!isObservationMode() && currentTaskPanelTarget && createPortal(
+      <div data-chat-slot="global" className="global-task-slot" ref={setGlobalTaskPanelTarget} />
+      {!standby && !isObservationMode() && currentTaskPanelTarget && createPortal(
+        <>
         <InstructionTaskBar
           controller={instructionTask}
+          showComposer={false}
           locale={locale}
           motionStartAllowed={motionStartGate.allowed}
           motionStartBlockedReason={sseState.connected ? motionStartBlockedReason : ''}
           hasNativeTask={Boolean(nativeTaskIdentity) && !instructionOwnsNativeTask}
-        />,
+        />
+        <AgentConversation locale={locale} controller={agentConversation} />
+        </>,
         currentTaskPanelTarget,
       )}
-      {!isObservationMode() && !instructionOwnsNativeTask && <CurrentTaskCard
+      {!standby && !isObservationMode() && !instructionOwnsNativeTask && <CurrentTaskCard
         container={currentTaskPanelTarget}
         locale={locale}
         showToast={showToast}
@@ -379,14 +343,16 @@ function Dashboard() {
         resumeBlockedReason={motionResumeBlockedReason}
       />
       }
-      {activeTab !== 'scene' && activeTab !== 'map' && activeTab !== 'inspection' && <StatusBar sseState={sseState} uptimeSeconds={uptimeSeconds} locale={locale} />}
       <ToastContainer toasts={toasts} dismiss={dismiss} />
     </div>
+    </SensorMonitorProvider>
   )
 }
 
 function App() {
-  return <Dashboard />
+  const shareToken = new URLSearchParams(window.location.search).get('conversation-share')
+  if (shareToken) return <SharedConversation token={shareToken} locale={readStoredLocale()} />
+  return <MapSettingsProvider><Dashboard /></MapSettingsProvider>
 }
 
 export default App

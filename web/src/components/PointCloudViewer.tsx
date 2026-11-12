@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState, useCallback, type CSSProperties } from 'react'
-import { ChevronDown, ChevronUp, Maximize2, RotateCcw, SlidersHorizontal, X } from 'lucide-react'
+import { Blend, ChevronDown, ChevronUp, CircleDot, Maximize2, Monitor, Moon, Palette, RotateCcw, SlidersHorizontal, Sun, X } from 'lucide-react'
 import styles from './PointCloudViewer.module.css'
 import { parsePcd, pcdCameraDistance, pcdPointCount } from '../services/pcdPreview.ts'
 import { pickVisiblePcdPoint, projectPcdPoint, type PointCloudPick } from '../services/pcdPicking.ts'
 import { fetchMapPreview } from '../services/mapPreview.ts'
 import { CLOUD_PALETTES, DEFAULT_CLOUD_STYLE, readCloudStyle, saveCloudStyle, cloudStyleColors, type CloudStyle } from '../services/cloudStyle.ts'
+import { CLOUD_HEIGHT_GLSL, CLOUD_HEIGHT_GRADIENT, cloudColorRange } from '../services/cloudHeightColor.ts'
 import type { RecordingCloudView } from '../types/recordingScene.ts'
 
 export type { PointCloudPick } from '../services/pcdPicking.ts'
@@ -41,7 +42,7 @@ const VS = `
     // LingTu X-forward/Y-left/Z-up -> Three X/Y-up/Z (x,z,-y).
     gl_Position = u_mvp * vec4(a_pos.x, a_pos.z, -a_pos.y, 1.0);
     gl_PointSize = u_pointSize;
-    v_t = clamp((a_pos.z - u_minZ) / max(u_rangeZ, 0.01), 0.0, 1.0);
+    v_t = u_rangeZ > 0.0 ? clamp((a_pos.z - u_minZ) / u_rangeZ, 0.0, 1.0) : 0.5;
     v_z = a_pos.z;
   }
 `
@@ -54,11 +55,13 @@ const FS = `
   uniform bool u_points;
   uniform float u_maxZ;
   uniform float u_opacity;
+  uniform bool u_heightColors;
+  ${CLOUD_HEIGHT_GLSL}
   void main() {
     if (u_points && v_z > u_maxZ) discard;
     if (u_points && distance(gl_PointCoord, vec2(0.5)) > 0.5) discard;
     gl_FragColor = u_points
-      ? vec4(mix(u_lo, u_hi, v_t), u_opacity)
+      ? vec4(u_heightColors ? cloudHeightColor(v_t) : mix(u_lo, u_hi, v_t), u_opacity)
       : vec4(u_lo, u_opacity);
   }
 `
@@ -144,6 +147,7 @@ interface GLS {
   gridbuf: WebGLBuffer; gridCount: number
   pts: Float32Array
   minZ: number; rangeZ: number
+  colorRange: { min: number; max: number }
   maxVisibleZ: number
   center: [number,number,number]; radius: number
   mapCenter: [number,number,number]
@@ -172,6 +176,7 @@ function uploadCloudScene(canvas: HTMLCanvasElement, pts: Float32Array, style: C
   }
   if (!Number.isFinite(x0)) { x0 = y0 = z0 = -.5; x1 = y1 = z1 = .5 }
   const radius = Math.max(.1, Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2)
+  const colorRange = cloudColorRange(pts) ?? { min: z0, max: z1 }
   const gl = previous?.gl ?? canvas.getContext('webgl')
   if (!gl) throw new Error('WebGL unavailable')
   gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST)
@@ -179,13 +184,13 @@ function uploadCloudScene(canvas: HTMLCanvasElement, pts: Float32Array, style: C
   const mapCenter: [number, number, number] = [(x0 + x1) / 2, (z0 + z1) / 2, -(y0 + y1) / 2]
   const scene: GLS = previous ?? {
     gl, prog: compileProg(gl), vbuf: gl.createBuffer()!, gridbuf: gl.createBuffer()!,
-    nPts: 0, pts, gridCount: 0, minZ: z0, rangeZ: z1 - z0, maxVisibleZ: z1,
+    nPts: 0, pts, gridCount: 0, minZ: z0, rangeZ: z1 - z0, colorRange, maxVisibleZ: z1,
     center: [...mapCenter], mapCenter, radius, theta: -Math.PI / 2, phi: 0,
     dist: pcdCameraDistance(radius, canvas.width / canvas.height), fitted: true, mode: '2d',
     colors: heightColors(canvas), style,
   }
   const followCeiling = !previous || previous.maxVisibleZ >= previous.minZ + previous.rangeZ
-  Object.assign(scene, { pts, nPts: pts.length / 3, minZ: z0, rangeZ: z1 - z0, gridCount: grid.points.length / 3, mapCenter, radius })
+  Object.assign(scene, { pts, nPts: pts.length / 3, minZ: z0, rangeZ: z1 - z0, colorRange, gridCount: grid.points.length / 3, mapCenter, radius })
   if (followCeiling) scene.maxVisibleZ = z1
   gl.bindBuffer(gl.ARRAY_BUFFER, scene.gridbuf)
   gl.bufferData(gl.ARRAY_BUFFER, grid.points, gl.STATIC_DRAW)
@@ -198,13 +203,14 @@ function uploadCloudScene(canvas: HTMLCanvasElement, pts: Float32Array, style: C
     gl.bufferData(gl.ARRAY_BUFFER, line.points, gl.DYNAMIC_DRAW)
     return { buffer, count: line.points.length / 3, kind: line.kind }
   })
-  return { scene, width: x1 - x0, depth: y1 - y0, minZ: z0, maxZ: z1, gridStep: grid.step }
+  return { scene, width: x1 - x0, depth: y1 - y0, minZ: z0, maxZ: z1, colorRange, gridStep: grid.step }
 }
 
 interface CloudInfo {
   count: number; visibleCount: number; originalCount: number | null
   width: number; depth: number; minZ: number; maxZ: number; gridStep: number
   contentEpoch: number; frameId: string
+  colorRange: { min: number; max: number }
 }
 
 // ── Component ─────────────────────────────────────────────────
@@ -233,7 +239,6 @@ export function PointCloudViewer({
   const onPickRef    = useRef(onPick)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const [appearance, setAppearance] = useState(readCloudStyle)
-  const heightPaletteRef = useRef<CloudStyle['palette']>(appearance.palette === 'mono' ? 'blue' : appearance.palette)
   const appearanceRef = useRef(appearance)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -268,15 +273,16 @@ export function PointCloudViewer({
 
   const draw = useCallback(() => {
     const s = glRef.current; if (!s) return
-    const { gl, prog, vbuf, nPts, gridbuf, gridCount, minZ, rangeZ, colors } = s
+    const { gl, prog, vbuf, nPts, gridbuf, gridCount, colorRange, colors } = s
     const c = gl.canvas as HTMLCanvasElement
     gl.viewport(0, 0, c.width, c.height)
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
     const mvp = mvpFor(s)
     gl.useProgram(prog)
     gl.uniformMatrix4fv(gl.getUniformLocation(prog,'u_mvp'), false, mvp)
-    gl.uniform1f(gl.getUniformLocation(prog,'u_minZ'), minZ)
-    gl.uniform1f(gl.getUniformLocation(prog,'u_rangeZ'), rangeZ)
+    gl.uniform1f(gl.getUniformLocation(prog,'u_minZ'), colorRange.min)
+    gl.uniform1f(gl.getUniformLocation(prog,'u_rangeZ'), colorRange.max - colorRange.min)
+    gl.uniform1i(gl.getUniformLocation(prog,'u_heightColors'), Number(s.style.palette === 'height'))
     gl.uniform1f(gl.getUniformLocation(prog,'u_maxZ'), s.maxVisibleZ)
     gl.uniform1f(gl.getUniformLocation(prog,'u_pointSize'), s.style.pointSize * (window.devicePixelRatio || 1))
     gl.uniform1f(gl.getUniformLocation(prog,'u_opacity'), .16)
@@ -395,7 +401,7 @@ export function PointCloudViewer({
         setCeiling(uploaded.maxZ)
         setInfo({ count: pts.length/3, visibleCount: pts.length/3, originalCount: pcdPointCount(buffer),
           width: uploaded.width, depth: uploaded.depth, minZ: uploaded.minZ, maxZ: uploaded.maxZ, gridStep: uploaded.gridStep,
-          contentEpoch: preview.contentEpoch, frameId: preview.frameId })
+          colorRange: uploaded.colorRange, contentEpoch: preview.contentEpoch, frameId: preview.frameId })
         setStatus('done')
       } catch (cause) {
         if (!controller.signal.aborted) {
@@ -425,7 +431,7 @@ export function PointCloudViewer({
         setCeiling(uploaded.scene.maxVisibleZ)
         setInfo({ count: recording.points.length / 3, visibleCount: recording.points.length / 3, originalCount: recording.originalCount,
           width: uploaded.width, depth: uploaded.depth, minZ: uploaded.minZ, maxZ: uploaded.maxZ, gridStep: uploaded.gridStep,
-          contentEpoch: 0, frameId: recording.frameId })
+          colorRange: uploaded.colorRange, contentEpoch: 0, frameId: recording.frameId })
         setStatus('done')
       } catch (cause: unknown) { setErrorMessage(cause instanceof Error ? cause.message : '三维数据读取失败'); setStatus('error') }
     })
@@ -476,8 +482,8 @@ export function PointCloudViewer({
       s.center[0] += dy * unitsPerPixel
       s.fitted = false
     } else {
-      s.theta -= dx*0.007
-      s.phi = Math.max(0.05, Math.min(Math.PI-0.05, s.phi+dy*0.007))
+      s.theta += dx*0.007
+      s.phi = Math.max(0.05, Math.min(Math.PI-0.05, s.phi-dy*0.007))
     }
     draw()
   }
@@ -527,15 +533,11 @@ export function PointCloudViewer({
     : appearance.background === 'dark' ? '#101820' : appearance.backgroundColor
   const appearanceCss = {
     '--cloud-background': background,
+    '--cloud-gradient': appearance.palette === 'height' ? CLOUD_HEIGHT_GRADIENT : 'linear-gradient(90deg, rgb(var(--cloud-low)), rgb(var(--cloud-high)))',
     ...(palette ? { '--cloud-low': palette.lo.join(', '), '--cloud-high': palette.hi.join(', ') } : {}),
   } as CSSProperties
   const changeStyle = (patch: Partial<CloudStyle>) => setAppearance(current => ({ ...current, ...patch }))
-  const monochrome = appearance.palette === 'mono'
   const backgroundLabel = { theme: '随主题', light: '浅色', dark: '深色', custom: '自定义' }[appearance.background]
-  const changeColoring = (mono: boolean) => {
-    if (mono && !monochrome) heightPaletteRef.current = appearance.palette
-    changeStyle({ palette: mono ? 'mono' : heightPaletteRef.current })
-  }
   const closeSettings = () => {
     setSettingsOpen(false)
     settingsButtonRef.current?.focus()
@@ -553,7 +555,8 @@ export function PointCloudViewer({
           <button type="button" aria-pressed={viewMode === '3d'} aria-label="3D 旋转视图" onClick={() => changeView('3d')}>3D</button>
         </div>
         <button type="button" className={styles.fitBtn} onClick={onFit} aria-label="显示整图" title="显示整图"><Maximize2 size={16} /></button>
-        <button type="button" ref={settingsButtonRef} className={styles.settingsToggle} onClick={() => {
+        <button type="button" ref={settingsButtonRef} className={styles.settingsToggle}
+          onClick={() => {
           if (settingsOpen) closeSettings()
           else setSettingsOpen(true)
         }} aria-label="显示设置" title="显示设置" aria-expanded={settingsOpen} aria-controls={settingsId}>
@@ -604,81 +607,75 @@ export function PointCloudViewer({
       </div>
       {status === 'done' && <>
         <section id={settingsId} className={styles.settingsPanel} aria-label="点云显示设置" hidden={!settingsOpen}>
+          <div className={styles.settingsSurface}>
           <header><strong>点云显示</strong><div>
-            <button type="button" className={styles.resetButton} onClick={() => {
-              heightPaletteRef.current = DEFAULT_CLOUD_STYLE.palette
-              setAppearance({ ...DEFAULT_CLOUD_STYLE })
-            }} aria-label="恢复默认显示" title="恢复默认显示"><RotateCcw size={14} /></button>
+            <span className={styles.paletteSelect}>
+              <select aria-label="配色方案" value={appearance.palette} onChange={event => changeStyle({ palette: event.target.value as CloudStyle['palette'] })}>
+                {CLOUD_PALETTES.map(option => <option key={option.id} value={option.id}>
+                  {option.id === 'theme' ? '随主题' : option.label}
+                </option>)}
+              </select><ChevronDown size={13} aria-hidden="true" />
+            </span>
             <button type="button" onClick={closeSettings} aria-label="关闭显示设置"><X size={16} /></button>
           </div></header>
           <fieldset className={styles.displaySection}>
             <legend>颜色</legend>
-            <fieldset className={styles.coloringModes} aria-label="着色方式">
-              <label className={styles.coloringOption} data-selected={!monochrome}>
-                <input type="radio" name={`${settingsId}-coloring`} checked={!monochrome} onChange={() => changeColoring(false)} /><span>高度 Z</span>
-              </label>
-              <label className={styles.coloringOption} data-selected={monochrome}>
-                <input type="radio" name={`${settingsId}-coloring`} checked={monochrome} onChange={() => changeColoring(true)} /><span>单色</span>
-              </label>
-            </fieldset>
-            {monochrome ? <label className={styles.settingRow}><span>颜色</span>
-              <input type="color" aria-label="单色颜色" value={appearance.monoColor} onInput={event => changeStyle({ monoColor: event.currentTarget.value })} />
-            </label> : <>
-              <label className={styles.paletteRow}><span>色带</span><span className={styles.paletteSelect}>
-                <select aria-label="配色方案" value={appearance.palette} onChange={event => changeStyle({ palette: event.target.value as CloudStyle['palette'] })}>
-                  {CLOUD_PALETTES.filter(option => option.id !== 'mono').map(option => <option key={option.id} value={option.id}>
-                    {option.id === 'theme' ? '随主题' : option.label}
-                  </option>)}
-                </select><ChevronDown size={13} aria-hidden="true" />
-              </span></label>
               {info && <div className={styles.colorScale}>
                 <div className={styles.scaleRamp} aria-hidden="true" />
                 <div className={styles.scaleEnds}>
                   <label className={styles.scaleEnd}>
                     {appearance.palette === 'custom' && <input type="color" aria-label="低处颜色" value={appearance.lowColor} onInput={event => changeStyle({ lowColor: event.currentTarget.value })} />}
-                    <span>{info.minZ.toFixed(2)} m</span>
+                    <span>{info.colorRange.min.toFixed(2)} m</span>
                   </label>
                   <label className={styles.scaleEnd}>
-                    <span>{info.maxZ.toFixed(2)} m</span>
+                    <span>{info.colorRange.max.toFixed(2)} m</span>
                     {appearance.palette === 'custom' && <input type="color" aria-label="高处颜色" value={appearance.highColor} onInput={event => changeStyle({ highColor: event.currentTarget.value })} />}
                   </label>
                 </div>
               </div>}
-            </>}
           </fieldset>
           <fieldset className={styles.displaySection}>
             <legend>点渲染</legend>
-            <label className={styles.rangeRow}><span>点大小</span><input type="range" className={styles.slider} min="0.5" max="6" step="0.1" value={appearance.pointSize}
+            <label className={styles.rangeRow} data-kind="point-size"><span className={styles.parameterLabel}><CircleDot size={14} aria-hidden="true" />点大小</span><input type="range" className={styles.slider} min="0.5" max="6" step="0.1" value={appearance.pointSize}
               style={{ '--range-progress': `${(appearance.pointSize - 0.5) / 5.5 * 100}%` } as CSSProperties}
-              onChange={event => changeStyle({ pointSize: Number(event.target.value) })} /><output>{appearance.pointSize.toFixed(1)} px</output></label>
-            <label className={styles.rangeRow}><span>不透明度</span><input type="range" className={styles.slider} min="0" max="100" step="1" value={Math.round(appearance.opacity * 100)}
+              aria-valuetext={`${appearance.pointSize.toFixed(1)} 像素`}
+              onChange={event => changeStyle({ pointSize: Number(event.target.value) })} /><output>{appearance.pointSize.toFixed(1)} <small>px</small></output></label>
+            <label className={styles.rangeRow} data-kind="opacity"><span className={styles.parameterLabel}><Blend size={14} aria-hidden="true" />不透明度</span><input type="range" className={styles.slider} min="0" max="100" step="1" value={Math.round(appearance.opacity * 100)}
               style={{ '--range-progress': `${Math.round(appearance.opacity * 100)}%` } as CSSProperties}
-              onChange={event => changeStyle({ opacity: Number(event.target.value) / 100 })} /><output>{Math.round(appearance.opacity * 100)}%</output></label>
+              aria-valuetext={`${Math.round(appearance.opacity * 100)}%`}
+              onChange={event => changeStyle({ opacity: Number(event.target.value) / 100 })} /><output>{Math.round(appearance.opacity * 100)}<small>%</small></output></label>
           </fieldset>
           <details className={styles.moreDisplay}>
             <summary><span>场景</span><span className={styles.sceneSummaryValue}>{backgroundLabel}<ChevronDown size={13} /></span></summary>
             <fieldset className={styles.choices}>
               <legend>背景</legend>
               <div className={styles.backgroundChoices}>
-                {([{ id: 'theme', label: '随主题' }, { id: 'light', label: '浅色' }, { id: 'dark', label: '深色' }, { id: 'custom', label: '自定义' }] as const).map(option =>
+                {([{ id: 'theme', label: '随主题', icon: Monitor }, { id: 'light', label: '浅色', icon: Sun }, { id: 'dark', label: '深色', icon: Moon }, { id: 'custom', label: '自定义', icon: Palette }] as const).map(option =>
                   <label key={option.id} className={styles.backgroundOption} data-selected={appearance.background === option.id}>
                     <input type="radio" name={`${settingsId}-background`} value={option.id} checked={appearance.background === option.id}
                       onChange={() => changeStyle({ background: option.id })} />
+                    <option.icon size={18} aria-hidden="true" />
                     <span>{option.label}</span>
                   </label>)}
               </div>
             </fieldset>
             {appearance.background === 'custom' && <label className={styles.settingRow}><span>背景色</span><input type="color" aria-label="背景色" value={appearance.backgroundColor}
               onInput={event => changeStyle({ backgroundColor: event.currentTarget.value })} /></label>}
-            <label className={styles.settingRow}><span>坐标网格</span><input type="checkbox" checked={appearance.grid} onChange={event => changeStyle({ grid: event.target.checked })} /></label>
           </details>
+          </div>
+          <footer className={styles.settingsFooter}>
+            <label className={styles.settingRow}><span>坐标网格</span><input type="checkbox" checked={appearance.grid} onChange={event => changeStyle({ grid: event.target.checked })} /></label>
+            <button type="button" className={styles.resetButton} onClick={() => {
+              setAppearance({ ...DEFAULT_CLOUD_STYLE })
+            }} aria-label="恢复默认显示" title="恢复默认显示"><RotateCcw size={14} />恢复默认</button>
+          </footer>
         </section>
-        {!recordingMode && info && <details className={styles.legend} key={mapName}>
-                <summary aria-label="地图信息"><span className={styles.legendSwatch} />{appearance.palette === 'mono' ? '单色' : '高度着色'}<ChevronUp size={13} /></summary>
+        {!recordingMode && info && <details className={styles.legend} key={mapName} data-hover-menu>
+                <summary aria-label="地图信息"><span className={styles.legendSwatch} />高度着色<ChevronUp size={13} /></summary>
                 <div className={styles.legendDetail}>
-                  <div className={styles.heightRange}><span>{info.minZ.toFixed(1)} m</span><span>{info.maxZ.toFixed(1)} m</span></div>
+                  <div className={styles.heightRange}><span>{info.colorRange.min.toFixed(2)} m</span><span>{info.colorRange.max.toFixed(2)} m</span></div>
                   <div className={styles.legendRamp} />
-                  <p>{appearance.palette === 'mono' ? '统一颜色，不表示语义类别' : '颜色仅表示高度'}</p>
+                  <p>颜色仅表示高度</p>
                   <dl>
                     <div><dt>水平范围</dt><dd>{info.width.toFixed(1)} × {info.depth.toFixed(1)} m</dd></div>
                     <div><dt>当前显示</dt><dd>{info.visibleCount.toLocaleString('zh-CN')} / {info.count.toLocaleString('zh-CN')} 点</dd></div>

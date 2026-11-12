@@ -1,12 +1,21 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { SurfaceSettings } from './SurfaceSettings.tsx'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Activity, Check, CheckCircle2, CircleAlert, Download, Palette, RefreshCw, X } from 'lucide-react'
-import type { HealthResponse } from '../types'
+import { Activity, ArrowLeft, Check, CheckCircle2, ChevronRight, CircleAlert, Download, LocateFixed, Map, Network, Palette, RefreshCw, SlidersHorizontal, Stethoscope, X } from 'lucide-react'
+import { useMapSettings } from '../hooks/useMapSettings.ts'
+import { NoGoSettings } from './NoGoSettings.tsx'
+import type { HealthResponse, SSEState, ToastKind } from '../types'
 import * as api from '../services/api'
 import { resetAllLayouts } from './floatingWidgetLayout'
 import type { ResolvedTheme, Theme } from './useTheme'
 import { text, type Locale } from '../i18n'
 import styles from './SettingsMenu.module.css'
+
+const SlamStatusPanel = lazy(() => import('./SlamStatusPanel').then(module => ({ default: module.SlamStatusPanel })))
+const RuntimeDataflowView = lazy(() => import('./RuntimeDataflowView').then(module => ({ default: module.RuntimeDataflowView })))
+const PlannerTuning = lazy(() => import('./PlannerTuning').then(module => ({ default: module.PlannerTuning })))
+const LocalizationCard = lazy(() => import('./LocalizationCard').then(module => ({ default: module.LocalizationCard })))
+const SensorSettings = lazy(() => import('./SensorSettings').then(module => ({ default: module.SensorSettings })))
 
 interface SettingsMenuProps {
   open: boolean
@@ -16,9 +25,22 @@ interface SettingsMenuProps {
   onThemeChange: (theme: Theme) => void
   locale: Locale
   onLocaleChange: (locale: Locale) => void
+  sseState: SSEState
+  localNowS: number
+  showToast: (message: string, kind?: ToastKind) => void
 }
 
-type Section = 'appearance' | 'system'
+type Section = 'appearance' | 'map' | 'sensors' | 'diagnostics' | 'system'
+type Diagnostic = 'slam' | 'dataflow' | 'planner'
+
+const DIAGNOSTICS = [
+  { value: 'slam' as const, icon: LocateFixed, en: 'Localization diagnostics', zh: '定位诊断',
+    detailEn: 'SLAM status and localization quality.', detailZh: '查看 SLAM 状态与定位质量。' },
+  { value: 'dataflow' as const, icon: Network, en: 'Data diagnostics', zh: '数据诊断',
+    detailEn: 'Runtime dataflow and topic samples.', detailZh: '检查运行时数据链路与话题采样。' },
+  { value: 'planner' as const, icon: SlidersHorizontal, en: 'Planning parameters', zh: '规划参数',
+    detailEn: 'Inspect parameters and validate map plans.', detailZh: '检查参数并验证地图规划。' },
+]
 
 const THEMES: { value: Theme; en: string; zh: string }[] = [
   { value: 'system', en: 'System', zh: '跟随系统' },
@@ -107,9 +129,12 @@ function SystemSettings({ locale }: { locale: Locale }) {
   </>
 }
 
-export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChange, locale, onLocaleChange }: SettingsMenuProps) {
+export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChange, locale, onLocaleChange, sseState, localNowS, showToast }: SettingsMenuProps) {
   const panel = useRef<HTMLElement>(null)
-  const [section, setSection] = useState<Section>('appearance')
+  const mapSettings = useMapSettings()
+  const [selection, setSelection] = useState<{ section: Section; request: number }>({ section: 'appearance', request: 0 })
+  const [diagnostic, setDiagnostic] = useState<Diagnostic | null>(null)
+  const section = (mapSettings?.request ?? 0) > selection.request ? 'map' : selection.section
   useEffect(() => {
     if (!open) return
     const previousFocus = document.activeElement as HTMLElement | null
@@ -117,8 +142,10 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); onClose() }
       if (event.key !== 'Tab') return
-      const controls = panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
-      if (!controls?.length) return
+      const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary') ?? [])]
+        .filter(control => control.getClientRects().length > 0
+          && !control.matches('details:not([open]) > :not(summary), details:not([open]) > :not(summary) *'))
+      if (!controls.length) return
       const firstControl = controls[0], lastControl = controls[controls.length - 1]
       if (event.shiftKey && document.activeElement === firstControl) {
         event.preventDefault(); lastControl.focus()
@@ -129,24 +156,39 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('keydown', onKey); previousFocus?.focus() }
   }, [open, onClose])
+  useEffect(() => {
+    if (open && section === 'diagnostics') panel.current?.querySelector<HTMLButtonElement>('[data-diagnostic-focus]')?.focus()
+  }, [open, section, diagnostic])
+  useEffect(() => {
+    if (!open || section !== 'map' || mapSettings?.focus !== 'no-go') return
+    const target = panel.current?.querySelector<HTMLDetailsElement>('[data-map-section="no-go"]')
+    if (!target) return
+    target.open = true
+    target.scrollIntoView({ block: 'start' })
+    target.querySelector('summary')?.focus()
+  }, [open, section, mapSettings?.focus, mapSettings?.request, mapSettings?.map?.name, mapSettings?.map?.contentEpoch])
   if (!open) return null
+  const diagnosticEntry = DIAGNOSTICS.find(item => item.value === diagnostic)
   const categories = [
     { value: 'appearance' as const, icon: Palette, en: 'Appearance', zh: '外观' },
+    { value: 'map' as const, icon: Map, en: 'Map', zh: '地图' },
+    { value: 'sensors' as const, icon: Activity, en: 'Sensors', zh: '传感器' },
+    { value: 'diagnostics' as const, icon: Stethoscope, en: 'Diagnostics', zh: '诊断' },
     { value: 'system' as const, icon: Activity, en: 'System', zh: '系统' },
   ]
   return createPortal(<div className={styles.backdrop} onClick={onClose}>
-    <aside ref={panel} className={styles.panel} role="dialog" aria-modal="true"
+    <aside ref={panel} className={`${styles.panel} ${section === 'diagnostics' && diagnostic ? styles.expandedPanel : ''}`} role="dialog" aria-modal="true"
       aria-label={text(locale, 'Settings', '设置')} onClick={event => event.stopPropagation()}>
       <header className={styles.header}><h2>{text(locale, 'Settings', '设置')}</h2>
-        <button className={styles.iconButton} aria-label={text(locale, 'Close settings', '关闭设置')} onClick={onClose}><X size={19} /></button>
-      </header>
-      <nav className={styles.categories} aria-label={text(locale, 'Settings categories', '设置分类')}>
+        <nav className={styles.categories} aria-label={text(locale, 'Settings categories', '设置分类')}>
           {categories.map(({ value, icon: Icon, en, zh }) => <button key={value}
             aria-current={section === value ? 'page' : undefined}
-            onClick={() => setSection(value)}><Icon size={17} />{text(locale, en, zh)}</button>)}
+            onClick={() => setSelection({ section: value, request: mapSettings?.request ?? 0 })}><Icon size={17} />{text(locale, en, zh)}</button>)}
         </nav>
+        <button className={styles.iconButton} aria-label={text(locale, 'Close settings', '关闭设置')} onClick={onClose}><X size={19} /></button>
+      </header>
       <div className={styles.body}>
-        <div className={styles.content}>
+        <div className={`${styles.content} ${section === 'diagnostics' && diagnostic ? styles.diagnosticContent : ''}`}>
           {section === 'appearance' && <>
             <div className={styles.sectionHeading}><h3>{text(locale, 'Theme', '界面主题')}</h3></div>
             <div className={styles.themeOptions}>{THEMES.map(option => <button key={option.value}
@@ -154,7 +196,7 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
               onClick={() => onThemeChange(option.value)}>
               <ThemePreview theme={option.value} />
               <span className={styles.themeLabel}>{text(locale, option.en, option.zh)}
-                <span className={styles.selectedMark}>{theme === option.value && <Check size={13} strokeWidth={2.5} />}</span>
+                <span className={styles.selectedMark} aria-hidden="true"><Check size={12} strokeWidth={2.5} /></span>
               </span>
             </button>)}</div>
             {theme === 'system' && <p className={styles.themeNote}>
@@ -174,6 +216,45 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
             </div>
           </>}
           {section === 'system' && <SystemSettings locale={locale} />}
+          {section === 'sensors' && <Suspense fallback={<p role="status">正在加载传感器设置…</p>}><SensorSettings locale={locale} onOpen={onClose} /></Suspense>}
+          {section === 'diagnostics' && (diagnosticEntry ? <>
+            <div className={styles.diagnosticToolbar}>
+              <button className={styles.actionButton} data-diagnostic-focus onClick={() => setDiagnostic(null)}>
+                <ArrowLeft size={15} />{text(locale, 'Back to diagnostics', '返回诊断列表')}
+              </button>
+              <h3>{text(locale, diagnosticEntry.en, diagnosticEntry.zh)}</h3>
+            </div>
+            <div className={styles.diagnosticView}>
+              <Suspense fallback={<p role="status">{text(locale, 'Loading diagnostics…', '正在加载诊断…')}</p>}>
+                {diagnostic === 'slam' && <div className={styles.localizationDiagnostics}>
+                  <SlamStatusPanel sseState={sseState} showToast={showToast} locale={locale} />
+                  <details>
+                    <summary>{text(locale, 'Satellite and fusion', '卫星与融合')}</summary>
+                    <LocalizationCard sseState={sseState} localNowS={localNowS} locale={locale} />
+                  </details>
+                </div>}
+                {diagnostic === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
+                {diagnostic === 'planner' && <PlannerTuning showToast={showToast} />}
+              </Suspense>
+            </div>
+          </> : <>
+            <div className={styles.sectionHeading}><div><h3>{text(locale, 'Diagnostics', '诊断')}</h3>
+              <p>{text(locale, 'Inspect localization, dataflow and planning.', '查看定位状态、数据链路与规划参数。')}</p></div></div>
+            <div className={styles.diagnosticList}>
+              {DIAGNOSTICS.map(({ value, icon: Icon, en, zh, detailEn, detailZh }, index) => <button key={value}
+                data-diagnostic-focus={index === 0 ? '' : undefined} onClick={() => setDiagnostic(value)}>
+                <Icon size={19} /><span><strong>{text(locale, en, zh)}</strong><small>{text(locale, detailEn, detailZh)}</small></span><ChevronRight size={16} />
+              </button>)}
+            </div>
+          </>)}
+          {section === 'map' && <>
+            <div className={styles.sectionHeading}><div><h3>点云清洗</h3><p>{mapSettings?.editing
+              ? '参数应用到当前编辑草稿，预览后另存地图。' : '先在已保存地图中点击“清洗”。'}</p></div></div>
+            <div ref={mapSettings?.setTarget} />
+            {mapSettings && <SurfaceSettings />}
+            {mapSettings?.map && <NoGoSettings key={`${mapSettings.map.name}:${mapSettings.map.contentEpoch}`}
+              map={mapSettings.map} editing={mapSettings.editing} />}
+          </>}
         </div>
       </div>
     </aside>

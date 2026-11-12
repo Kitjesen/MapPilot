@@ -135,6 +135,8 @@ export interface LocationUpsertRequest {
   source?: string
   metadata?: Record<string, unknown>
   use_current_pose?: boolean
+  map_id?: string
+  expected_map_content_epoch?: number
   request_id?: string | null
   client_id?: string
 }
@@ -426,7 +428,7 @@ export interface ConstructedGoalTarget {
   x: number
   y: number
   z: number
-  yaw: number
+  yaw: number | null
   frame_id: string
   source: string
   target_type: string
@@ -879,6 +881,8 @@ export interface ExplorationStatusResponse {
 }
 
 export interface ClientLinks {
+  robot_capabilities?: string
+  robot_sensor?: string
   bootstrap?: string
   capabilities?: string
   traffic?: string
@@ -920,6 +924,8 @@ export interface ClientLinks {
   inspection_task_resume?: string
   inspection_task_cancel?: string
   inspection_status?: string
+  inspection_schedules?: string
+  inspection_schedule_detail?: string
   navigation_cancel?: string
   navigation_task_cancel?: string
   navigation_task_pause?: string
@@ -941,8 +947,11 @@ export interface ClientLinks {
   map_operation_status?: string
   map_operation_cancel?: string
   map_operation_retry?: string
+  map_operation_process?: string
+  map_operation_reoptimize?: string
   map_import_pcd?: string
   map_crop?: string
+  map_edit_preview?: string
   map_mark_zone?: string
   map_build_octomap?: string
   map_build_occupancy?: string
@@ -2007,8 +2016,16 @@ export interface NativeTraversabilityEvent {
 
 export interface AgentMessageEvent {
   type: 'agent_message'
-  role: 'thinking' | 'assistant' | 'tool'
+  role: 'thinking' | 'user' | 'assistant' | 'tool'
   text: string
+  conversation_id?: string
+  id?: string
+  turn_id?: string
+  seq?: number
+  revision?: number
+  kind?: string
+  created_at?: number
+  metadata?: import('../services/agentConversation.ts').ConversationMessage['metadata']
   phase?: string
   run_id?: string
   ts: number
@@ -2110,7 +2127,7 @@ export interface Toast {
   kind: ToastKind
 }
 
-export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'dataflow' | 'inspection' | 'planner'
+export type Tab = 'mapping' | 'scene' | 'map'
 
 export type SlamRuntimeProfile = 'none' | 'native_dds'
 export interface SlamServiceDetail {

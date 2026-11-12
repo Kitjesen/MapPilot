@@ -1,0 +1,10 @@
+.artwork { display: block; width: 100%; height: 230px; overflow: visible; pointer-events: none; visibility: hidden; opacity: 0; animation: celebration 1900ms ease-out both; }
+.check { transform-box: fill-box; transform-origin: center; animation: pop 240ms steps(2, end) both; }
+.burst { animation: fall 1050ms steps(4, end) both; }
+.spark { opacity: 0; animation: spark 760ms steps(6, end) var(--delay) both; }
+@keyframes celebration { 0%, 78% { visibility: visible; opacity: 1; } 100% { visibility: hidden; opacity: 0; } }
+@keyframes pop { from { transform: scale(.88); } 55% { transform: scale(1.05); } to { transform: scale(1); } }
+@keyframes spark { from { opacity: 0; transform: translate(0, 0); } 12%, 48% { opacity: 1; } to { opacity: 0; transform: translate(var(--x), var(--y)); } }
+@keyframes fall { from { transform: translateY(0); } to { transform: translateY(16px); } }
+@keyframes hold { from { visibility: visible; opacity: 1; } to { visibility: hidden; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .check, .burst, .spark { animation: none; } .burst { display: none; } .artwork { animation: hold 1000ms step-end both; } }

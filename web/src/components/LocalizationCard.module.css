@@ -214,3 +214,7 @@
 @media (prefers-reduced-motion: reduce) {
   .tab, .tabActive, .details summary, .details summary svg { transition: none; }
 }
+
+.embedded { min-width: 0; }
+.embedded .tabs { padding: 0; }
+.embedded .body { padding: 12px 0 0; }

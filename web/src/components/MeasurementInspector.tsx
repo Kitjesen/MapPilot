@@ -50,13 +50,11 @@ function ImagePreview({ display, locale }: { display: ThermalDisplay | SemanticD
   const temperature = display.kind === 'thermal' ? thermalValue(display, r, c, unit) : null
   const semantic = display.kind === 'semantic' ? semanticValue(display, r, c) : null
   return <figure className={styles.visual}>
-    <figcaption>{display.kind === 'thermal' ? text(locale, 'Temperature', '温度')
-      : text(locale, 'Semantic ground truth · not detection', '语义真值 · 非检测结果')}
-      {' · '}{display.width} × {display.height} / {display.source_width} × {display.source_height}
-      {' · '}{text(locale, 'Nearest sampled display; checkerboard = invalid', '最近邻采样展示；棋盘格 = 无效')}</figcaption>
+    <figcaption>{display.kind === 'thermal' ? text(locale, 'Temperature distribution', '温度分布') : text(locale, 'Semantic ground truth', '语义真值')}
+      <span>{display.kind === 'thermal' ? `${values.length ? low.toFixed(1) + ' – ' + high.toFixed(1) : '—'} ${unit === 'C' ? '°C' : 'K'}` : text(locale, 'Classes / instances', '类别 / 实例')}</span></figcaption>
     <canvas ref={canvas} width={display.width} height={display.height}
       aria-label={text(locale, 'Sampled measurement image; inspect pixel numbers below', '采样测量图；下方可检查像素数值')} />
-    <div className={styles.fields}>
+    <details><summary>{text(locale, 'Inspect pixels', '查看像素读数')}</summary><div className={styles.fields}>
       {display.kind === 'thermal' && <label>{text(locale, 'Scale', '温标')}<select value={unit} onChange={e => setUnit(e.target.value as 'K' | 'C')}>
         <option value="C">°C</option><option value="K">K</option>
       </select></label>}
@@ -68,19 +66,19 @@ function ImagePreview({ display, locale }: { display: ThermalDisplay | SemanticD
     <p className={styles.note}>{text(locale, 'Source pixel (row, column)', '原始像素（行，列）')}: ({display.row_indices[r]}, {display.column_indices[c]}) · {display.kind === 'thermal'
       ? temperature === null ? text(locale, 'Invalid', '无效') : `${temperature.toFixed(3)} ${unit === 'C' ? '°C' : 'K'}`
       : semantic ? `class_id: ${semantic.classId}, instance_id: ${semantic.instanceId}` : text(locale, 'Invalid', '无效')}
-      {display.kind === 'thermal' && ` · ${text(locale, 'Display range', '显示范围')}: ${values.length ? `${low.toFixed(2)} – ${high.toFixed(2)} ${unit === 'C' ? '°C' : 'K'}` : '—'}`}</p>
+      {display.kind === 'thermal' && ` · ${text(locale, 'Display range', '显示范围')}: ${values.length ? `${low.toFixed(2)} – ${high.toFixed(2)} ${unit === 'C' ? '°C' : 'K'}` : '—'}`}</p><p className={styles.note}>{display.width} × {display.height} / {display.source_width} × {display.source_height} · {text(locale, 'Nearest sampled display; checkerboard = invalid', '最近邻采样展示；棋盘格 = 无效')}</p></details>
   </figure>
 }
 
 function Waveform({ display, locale }: { display: AcousticDisplay; locale: Locale }) {
   return <figure className={styles.visual}>
-    <figcaption>{text(locale, 'Pressure envelope, not raw waveform', '声压包络，非原始波形')} · {display.sample_rate_hz} Hz · {display.source_sample_count} {text(locale, 'samples/channel', '样本/通道')}</figcaption>
+    <figcaption>{text(locale, 'Pressure envelope', '声压包络')}<span>{display.sample_rate_hz} Hz · {display.source_sample_count} {text(locale, 'samples', '样本')}</span></figcaption>
     {display.pressure_min_pa.map((bins, channel) => {
       const samples = bins.map((_, bin) => acousticBin(display, channel, bin))
       const peak = Math.max(...samples.flatMap(bin => bin ? [Math.abs(bin.min), Math.abs(bin.max)] : []), 1e-12)
       const duration = display.source_sample_count / display.sample_rate_hz
       return <div key={channel}>
-        <p className={styles.note}>{text(locale, 'Channel', '通道')} {channel} · ±{peak.toPrecision(4)} Pa · {text(locale, 'Gaps = invalid; faint = partial validity', '空缺 = 无效；淡色 = 部分有效')}</p>
+        <p className={styles.note}>{text(locale, 'Channel', '通道')} {channel} · ±{peak.toPrecision(4)} Pa</p>
         <svg className={styles.wave} viewBox="0 0 600 130" role="img" aria-label={`${text(locale, 'Channel pressure envelope', '通道声压包络')} ${channel}, Pa / s`}>
           <line className={styles.axis} x1="45" y1="55" x2="585" y2="55" />
           <text x="0" y="15">Pa</text><text x="0" y="58">0</text>
@@ -160,7 +158,7 @@ function SensorControls({ status, online, locale, onConfirmed }: {
   </section>
 }
 
-function OpenInspector({ locale }: { locale: Locale }) {
+function OpenInspector({ locale, modality }: { locale: Locale; modality?: string }) {
   const [{ sensors }, updateControls] = useReducer(measurementControlReducer, { sensors: [], controlRevision: 0 })
   const controlRevision = useRef(0)
   const [selected, setSelected] = useState('')
@@ -172,11 +170,12 @@ function OpenInspector({ locale }: { locale: Locale }) {
     const stop = pollMeasurements(async signal => {
       const startedAtRevision = controlRevision.current
       const result = await listMeasurements(signal)
+      if (modality) result.sensors = result.sensors.filter(sensor => sensor.modality === modality)
       if (signal.aborted || startedAtRevision !== controlRevision.current) return
       updateControls({ type: 'list', sensors: result.sensors, startedAtRevision })
       setOnline(true)
       setError('')
-      const current = result.sensors.find(sensor => sensor.sensor_id === selected)
+      const current = selected ? result.sensors.find(sensor => sensor.sensor_id === selected) : modality ? result.sensors[0] : undefined
       if (!current || !hasFreshMeasurement(current)) { clearTimeout(expiry); setPreview(null); return }
       const next = await getMeasurementPreview(current.sensor_id, signal)
       if (signal.aborted || startedAtRevision !== controlRevision.current) return
@@ -192,30 +191,31 @@ function OpenInspector({ locale }: { locale: Locale }) {
       setError(failure instanceof Error ? failure.message : String(failure))
     })
     return () => { stop(); clearTimeout(expiry) }
-  }, [selected])
-  const sensor = sensors.find(item => item.sensor_id === selected)
+  }, [selected, modality])
+  const sensor = selected ? sensors.find(item => item.sensor_id === selected) : modality ? sensors[0] : undefined
   return <div className={styles.body}>
-    <p className={styles.note}>{text(locale, 'Display preview only; full arrays remain in raw NPZ. Receipt freshness does not prove clock alignment or inspection validity.', '仅为显示预览；完整数组保留在原始 NPZ 中。接收新鲜度不证明时钟对齐或巡检有效性。')}</p>
-    <div className={styles.toolbar}><label>{text(locale, 'Sensor', '传感器')}<select value={selected} onChange={e => { setPreview(null); setSelected(e.target.value) }}>
+    <div className={styles.toolbar}><label>{text(locale, 'Sensor', '传感器')}<select aria-label={text(locale, 'Measurement sensor', '测量传感器')} value={sensor?.sensor_id ?? ''} onChange={e => { setPreview(null); setSelected(e.target.value) }}>
       <option value="">{text(locale, 'Select a sensor', '选择传感器')}</option>
-      {sensors.map(item => <option key={item.sensor_id} value={item.sensor_id}>{item.sensor_id} · {item.modality ?? '—'} · {item.status}</option>)}
-    </select></label>{sensor && <span>{online ? sensor.status : text(locale, 'Offline', '离线')}{' · '}{text(locale, 'Receipt age', '接收年龄')}: {sensor.receipt_age_s?.toFixed(2) ?? '—'} s</span>}</div>
+      {sensors.map(item => <option key={item.sensor_id} value={item.sensor_id}>{item.sensor_id}</option>)}
+    </select></label>{sensor && <span>{online ? sensor.status === 'live' ? text(locale, 'Receiving', '已收到观测') : sensor.status : text(locale, 'Offline', '离线')} · {sensor.receipt_age_s?.toFixed(1) ?? '—'} s</span>}</div>
     {error && <p role="status" className={styles.error}>{text(locale, 'Measurement unavailable', '测量不可用')}: {error}</p>}
-    {online && sensors.length === 0 && <p className={styles.note}>{text(locale, 'No declared measurement sensors', '未声明测量传感器')}</p>}
+    {online && sensors.length === 0 && <p className={styles.note}>{modality ? text(locale, 'No observations of this type yet. Declared sources appear after their first sample.', '暂无该类观测；已声明来源收到首帧后可在此选择。') : text(locale, 'No declared measurement sensors', '未声明测量传感器')}</p>}
     {preview ? <>
       {preview.display.kind === 'acoustic' ? <Waveform display={preview.display} locale={locale} /> : <ImagePreview display={preview.display} locale={locale} />}
-      <a href={preview.measurement.raw_url}>{text(locale, 'Download full raw NPZ (not display data)', '下载完整原始 NPZ（非显示数据）')}</a>
+      <a href={preview.measurement.raw_url}>{text(locale, 'Download raw NPZ', '下载原始数据 · NPZ')}</a>
     </> : sensor && <p className={styles.note}>{text(locale, 'No fresh display. Stale, disabled or unavailable measurements are cleared.', '暂无新鲜显示；过期、禁用或不可用时清空预览。')}</p>}
-    {sensor && <SensorControls key={bindingKey(sensor)} status={sensor} online={online} locale={locale} onConfirmed={ack => {
+    {sensor && <details><summary>{text(locale, 'Device settings', '设备设置')}</summary><SensorControls key={bindingKey(sensor)} status={sensor} online={online} locale={locale} onConfirmed={ack => {
       controlRevision.current++
       updateControls({ type: 'ack', ack })
       if (ack.settings.enabled === false) setPreview(null)
-    }} />}
+    }} /></details>}
+    <details><summary>{text(locale, 'Measurement details', '测量说明')}</summary><p className={styles.note}>{text(locale, 'Display preview only; full arrays remain in raw NPZ. Receipt freshness does not prove clock alignment or inspection validity.', '显示为预览，完整数组保留在原始 NPZ 中。接收新鲜度不证明时钟对齐或巡检有效性。')}</p></details>
   </div>
 }
 
-export default function MeasurementInspector({ locale }: { locale: Locale }) {
+export default function MeasurementInspector({ locale, embedded = false, modality }: { locale: Locale; embedded?: boolean; modality?: string }) {
   const [open, setOpen] = useState(false)
+  if (embedded) return <OpenInspector locale={locale} modality={modality} />
   return <details className={styles.panel} onToggle={e => setOpen(e.currentTarget.open)}>
     <summary>{text(locale, 'Measurement inspector · thermal / acoustic / semantic', '测量检查器 · 热成像 / 声学 / 语义真值')}</summary>
     {open && <OpenInspector locale={locale} />}
