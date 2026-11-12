@@ -3,7 +3,8 @@
 native_nav:
   follower:
     max_speed_mps: 1.4142135623730951
-    max_accel_mps2: 4.0
+    # Match SCAN nominal acceleration; reduce tracking lag near obstacle corners.
+    max_accel_mps2: 0.5
     max_yaw_accel_rad_s2: 4.0
     max_yaw_rate_rad_s: 0.8  # Autonomous Products explicitly select their 1 rad/s limit.
   braking_deceleration_mps2: 4.0

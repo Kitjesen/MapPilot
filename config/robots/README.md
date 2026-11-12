@@ -26,6 +26,7 @@ The repository currently has these concrete inputs:
 | --- | --- | --- |
 | `unitree/go2` | Configured | Missing Go2 simulation assets and preset |
 | `doso/thunder_v4` | Configured | Configured |
+| `paxini/tora_double_one_x` | URDF and navigation envelope; driver/calibration pending | Ideal-base garage navigation test; no wheel-physics Product session |
 
 A missing combination fails because its concrete configuration or assets are
 absent, not because the model is restricted to one Env.

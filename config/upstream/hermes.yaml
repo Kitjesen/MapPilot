@@ -1,0 +1,41 @@
+repository: NousResearch/hermes-agent
+baseline:
+  release: v0.23.1
+  commit: 3b421578588243f920886e6fe79a6faa87ea026e
+features:
+  authentication:
+    status: implemented_pending_account_validation
+    upstream: [hermes_cli/auth_codex.py, hermes_cli/auth.py, hermes_cli/web_routers/oauth.py]
+    local: [src/decision/llm/codex.py, src/decision/tasks/conversation_inputs.py]
+    tests: [tests/decision/test_codex_account.py, tests/decision/test_sdk_agent.py]
+    differences: Existing LingTu account store and SDK runner; no Hermes Gateway.
+  web:
+    status: implemented_pending_search_credentials
+    upstream: [tools/web_tools, tools/web_result_cache.py, tools/website_policy.py]
+    local: [src/decision/tasks/web.py]
+    tests: [tests/decision/test_web_tools.py]
+    differences: Tavily only; no unverified provider fallback.
+  skills:
+    status: live_kimi_verified
+    upstream: [tools/skills_tool.py, tools/skill_manager_tool.py, tools/skill_provenance.py]
+    local: [src/decision/tasks/skills.py, src/decision/skills/]
+    tests: [tests/decision/test_skill_tools.py]
+    differences: Explicit bundled/local IDs; no shell preprocessing, dependency installation or skill learning.
+  memory:
+    status: live_kimi_verified
+    upstream: [tools/memory_tool.py, tools/memory_tool_store.py, tools/write_approval.py]
+    local: [src/decision/tasks/preferences.py, src/decision/tasks/conversation.py]
+    tests: [tests/decision/test_preferences.py, tests/decision/test_agent_conversations.py]
+    differences: Explicit user-requested preferences in SQLite; no autonomous extraction or background consolidation.
+  context:
+    status: turn_boundary_live_kimi_verified_on_synthetic_history
+    upstream: [agent/context_compressor, agent/conversation_compression, agent/usage_anchor.py, agent/native_compaction.py, agent/micro_compaction.py, website/docs/developer-guide/context-compression-and-caching.md]
+    local: [src/decision/context/, src/decision/tasks/conversation.py, src/decision/modules/agent_planner.py]
+    tests: [tests/decision/test_context_compression.py, tests/decision/test_agent_conversations.py]
+    differences: Durable turn-boundary summaries; text-character policy, not provider token anchors. No in-loop/native/background compaction.
+  delegation:
+    status: local_contracts_only
+    upstream: [tools/delegate_tool]
+    local: [src/decision/tasks/specialists.py]
+    tests: [tests/decision/test_specialists.py]
+    differences: Two read-only specialists; no independent durable child conversations.

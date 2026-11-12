@@ -3,32 +3,37 @@
 This directory declares operating modes under `products/` and their real/sim
 implementations under `envs/`. ProductControl resolves them once before startup.
 
-## Finding a setting
+## 从哪里修改配置
 
-| What to change | Source |
+先到 `settings/` 按功能找共同配置；某个模式要使用不同的值，再看对应的
+`products/<product>.yaml`。机器人尺寸、安装标定和硬件限制由对应机器人配置负责。
+产品运行时使用启动时生成的 RunPlan；修改 YAML 后需重新切换产品生成新 RunPlan。
+独立运行的原生程序使用编译生成的默认值，修改这些值后还需重新构建对应程序。
+
+| 要修改什么 | 配置位置 |
 | --- | --- |
-| Operating-mode policy, selected planners and teleop takeover | `products/<product>.yaml` |
-| Model name, endpoint, credential variable and request timeout | `models.yaml`, selected by Product `host.llm` |
-| Body-axis speed limits, trajectory speed/acceleration and braking | `settings/limits.yaml` |
-| SCAN optimization and collision freshness, CMU obstacle-height interval and terrain costs, live obstacle processing and dynamic-object detection | `settings/local.yaml` |
-| OctoPlanner3D search, support, surface closing, clearance costs, goal snapping and path interfaces | `settings/global.yaml` |
-| Saved-map route tracking, arrival and SCAN tracking gains | `settings/follower.yaml` |
-| Operator interfaces, request freshness, speed, obstacle filtering and intent planning | `settings/teleop.yaml` |
-| RGB-D acquisition, Orbbec SDK selection, SHM transport and WebRTC tuning | `settings/camera.yaml` |
-| Recovery order, progress timeouts, attempt limit and maneuver speeds | `settings/recovery.yaml` |
-| Native control cadence, input freshness, stop confirmation, command publication and smoothing | `settings/control.yaml` |
-| Hardware scan/IMU rates, Livox point type, scan pattern, multicast, binding and SDK ports | `settings/lidar.yaml` |
-| SLAM process cadence and publication, LTLIO estimation, registration, elevator and online mapping | `settings/slam.yaml` |
-| Map publication, occupancy, point filtering, surface fitting, capacities and save/cleanup | `settings/maps.yaml` |
-| Exploration interfaces, segment and risk bounds, native endpoint and TARE parameters | `settings/explore.yaml` |
-| Real/sim process implementation | `envs/<env>.yaml` |
-| Robot geometry, device calibration and physical driver limits | `config/robots/<vendor>/<model>/robot.yaml` |
-| Real IMU noise, sensor units, LiDAR/IMU extrinsics and installation overrides | `config/robots/<vendor>/<model>/sensors/*.yaml` |
-| Simulation-specific estimator overrides | `src/localization/ltlio/config/sim_mid360*.yaml` |
-| Camera device selection, calibration and explicit capture overrides | Selected RobotConfig; `config/devices.yaml` serves the compatibility driver |
-| Target-specific video encoder and optional sidecar | `config/video.env.example`, `config/go2rtc.yaml` |
-| DDS message types, topic names and QoS | `src/message/topics/*.yaml` |
-| Semantic classes and scoring | `config/semantics/` |
+| 模式选择、规划器、是否允许遥控接管 | `products/<product>.yaml` |
+| 模型名称、服务地址、密钥环境变量、请求超时 | `models.yaml`，产品通过 `host.llm` 选择 |
+| 行走速度、加速度、制动 | `settings/limits.yaml` |
+| SCAN 和 CMU 局部规划、动态障碍和碰撞输入 | `settings/local.yaml` |
+| 全局规划、地面支撑、目标点吸附 | `settings/global.yaml` |
+| 路线跟踪、到达判断、跟踪增益 | `settings/follower.yaml` |
+| 遥控速度、输入有效期、辅助规划 | `settings/teleop.yaml` |
+| 相机采集、图像传输和视频 | `settings/camera.yaml` |
+| 遇阻恢复顺序、超时和速度 | `settings/recovery.yaml` |
+| 控制频率、输入有效期、停止确认、速度平滑 | `settings/control.yaml` |
+| 雷达和 IMU 采样、Livox SDK 通信 | `settings/lidar.yaml` |
+| SLAM 运行、定位、建图和电梯参数 | `settings/slam.yaml` |
+| 地图发布、占据、点云过滤与保存 | `settings/maps.yaml` |
+| 探索任务、分段和风险阈值 | `settings/explore.yaml` |
+| 真实或仿真的进程与接口 | `envs/<env>.yaml` |
+| 机器人尺寸、设备标定、驱动限制 | `config/robots/<vendor>/<model>/robot.yaml` |
+| 实机 IMU 噪声、雷达到 IMU 的外参 | `config/robots/<vendor>/<model>/sensors/*.yaml` |
+| 仿真定位算法的专用参数 | `src/localization/ltlio/config/sim_mid360*.yaml` |
+| 相机设备、标定和明确指定的采集参数 | 选定机器人的 RobotConfig；`config/devices.yaml` 用于兼容驱动 |
+| 设备侧视频编码器和可选视频服务 | `config/video.env.example`、`config/go2rtc.yaml` |
+| DDS 消息类型、话题名称和 QoS | `src/message/topics/*.yaml` |
+| 语义类别和评分 | `config/semantics/` |
 
 A Product's `includes` lists shared files from `settings/` in load order.
 Later files override earlier keys within `native_nav` or `parameters`; inline
@@ -75,8 +80,9 @@ the robot. An omitted Product-specific yaw limit retains its existing default;
 it is not replaced by another mode's value.
 
 The unused `input_recovery_frames` setting, environment variable and CLI option
-were removed with their simulation callers. They never delayed native input
-recovery; status still reports the actual one-frame behavior.
+were removed with their simulation callers. Fresh valid inputs resume motion
+without a frame-count delay; the obsolete `recovering` and `fresh_frames`
+status fields have also been removed.
 
 ProductControl writes resolved field settings to `session.env`. The LiDAR
 compiler builds `LINGTU_LIVOX_CONFIG_JSON` from the SDK settings and the selected
@@ -161,7 +167,7 @@ Common tuning stays short within its owner:
 native_nav:
   follower:
     max_speed_mps: 1.4142135623730951
-    max_accel_mps2: 4.0
+    max_accel_mps2: 0.5
     lookahead_m: 0.35
     goal_tolerance_m: 0.15
   teleop:
@@ -234,7 +240,11 @@ Neither one recompiles the Product or owns process ordering.
 
 Each Product uses `lingtu.runtime_graph.product.v3`. Its top-level `topics` and
 `capabilities` are the complete environment-independent runtime boundary;
-`host.capabilities` selects the in-process Host Modules. Topic definitions
+`host.capabilities` selects the in-process Host Modules. `conversation` adds the
+conversational Agent independently of `semantic` perception and semantic planning;
+standard `map`/`nav` declare it and resolve their `llm` connection from `models.yaml`.
+Semantic variants reuse the same Agent factory and keep exactly one instance.
+Topic definitions
 and message types remain canonical under `src/message/topics/*.yaml`; a Product only lists
 which canonical topics it needs. Product navigation settings stay under
 `native_nav`, and rolling launch parameters stay under `parameters`. Shared

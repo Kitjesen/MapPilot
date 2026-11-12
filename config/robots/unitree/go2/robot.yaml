@@ -29,22 +29,16 @@ geometry:
   # Use the larger published static outline; this is not an installed gait measurement.
   vehicle_width: 0.31
   vehicle_length: 0.76
-  # Legacy cylinder settings remain for declared compatibility paths.
-  # OctoPlanner3D + SCAN loads navigation_body_file when configured.
-  # With no body file, length/width and the extents below define the 3-D box.
+  # SCAN and final braking share these twin cylinders through Mapd inflation.
   collision_cylinder_radius: 0.25
   # Historical double-cylinder offset: one quarter of the 0.76 m length.
   collision_cylinder_offset: 0.19
-  # Extra horizontal clearance, not a measured Go2 tracking-error allowance.
-  # Applied once in world-horizontal axes to the selected raw compound model.
+  # Separate rectangle clearance for CMU; SCAN radius already includes its allowance.
   collision_hard_margin: 0.05
-  # Body-relative OBB Z extent is [-0.10, +0.24] m, with no extra Z margin.
+  # Body-relative cylinder Z extent is [-0.10, +0.24] m.
   collision_clearance_below: 0.10
   # Raised MID-360 assembly reaches body.z + 0.232 m (CAD nominal).
   collision_clearance_above: 0.24
-  # Raised installation, fixed nominal stance fitted to support_height.
-  # Camera/bracket geometry is unmeasured; see the adjacent model metadata.
-  navigation_body_file: "body/go2_raised_nominal.body2"
   # 2026-09-24 stationary MID-360: body-to-floor 0.345 m, plane RMS 0.004 m.
   # Constrain the standing body height; planar velocity commands cannot crouch.
   support_height: 0.35
@@ -76,7 +70,7 @@ driver:
   target: ""                 # Doso uses host:port; Go2 leaves this empty.
   network_interface: "eth0"  # Verify on the target with: ip -br -4 addr
   network_address: "192.168.123.18/24"  # Expansion-board static address; no gateway.
-  probe_ip: "192.168.123.161"           # Go2 motion host used by startup preflight.
+  probe_ip: "192.168.123.161"           # Go2 motion host used by deployment network setup.
   dog_host: "127.0.0.1"
   dog_port: 13145
   control_rate: 50.0          # Hz; must remain >= 10 for control-lease refresh.

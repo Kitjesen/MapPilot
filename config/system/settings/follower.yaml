@@ -22,6 +22,7 @@ native_nav:
     follower_slowdown_distance_m: 0.75
 parameters:
   scan_follower:
+    min_vy_mps: 0.0  # Nonzero lateral target floor, before acceleration and final safety.
     time_forward_s: 0.8  # Heading lookahead; position tracks the current spline time.
     heading_error_rad: 0.8  # Above this error, rotate before translating.
     position_gain: 0.8  # Position error to velocity gain, 1/s.

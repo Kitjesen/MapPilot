@@ -75,7 +75,8 @@ requires_map: true
 switch_policy: cold_restart
 online_hot_switch_supported: false
 host:
-  capabilities: [gateway, operator_motion, navigation_skills, goal_commands]
+  capabilities: [gateway, operator_motion, navigation_skills, goal_commands, conversation]
+  llm: kimi
   run_startup_checks: true
 includes: [control, lidar, slam, maps, limits, global, local, follower, teleop, recovery]
 native_nav:
@@ -93,6 +94,7 @@ native_nav:
   local_planners: [cmu, scan]
   use_traversability_cost: false
   follower:
+    max_accel_mps2: 0.75
     max_yaw_rate_rad_s: 1.0
     goal_tolerance_m: 0.15
     lookahead_m: 0.35
@@ -102,6 +104,9 @@ native_nav:
     planner: true
 parameters:
   scan_planner.acceleration_tolerance: 1.2
+  scan_follower.max_vx_mps: 1.2
+  scan_follower.position_gain: 1.5
+  scan_follower.min_vy_mps: 0.35  # Thunder CTS39 response trials; zero and safety-limited commands stay exempt.
 processes:
   - lidar
   - imu

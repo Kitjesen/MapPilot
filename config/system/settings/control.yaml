@@ -8,7 +8,7 @@ topics:
 native_nav:
   tick_hz: 20.0  # SCAN Products override this with their required 100 Hz cadence.
   publish_cmd_vel: true
-  status_s: 5.0
+  status_s: 0.2  # Keep native snapshots fresh within Gateway's 1 s status window.
   stop_confirmation_timeout_s: 4.0
   control_loop_deadline_miss_ratio_limit: 0.05
   control_loop_p95_utilization_limit: 0.90

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "knowledge": {
+      "transport": "streamable_http",
+      "url": "http://127.0.0.1:8099/mcp",
+      "headers_env": {},
+      "allowed_tools": ["search_manual"],
+      "read_only_tools": ["search_manual"],
+      "timeout_seconds": 20
+    }
+  }
+}

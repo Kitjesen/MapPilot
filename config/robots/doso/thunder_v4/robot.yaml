@@ -9,13 +9,15 @@ geometry:
   vehicle_height: 0.5
   vehicle_width: 0.6
   vehicle_length: 1.0
-  collision_cylinder_radius: 0.40
-  collision_cylinder_offset: 0.25
-  collision_hard_margin: 0.08
-  # Overall footprint and upper-body height derived from the checked-in MJCF.
-  navigation_body_file: "body/thunderv4_navigation.body2"
-  collision_clearance_below: 0.25
+  # Twin cylinders cover the nominal MJCF body-height band with at least 5 cm XY allowance.
+  collision_cylinder_radius: 0.32
+  collision_cylinder_offset: 0.23
+  collision_hard_margin: 0.05
+  collision_clearance_below: 0.05
   collision_clearance_above: 0.35
+  # shortcut: model-based standing estimate from the Thunder sim package; replace after field measurement (see README).
+  support_height: 0.435
+  support_height_tolerance: 0.10
   sensor_offset_x: 0.3
   sensor_offset_y: 0.0
 

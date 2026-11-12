@@ -41,7 +41,8 @@ requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
 host:
-  capabilities: [gateway, operator_motion]
+  capabilities: [gateway, operator_motion, conversation]
+  llm: kimi
   run_startup_checks: true
 processes:
   - lidar

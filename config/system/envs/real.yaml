@@ -13,6 +13,7 @@ supported_products:
   - inspection
   - explore
 host_config:
+  gateway_port: 5053
   _endpoint_transport: dds
   _endpoint_contract: field_dds_v1
   enable_robot_driver: false

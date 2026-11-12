@@ -19,6 +19,44 @@ The same robot ID now resolves in both environments:
 This proves configuration and compilation only; field motion still requires the
 normal no-motion and supervised-motion acceptance on the target robot.
 
+## Navigation support height
+
+The real `robot.yaml` now declares `geometry.support_height: 0.435` m and
+`geometry.support_height_tolerance: 0.10` m. These are **provisional model-based
+values, not field calibration**. Their source is the existing Thunder V4
+[simulation package](../../../../sim/packages/robots/doso/thunder_v4/robot.package.yaml)
+and its [standing-height explanation](../../../../sim/packages/robots/doso/thunder_v4/README.md#navigation-geometry).
+The height is measured from the supporting surface to the `base_link` origin,
+not to the top of the robot or the LiDAR. The nominal matching band is
+0.335–0.535 m; the planner also accounts for occupied voxel extent. This is not
+a maximum pit depth or a qualified step-climbing capability.
+
+Real Product assembly passes these two fields through RunPlan to
+`LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M` and
+`LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M`. Previously both resolved to zero.
+OctoPlanner uses the height to find support and lift ground routes to body-origin
+routes; SCAN consumes those routes through the existing height conversion.
+This configuration does not command the robot's standing posture. A newly
+compiled RunPlan is required; an already-running process retains its old values.
+
+Pinned upstream SCAN
+[`348e8a590a50a5a6bbab8d8c6dcfd171f009be26`](https://github.com/wuyi2121/SCAN-Planner/blob/348e8a590a50a5a6bbab8d8c6dcfd171f009be26/src/planner/plan_manage/launch/advanced_param.xml)
+uses an example `grid_map/body_height=0.4` m. The Thunder height and support
+tolerance above belong to LingTu's platform adaptation, not that upstream default.
+
+Configuration evidence (2026-11-06): the same `test_real_support_height_reaches_run_plan`
+cases failed for Thunder `map` and `nav` before this change (height resolved to
+zero), then all four Thunder/Go2 cases passed with RunPlan serialization included.
+The existing Thunder real/sim collision-geometry and Go2 standing-height tests
+also passed: six checks total. These checks neither started hardware nor proved
+field support matching.
+
+Before field motion, measure floor-to-`base_link` height in the actual loaded
+standing mode and check its variation in the intended posture range. Replace
+the estimate and assess the tolerance using those observations and map resolution.
+Brainstem owns standing control; the local driver only requests `standUp()`.
+Fixed sensor extrinsics do not change merely because the robot stands taller.
+
 ## Navigation collision model
 
 `Body` is the C++ navigation geometry container and `BODY2` is its internal

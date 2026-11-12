@@ -10,7 +10,7 @@ native_nav:
     planner: false  # Assisted Products explicitly select local planning.
     max_speed_mps: 1.0
     max_yaw_rate_rad_s: 1.0
-    cmd_max_age_s: 0.35
+    cmd_max_age_s: 0.35  # Operator sample freshness; final motion control does not decide expiry.
     min_motion_speed_mps: 0.03
     traversability_hard_cost: 80.0
     traversability_soft_cost: 40.0

@@ -47,14 +47,14 @@ maps:
     voxels: 500000
     accumulated_cells: 2000000
     accumulated_blocks: 4096
-    query_json_bytes: 1048576
+    query_json_bytes: 4194304
   save:
     patches: true
     build_octomap: true
     octomap_resolution_m: 0.10
     dynamic_filter: true
     dynamic_filter_required: true
-    # Empty selects the native pruning command resolved by the save pipeline.
+    # Empty selects the native prune command with the DUFOMap backend.
     dynamic_filter_command: ""
     dynamic_filter_timeout_s: 300.0
     profile: native_dds

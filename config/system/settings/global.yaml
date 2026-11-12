@@ -10,16 +10,19 @@ native_nav:
   global:
     planner: octoplanner3d
 
-    # Endpoint search and surface preparation do not alter the saved occupancy map.
+    # Query controls update the prepared planner without rebuilding geometry.
     max_iterations: 500000
     snap_search_radius_cells: 24
-    search_resolution_m: 0.10  # Search XY spacing, separate from occupancy resolution.
+    # These preparation inputs select/rebuild the saved .nav profile.
+    # Inferred support remains separate from measured OctoMap occupancy.
+    search_resolution_m: 0.10  # Nominal XY spacing; exhausted searches retry at map resolution.
     surface_closing_radius_m: 0.20
+    surface_max_hole_area_m2: 0.16
+    surface_max_slope: 0.7  # Geometry fitting limit, separate from robot climb limits.
 
     # Direct-only mode requires observed support in the same column.
     ground_support: true
     direct_support_only: false
-    support_radius_cells: 1
     support_depth_cells: 2  # Fallback when physical support height is unavailable.
     # Zero disables the support-patch requirement.
     support_patch_radius_cells: 0
@@ -38,7 +41,8 @@ native_nav:
     obstacle_clearance_radius_cells: 2
     obstacle_clearance_weight: 1.5
 
-    # Goal snapping limits, separate from task-arrival tolerances in follower.yaml.
+    # Per-query goal snapping limits; these do not rebuild the .nav profile.
+    # Separate from task-arrival tolerances in follower.yaml.
     terminal_tolerance_m: 0.5
     terminal_xy_tolerance_m: 0.35
     terminal_z_tolerance_m: 0.75
