@@ -244,6 +244,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_active_path_replan_cycle
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
@@ -1027,6 +1028,7 @@ if(NOT TARGET test_active_path_replan_cycle
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp")
   add_executable(test_active_path_replan_cycle
     "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp"
+    "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
     "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
     "${_ENDPOINT_DIR}/nav/control/final.cpp"
