@@ -6,7 +6,8 @@ import socket
 import time
 
 import pytest
-from agents.mcp import MCPServerStreamableHttp
+
+MCPServerStreamableHttp = pytest.importorskip("agents.mcp").MCPServerStreamableHttp
 
 from gateway.mcp_server import MCPServerModule
 

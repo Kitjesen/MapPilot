@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import torch
-import torch.nn.functional as F
+import pytest
+
+torch = pytest.importorskip("torch")
+F = torch.nn.functional
 from tools.inference.export_follow import FixedPersonContrastiveHead, fix_person_contrastive_head
 
 
