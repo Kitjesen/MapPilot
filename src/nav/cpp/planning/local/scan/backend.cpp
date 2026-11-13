@@ -327,7 +327,15 @@ class Backend::Impl {
     }
 
     const auto gridStarted = std::chrono::steady_clock::now();
-    Grid grid(params_, input);
+    auto collisionRequest = input;
+    collisionRequest.body.reset();
+    collisionRequest.observedBody.reset();
+    Grid grid(params_, collisionRequest);
+    std::optional<Grid> bodyGrid;
+    if (input.body && input.environment.collision.measuredOccupiedStorage) {
+      Grid candidate(params_, input);
+      if (candidate.valid()) bodyGrid.emplace(std::move(candidate));
+    }
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
@@ -486,6 +494,16 @@ class Backend::Impl {
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
     }
     recordAttempt(input, *route);
+    if (bodyGrid) {
+      for (int index = 1; index < route->count; ++index) {
+        const Vec3 &start = route->points[index - 1];
+        const Vec3 &end = route->points[index];
+        const double yaw = std::hypot(end.x - start.x, end.y - start.y) > 1e-9
+            ? std::atan2(end.y - start.y, end.x - start.x) : input.robot.pose.yaw;
+        if (bodyGrid->segmentInflatedOccupancy(start, yaw, end, yaw) != 0)
+          return stop(LocalPlanStatus::Blocked, "scan_body_collision");
+      }
+    }
     if (output.state == ScanReplanState::EMERGENCY_STOP || output.emergencyStopIssued) {
       // Keep the upstream stop trajectory inside the FSM. The native executor
       // owns stopping; publishing this stationary spline as Ready hides failure.
