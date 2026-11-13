@@ -800,7 +800,8 @@ int main() {
     testPausedCoordinatorIsSilentAndEndpointOwnsZeroHeartbeat();
     return 0;
   } catch (const std::exception &exc) {
-    std::fprintf(stderr, "test_navigation_runtime_controller: FAIL: %s\n", exc.what());
+    std::fprintf(stderr, "test_navigation_runtime_controller: FAIL: %s
+", exc.what());
     return 1;
   }
-}\n
+}
