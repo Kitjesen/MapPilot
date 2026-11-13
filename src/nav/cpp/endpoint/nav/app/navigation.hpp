@@ -7,7 +7,6 @@
 #include "control/autonomy.hpp"
 #include "command/cancel.hpp"
 #include "app/goal/runtime.hpp"
-#include "app/goal/terminal.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -66,7 +65,7 @@ class NavigationRuntimeController {
  public:
   NavigationRuntimeController(GoalPlanController &goal_plan,
                               GoalReplanRuntimeCoordinator &goal_replan_runtime,
-                              GoalTerminal &goal_terminal, MotionStopBarrier &motion_stop);
+                              MotionStopBarrier &motion_stop);
 
   [[nodiscard]] NavigationRuntimeFrameResult
   advanceFrame(const GoalReplanRuntimeFrameInput &frame,
@@ -102,7 +101,6 @@ class NavigationRuntimeController {
  private:
   GoalPlanController &goal_plan_;
   GoalReplanRuntimeCoordinator &goal_replan_runtime_;
-  GoalTerminal &goal_terminal_;
   MotionStopBarrier &motion_stop_;
   struct PendingResume {
     std::string task_id;

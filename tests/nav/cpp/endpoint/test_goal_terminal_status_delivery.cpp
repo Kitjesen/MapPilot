@@ -29,6 +29,7 @@ using lingtu::nav::endpoint::GoalPlanTarget;
 using lingtu::nav::endpoint::GoalReplanRuntimeCoordinator;
 using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
+using lingtu::nav::endpoint::GoalTerminalActions;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
@@ -49,6 +50,7 @@ struct Fixture {
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
+  GoalTerminalStatusDelivery delivery;
   GoalReplanRuntimeCoordinator coordinator;
   int terminal_commit_count{0};
 
@@ -70,7 +72,10 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop) {}
+        delivery(outbox),
+        coordinator(goal_plan, motion_stop, delivery,
+                    GoalTerminalActions{[](const std::string &) {},
+                                        [](const std::string &) {}, [] {}}) {}
 
   GoalPlanActions goalActions() {
     GoalPlanActions actions;

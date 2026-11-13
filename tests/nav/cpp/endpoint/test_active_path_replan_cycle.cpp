@@ -14,6 +14,8 @@
 #include "control/autonomy.hpp"
 #include "safety/stop.hpp"
 #include "app/goal/runtime.hpp"
+#include "status/goal_terminal_status_delivery.hpp"
+#include "status/navigation_goal_status_outbox.hpp"
 
 namespace {
 
@@ -48,6 +50,8 @@ using lingtu::nav::endpoint::GoalReplanRuntimeFrameInput;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalReplanTrigger;
 using lingtu::nav::endpoint::GoalReplanTriggerKind;
+using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
+using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::MotionStopActions;
@@ -93,6 +97,8 @@ struct Fixture {
   std::vector<float> unused_planner_obstacles;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
+  NavigationGoalStatusOutbox outbox;
+  GoalTerminalStatusDelivery delivery;
   GoalReplanRuntimeCoordinator coordinator;
   FinalControl final_control;
   AutonomyTickController autonomy_tick;
@@ -118,7 +124,12 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop, BoundedGoalReplanConfig{0.5}),
+        outbox([](const GoalPlanStatus &) {}, [](const GoalPlanStatus &) { return true; }),
+        delivery(outbox),
+        coordinator(goal_plan, motion_stop, delivery,
+                    GoalTerminalActions{[](const std::string &) {},
+                                        [](const std::string &) {}, [] {}},
+                    BoundedGoalReplanConfig{0.5}),
         final_control(finalControlActions()),
         autonomy_tick(autonomyActions(), final_control) {
     input_gate.ready = true;

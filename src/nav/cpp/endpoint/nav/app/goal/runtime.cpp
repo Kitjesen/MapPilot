@@ -2,10 +2,13 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
 #include "input/gate.hpp"
+
+#include "status/goal_terminal_status_delivery.hpp"
 
 #include "safety/stop.hpp"
 
@@ -109,8 +112,181 @@ TerminalStopPolicy interruptionStopPolicy(GoalReplanRuntimeInterruption interrup
 
 GoalReplanRuntimeCoordinator::GoalReplanRuntimeCoordinator(GoalPlanController &goal_plan,
                                                            MotionStopBarrier &motion_stop,
+                                                           GoalTerminalStatusDelivery &delivery,
+                                                           GoalTerminalActions terminal_actions,
                                                            BoundedGoalReplanConfig config)
-    : goal_plan_(goal_plan), motion_stop_(motion_stop), bounded_(config) {}
+    : goal_plan_(goal_plan),
+      motion_stop_(motion_stop),
+      delivery_(delivery),
+      terminal_actions_(std::move(terminal_actions)),
+      bounded_(config) {
+  if (!terminal_actions_.report_error || !terminal_actions_.pause_inspection ||
+      !terminal_actions_.sync_goal_diagnostics) {
+    throw std::invalid_argument("GoalReplanRuntimeCoordinator requires terminal actions");
+  }
+}
+
+GoalTerminalResult GoalReplanRuntimeCoordinator::serviceTerminal(
+    const GoalReplanRuntimeResult &runtime_result, const std::string &estop_reason) {
+  if (!runtime_result.terminal_after_stop || runtime_result.terminal_intent_id == 0U) {
+    return {false, false, "goal_terminal_missing"};
+  }
+
+  const GoalPlanTerminalAfterStop &terminal = *runtime_result.terminal_after_stop;
+  const GoalTerminalStatusDelivery::StageResult stage =
+      delivery_.stage(runtime_result.terminal_intent_id, terminal.delivery_ticket);
+  if (stage != GoalTerminalStatusDelivery::StageResult::kStaged &&
+      stage != GoalTerminalStatusDelivery::StageResult::kReplay) {
+    terminal_actions_.report_error(
+        stage == GoalTerminalStatusDelivery::StageResult::kConflict
+            ? "goal_terminal_delivery_ticket_conflict"
+            : "goal_terminal_delivery_ticket_invalid");
+    return {false, false, "goal_terminal_delivery_ticket_invalid"};
+  }
+
+  if (!delivery_.isCommitted(runtime_result.terminal_intent_id)) {
+    MotionStopTerminalBarrierResult terminal_result;
+    switch (runtime_result.terminal_stop_policy) {
+      case TerminalStopPolicy::kReached:
+        terminal.commit();
+        if (!delivery_.markCommitted(runtime_result.terminal_intent_id)) {
+          terminal_actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
+          return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
+        }
+        terminal_actions_.sync_goal_diagnostics();
+        break;
+      case TerminalStopPolicy::kStop:
+        terminal_result = motion_stop_.stopPreservingGoalTerminal(terminal.commit);
+        break;
+      case TerminalStopPolicy::kCancel:
+        terminal_result = motion_stop_.cancelPreservingGoalTerminal(terminal.commit);
+        break;
+      case TerminalStopPolicy::kEstop:
+        terminal_result = motion_stop_.estopPreservingGoalTerminal(estop_reason, terminal.commit);
+        break;
+      case TerminalStopPolicy::kShutdown:
+        return {false, false, "shutdown_terminal_requires_transaction"};
+      case TerminalStopPolicy::kGenericStop: {
+        const MotionStopResult stopped =
+            motion_stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
+        terminal_result = MotionStopTerminalBarrierResult{
+            stopped.accepted, stopped.reason, stopped.accepted, stopped.pending};
+        break;
+      }
+    }
+
+    if (runtime_result.terminal_stop_policy != TerminalStopPolicy::kReached) {
+      if (terminal_result.pending) return {false, false, "stop_confirmation_pending"};
+      if (!terminal_result.accepted || !terminal_result.terminal_committed) {
+        const std::string failure = "goal_terminal_stop_unconfirmed:" + terminal_result.reason;
+        if (!terminal_result.accepted) terminal_actions_.pause_inspection(failure);
+        terminal_actions_.report_error(failure);
+        return {false, false, terminal_result.reason};
+      }
+      if (!delivery_.markCommitted(runtime_result.terminal_intent_id)) {
+        terminal_actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
+        return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
+      }
+      terminal_actions_.sync_goal_diagnostics();
+    }
+  }
+
+  const GoalTerminalStatusDelivery::FlushResult delivery =
+      delivery_.flushAndAcknowledge(*this);
+  if (delivery == GoalTerminalStatusDelivery::FlushResult::kAcknowledged) {
+    return {true, true, "goal_terminal_acknowledged"};
+  }
+  if (delivery == GoalTerminalStatusDelivery::FlushResult::kAcknowledgementRejected) {
+    terminal_actions_.report_error("goal_terminal_delivery_acknowledgement_rejected");
+    return {true, false, "goal_terminal_delivery_acknowledgement_rejected"};
+  }
+  return {true, false, "goal_terminal_delivery_pending"};
+}
+
+MotionStopResult GoalReplanRuntimeCoordinator::commitRelated(
+    const GoalReplanRuntimeResult &result, const std::string &reason,
+    std::function<bool()> commit) {
+  const auto &terminal = result.terminal_after_stop;
+  if (terminal) {
+    const auto stage = delivery_.stage(result.terminal_intent_id, terminal->delivery_ticket);
+    if (stage != GoalTerminalStatusDelivery::StageResult::kStaged &&
+        stage != GoalTerminalStatusDelivery::StageResult::kReplay) {
+      return {false, stage == GoalTerminalStatusDelivery::StageResult::kConflict
+                           ? "goal_terminal_delivery_ticket_conflict"
+                           : "goal_terminal_delivery_ticket_invalid"};
+    }
+    if (delivery_.isCommitted(result.terminal_intent_id)) {
+      return {true, "inspection_goal_terminal_committed"};
+    }
+  }
+  auto committed = std::make_shared<bool>(false);
+  auto stopped = motion_stop_.commitGoalTerminalAfterStop(
+      terminal ? terminal->reason : reason,
+      [this, terminal, intent = result.terminal_intent_id, commit = std::move(commit), committed] {
+        if (terminal) terminal->commit();
+        *committed = commit();
+        if (*committed && terminal) {
+          *committed = delivery_.markCommitted(intent);
+          terminal_actions_.sync_goal_diagnostics();
+        }
+      });
+  if (!stopped.pending && stopped.accepted && !*committed) {
+    return {false, "inspection_state_commit_failed"};
+  }
+  return stopped;
+}
+
+MotionStopTerminalBarrierResult GoalReplanRuntimeCoordinator::stopPendingTerminal() {
+  return stopPendingTerminal(StopAction::kStop, {});
+}
+
+MotionStopTerminalBarrierResult GoalReplanRuntimeCoordinator::estopPendingTerminal(
+    const std::string &estop_reason) {
+  return stopPendingTerminal(StopAction::kEstop, estop_reason);
+}
+
+MotionStopTerminalBarrierResult GoalReplanRuntimeCoordinator::stopPendingTerminal(
+    StopAction safety_action, const std::string &estop_reason) {
+  requirePendingTerminalOdometry();
+  const GoalReplanRuntimeResult pending = replayPendingTerminal();
+  if (!pending.terminal_after_stop || pending.terminal_intent_id == 0U) {
+    const MotionStopResult physical_stop = motion_stop_.stopWithoutTerminalCommit();
+    terminal_actions_.report_error("goal_terminal_surface_missing");
+    return {false, physical_stop.accepted ? "goal_terminal_surface_missing" : physical_stop.reason,
+            false};
+  }
+
+  const GoalPlanTerminalAfterStop &terminal = *pending.terminal_after_stop;
+  const GoalTerminalStatusDelivery::StageResult stage =
+      delivery_.stage(pending.terminal_intent_id, terminal.delivery_ticket);
+  const bool exact_stage = stage == GoalTerminalStatusDelivery::StageResult::kStaged ||
+                           stage == GoalTerminalStatusDelivery::StageResult::kReplay;
+
+  std::string stage_error;
+  if (!exact_stage) {
+    stage_error = stage == GoalTerminalStatusDelivery::StageResult::kConflict
+                      ? "goal_terminal_delivery_ticket_conflict"
+                      : "goal_terminal_delivery_ticket_invalid";
+    terminal_actions_.report_error(stage_error);
+  }
+
+  const auto preserved = safety_action == StopAction::kEstop
+                             ? motion_stop_.estopPreservingGoalTerminal(estop_reason, terminal.commit)
+                             : motion_stop_.stopPreservingGoalTerminal(terminal.commit);
+  if (!exact_stage) {
+    if (preserved.terminal_committed) terminal_actions_.sync_goal_diagnostics();
+    return {false, preserved.accepted ? stage_error : preserved.reason,
+            preserved.terminal_committed};
+  }
+
+  if (!preserved.terminal_committed) return preserved;
+  if (!delivery_.markCommitted(pending.terminal_intent_id)) {
+    terminal_actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
+    return {false, "goal_terminal_delivery_commit_identity_rejected", true};
+  }
+  terminal_actions_.sync_goal_diagnostics();
+  return preserved;
+}
 
 GoalTerminalSchedulingDecision decideGoalTerminalScheduling(const GoalReplanRuntimeResult &result,
                                                             bool terminal_pending) {

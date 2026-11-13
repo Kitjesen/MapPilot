@@ -1017,10 +1017,9 @@ int main(int argc, char **argv) {
     motion_stop_actions.clear_global_path = [&]() { executor.clear(); };
     MotionStopBarrier motion_stop(cfg.publish_cmd_vel, std::move(motion_stop_actions));
     motion_stop_ptr = &motion_stop;
-    GoalReplanRuntimeCoordinator goal_replan_runtime(goal_plan, motion_stop);
-    goal_replan_runtime_ptr = &goal_replan_runtime;
     GoalTerminalStatusDelivery goal_terminal_delivery(goal_status_outbox);
-    lingtu::nav::endpoint::GoalTerminal goal_terminal(goal_replan_runtime, motion_stop, goal_terminal_delivery,
+    GoalReplanRuntimeCoordinator goal_replan_runtime(
+        goal_plan, motion_stop, goal_terminal_delivery,
         lingtu::nav::endpoint::GoalTerminalActions{
             [&](const std::string &reason) { frames.last_error = reason; nav_status.requestImmediate(); },
             [&](const std::string &reason) {
@@ -1028,9 +1027,11 @@ int main(int argc, char **argv) {
                 (void)inspection_executor.Pause(reason);
                 inspection_runtime.requestStatus();
               }
-            }, sync_goal_plan_diagnostics});
+            },
+            sync_goal_plan_diagnostics});
+    goal_replan_runtime_ptr = &goal_replan_runtime;
     lingtu::nav::endpoint::NavigationRuntimeController navigation_runtime_controller(
-        goal_plan, goal_replan_runtime, goal_terminal, motion_stop);
+        goal_plan, goal_replan_runtime, motion_stop);
     InspectionCommandActions inspection_command_actions;
     inspection_command_actions.route_source_available = [&]() {
       return inspection_store != nullptr;

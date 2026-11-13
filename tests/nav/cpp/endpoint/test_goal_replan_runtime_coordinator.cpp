@@ -17,6 +17,8 @@
 #include "command/cancel.hpp"
 #include "safety/stop.hpp"
 #include "app/goal/runtime.hpp"
+#include "status/goal_terminal_status_delivery.hpp"
+#include "status/navigation_goal_status_outbox.hpp"
 
 namespace {
 
@@ -43,6 +45,8 @@ using lingtu::nav::endpoint::GoalPlanTerminalDeliveryTicket;
 using lingtu::nav::endpoint::GoalReplanIdentity;
 using lingtu::nav::endpoint::GoalReplanRuntimeAutonomyEvent;
 using lingtu::nav::endpoint::GoalReplanRuntimeCoordinator;
+using lingtu::nav::endpoint::GoalTerminalActions;
+using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::GoalReplanRuntimeFrameInput;
 using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
@@ -54,6 +58,7 @@ using lingtu::nav::endpoint::GoalTaskCancelTerminalServiceResult;
 using lingtu::nav::endpoint::GoalTerminalSchedulingDecision;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
+using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::StopConfirmationState;
 using lingtu::nav::endpoint::TerminalStopPolicy;
 
@@ -109,6 +114,8 @@ struct Fixture {
   lingtu::nav::endpoint::GoalPlanInspectionDecision inspection_decision;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
+  NavigationGoalStatusOutbox outbox;
+  GoalTerminalStatusDelivery delivery;
   GoalReplanRuntimeCoordinator coordinator;
 
   Fixture()
@@ -150,7 +157,11 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop) {}
+        outbox([](const GoalPlanStatus &) {}, [](const GoalPlanStatus &) { return true; }),
+        delivery(outbox),
+        coordinator(goal_plan, motion_stop, delivery,
+                    GoalTerminalActions{[](const std::string &) {},
+                                        [](const std::string &) {}, [] {}}) {}
 
   ~Fixture() { release_blocked.store(true); }
 

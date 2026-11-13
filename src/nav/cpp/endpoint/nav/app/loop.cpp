@@ -46,7 +46,6 @@
 #include "safety/stop.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "app/goal/terminal.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"

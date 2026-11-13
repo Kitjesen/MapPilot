@@ -177,7 +177,6 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/status/nav_status_endpoint_adapter.cpp
     nav/status/navigation_goal_status_outbox.cpp
     nav/status/goal_terminal_status_delivery.cpp
-    nav/app/goal/terminal.cpp
     nav/app/navigation.cpp
     nav/status/navigation_state.cpp
     nav/status/status_snapshot_file_writer.cpp

@@ -13,7 +13,6 @@
 #include "safety/stop.hpp"
 #include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "app/goal/terminal.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
 namespace {
@@ -32,7 +31,6 @@ using lingtu::nav::endpoint::GoalReplanRuntimeCoordinator;
 using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
-using lingtu::nav::endpoint::GoalTerminal;
 using lingtu::nav::endpoint::GoalTerminalActions;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
@@ -62,9 +60,8 @@ struct Fixture {
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
-  GoalReplanRuntimeCoordinator coordinator;
   GoalTerminalStatusDelivery delivery;
-  GoalTerminal transaction;
+  GoalReplanRuntimeCoordinator coordinator;
 
   Fixture()
       : outbox([this](const GoalPlanStatus &status) { observed.push_back(status); },
@@ -84,9 +81,8 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop),
         delivery(outbox),
-        transaction(coordinator, motion_stop, delivery, transactionActions()) {}
+        coordinator(goal_plan, motion_stop, delivery, transactionActions()) {}
 
   GoalPlanActions goalActions() {
     GoalPlanActions actions;
@@ -210,7 +206,7 @@ void testReachedCommitsWithoutStopEvidence() {
   Fixture reached;
   reached.activateGoal();
   const auto intent = reached.reachedIntent();
-  const auto reached_result = reached.transaction.advance(intent);
+  const auto reached_result = reached.coordinator.serviceTerminal(intent);
   require(reached_result.action_committed && reached_result.delivery_acknowledged,
           "reached did not commit directly after FinalControl zero output");
   require(reached.evidence_policies.empty(),
@@ -218,7 +214,7 @@ void testReachedCommitsWithoutStopEvidence() {
 
   Fixture failed;
   failed.activateGoal();
-  require(failed.transaction.advance(failed.terminalIntent()).delivery_acknowledged,
+  require(failed.coordinator.serviceTerminal(failed.terminalIntent()).delivery_acknowledged,
           "failed terminal did not complete");
   require(!failed.evidence_policies.back(), "failed terminal weakened its stop evidence");
 }
@@ -228,11 +224,11 @@ void testSafetyStopAndEstopKeepExplicitTerminalEvidence() {
     Fixture fixture;
     fixture.activateGoal();
     fixture.confirmation = StopConfirmationState::Pending;
-    const auto pending_terminal = fixture.transaction.advance(fixture.terminalIntent());
+    const auto pending_terminal = fixture.coordinator.serviceTerminal(fixture.terminalIntent());
     require(pending_terminal.reason == "stop_confirmation_pending",
             "explicit terminal did not enter stop confirmation");
-    const auto stopped = estop ? fixture.transaction.estopPending("operator_request")
-                               : fixture.transaction.stopPending();
+    const auto stopped = estop ? fixture.coordinator.estopPendingTerminal("operator_request")
+                               : fixture.coordinator.stopPendingTerminal();
     require(stopped.pending && !stopped.terminal_committed,
             "safety replacement committed before complete stop evidence");
     require(!fixture.evidence_policies.back(),
@@ -240,14 +236,14 @@ void testSafetyStopAndEstopKeepExplicitTerminalEvidence() {
     (void)fixture.motion_stop.poll();
     require(!fixture.evidence_policies.back(),
             "pending safety replacement recovered the weaker reached policy");
-    const auto replay = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+    const auto replay = fixture.coordinator.serviceTerminal(fixture.coordinator.replayPendingTerminal());
     require(!replay.action_committed && !fixture.evidence_policies.back(),
             "ordinary terminal replay weakened the safety replacement policy");
     if (estop) {
       require(fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
               "ordinary replay overwrote the latched estop reason");
-      (void)fixture.transaction.stopPending();
-      (void)fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+      (void)fixture.coordinator.stopPendingTerminal();
+      (void)fixture.coordinator.serviceTerminal(fixture.coordinator.replayPendingTerminal());
       require(!fixture.evidence_policies.back() &&
                   fixture.latched_estop_reasons == std::vector<std::string>{"operator_request"},
               "a later stop weakened the estop evidence or changed its latch reason");
@@ -260,7 +256,7 @@ void testSuccessfulTerminalTransactionCommitsDeliversAndAcknowledges() {
   fixture.activateGoal();
   const GoalReplanRuntimeResult terminal = fixture.terminalIntent();
 
-  const auto result = fixture.transaction.advance(terminal);
+  const auto result = fixture.coordinator.serviceTerminal(terminal);
 
   require(result.action_committed && result.delivery_acknowledged &&
               result.reason == "goal_terminal_acknowledged",
@@ -280,7 +276,7 @@ void testPendingDeliveryReplayAcknowledgesWithoutRepeatingCommit() {
   fixture.writes_allowed = false;
   const GoalReplanRuntimeResult terminal = fixture.terminalIntent();
 
-  const auto pending = fixture.transaction.advance(terminal);
+  const auto pending = fixture.coordinator.serviceTerminal(terminal);
 
   require(pending.action_committed && !pending.delivery_acknowledged &&
               pending.reason == "goal_terminal_delivery_pending",
@@ -294,7 +290,7 @@ void testPendingDeliveryReplayAcknowledgesWithoutRepeatingCommit() {
 
   fixture.writes_allowed = true;
   const GoalReplanRuntimeResult replay = fixture.coordinator.replayPendingTerminal();
-  const auto acknowledged = fixture.transaction.advance(replay);
+  const auto acknowledged = fixture.coordinator.serviceTerminal(replay);
 
   require(acknowledged.action_committed && acknowledged.delivery_acknowledged &&
               acknowledged.reason == "goal_terminal_acknowledged",
@@ -312,7 +308,7 @@ void testStopConfirmationFailureKeepsTerminalPendingAndFailsClosed() {
   fixture.confirmation = StopConfirmationState::TimedOut;
   const GoalReplanRuntimeResult terminal = fixture.terminalIntent();
 
-  const auto result = fixture.transaction.advance(terminal);
+  const auto result = fixture.coordinator.serviceTerminal(terminal);
   const std::string expected_reason = "stop_confirmation_timeout_goal_terminal_pending";
   const std::string expected_error = "goal_terminal_stop_unconfirmed:" + expected_reason;
 
@@ -337,7 +333,7 @@ void testPendingStopConfirmationHasNoTerminalOrInspectionSideEffects() {
   fixture.confirmation = StopConfirmationState::Pending;
   const GoalReplanRuntimeResult terminal = fixture.terminalIntent();
 
-  const auto pending = fixture.transaction.advance(terminal);
+  const auto pending = fixture.coordinator.serviceTerminal(terminal);
   require(!pending.action_committed && !pending.delivery_acknowledged &&
               pending.reason == "stop_confirmation_pending",
           "pending terminal stop was reported as committed or failed");
@@ -355,7 +351,7 @@ void testPendingStopConfirmationHasNoTerminalOrInspectionSideEffects() {
               fixture.diagnostic_syncs == 0U,
           "physical stop completion bypassed the terminal transaction owner");
 
-  const auto committed = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+  const auto committed = fixture.coordinator.serviceTerminal(fixture.coordinator.replayPendingTerminal());
   require(committed.action_committed && committed.delivery_acknowledged &&
               committed.reason == "goal_terminal_acknowledged" &&
               fixture.diagnostic_syncs == 1U && fixture.reported_errors.empty() &&
@@ -365,7 +361,7 @@ void testPendingStopConfirmationHasNoTerminalOrInspectionSideEffects() {
 
 void testMissingAndShutdownTerminalsAreRejectedByOrdinaryTransaction() {
   Fixture fixture;
-  const auto missing = fixture.transaction.advance(GoalReplanRuntimeResult{});
+  const auto missing = fixture.coordinator.serviceTerminal(GoalReplanRuntimeResult{});
   require(!missing.action_committed && !missing.delivery_acknowledged &&
               missing.reason == "goal_terminal_missing",
           "missing terminal was not rejected");
@@ -376,7 +372,7 @@ void testMissingAndShutdownTerminalsAreRejectedByOrdinaryTransaction() {
   fixture.activateGoal();
   const GoalReplanRuntimeResult shutdown =
       fixture.terminalIntent(GoalReplanRuntimeInterruption::kShutdown);
-  const auto rejected = fixture.transaction.advance(shutdown);
+  const auto rejected = fixture.coordinator.serviceTerminal(shutdown);
   require(!rejected.action_committed && !rejected.delivery_acknowledged &&
               rejected.reason == "shutdown_terminal_requires_transaction",
           "ordinary terminal transaction accepted a shutdown policy");
@@ -390,7 +386,7 @@ void testSafetyStopCommitsExactPendingTerminalWithoutAcknowledgingIt() {
   fixture.activateGoal();
   (void)fixture.terminalIntent();
 
-  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopPending();
+  const MotionStopTerminalBarrierResult stopped = fixture.coordinator.stopPendingTerminal();
 
   require(stopped.accepted && stopped.terminal_committed && stopped.reason == "stopped",
           "safety stop did not preserve the pending terminal commit");
@@ -401,7 +397,7 @@ void testSafetyStopCommitsExactPendingTerminalWithoutAcknowledgingIt() {
   require(fixture.stop_control_calls == 1U, "safety stop did not execute the physical stop path");
   require(fixture.reported_errors.empty(), "successful safety stop reported an error");
 
-  const auto delivered = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+  const auto delivered = fixture.coordinator.serviceTerminal(fixture.coordinator.replayPendingTerminal());
   require(delivered.action_committed && delivered.delivery_acknowledged,
           "the preserved terminal could not finish delivery and acknowledgement");
   require(fixture.diagnostic_syncs == 1U,
@@ -414,7 +410,7 @@ void testSafetyEstopPreservesTerminalAndUsesExactReason() {
   (void)fixture.terminalIntent();
 
   const MotionStopTerminalBarrierResult estopped =
-      fixture.transaction.estopPending("operator_estop");
+      fixture.coordinator.estopPendingTerminal("operator_estop");
 
   require(estopped.accepted && estopped.terminal_committed && estopped.reason == "estop_latched",
           "safety estop did not preserve the pending terminal commit");
@@ -431,7 +427,7 @@ void testMissingPendingTerminalStillPerformsPhysicalStop() {
   Fixture fixture;
 
   const MotionStopTerminalBarrierResult stopped =
-      fixture.transaction.estopPending("operator_estop");
+      fixture.coordinator.estopPendingTerminal("operator_estop");
 
   require(!stopped.accepted && !stopped.terminal_committed &&
               stopped.reason == "goal_terminal_surface_missing",
@@ -456,7 +452,7 @@ void testStageConflictStillCommitsExactPendingTerminalButFailsAdmission() {
               GoalTerminalStatusDelivery::StageResult::kStaged,
           "fixture could not stage the conflicting delivery identity");
 
-  const MotionStopTerminalBarrierResult stopped = fixture.transaction.stopPending();
+  const MotionStopTerminalBarrierResult stopped = fixture.coordinator.stopPendingTerminal();
 
   require(!stopped.accepted && stopped.terminal_committed &&
               stopped.reason == "goal_terminal_delivery_ticket_conflict",
@@ -474,8 +470,8 @@ void testConstructorRejectsIncompleteActions() {
   Fixture fixture;
   bool rejected = false;
   try {
-    GoalTerminal invalid(fixture.coordinator, fixture.motion_stop, fixture.delivery,
-                                    GoalTerminalActions{});
+    GoalReplanRuntimeCoordinator invalid(fixture.goal_plan, fixture.motion_stop,
+                                         fixture.delivery, GoalTerminalActions{});
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
@@ -489,7 +485,7 @@ void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
   lingtu::nav::endpoint::GoalTaskCancelRouter router(
       fixture.goal_plan, fixture.coordinator,
       [&](const GoalReplanRuntimeResult &result) {
-        const auto serviced = fixture.transaction.advance(result);
+        const auto serviced = fixture.coordinator.serviceTerminal(result);
         return lingtu::nav::endpoint::GoalTaskCancelTerminalServiceResult{
             serviced.action_committed, serviced.reason, fixture.motion_stop.confirmationPending()};
       }, [] {});
@@ -501,7 +497,7 @@ void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
           "pending cancellation committed the task early");
   fixture.confirmation = StopConfirmationState::Confirmed;
   require(fixture.motion_stop.poll()->accepted, "cancellation zero did not confirm");
-  const auto done = fixture.transaction.advance(fixture.coordinator.replayPendingTerminal());
+  const auto done = fixture.coordinator.serviceTerminal(fixture.coordinator.replayPendingTerminal());
   require(done.action_committed && done.delivery_acknowledged &&
               !fixture.coordinator.terminalPending(), "confirmed cancellation did not deliver its ticket");
   std::size_t cancelled = 0U;
@@ -533,4 +529,4 @@ int main() {
     std::fprintf(stderr, "test_goal_terminal: FAIL: %s\n", exc.what());
     return 1;
   }
-}
+}\n
