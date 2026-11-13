@@ -80,7 +80,7 @@ def test_navd_observes_each_completed_tick() -> None:
     assert "return runEndpointLoop(loop_ctx, g_running);" in bootstrap
 
     observation = re.search(
-        r"control_loop_health\.observe\s*\(\s*"
+        r"loop_health\.observe\s*\(\s*"
         r"ControlLoopSample\s*\{(?P<sample>.*?)\}\s*\)\s*;",
         loop,
         flags=re.DOTALL,

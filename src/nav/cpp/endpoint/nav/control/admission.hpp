@@ -15,30 +15,6 @@ struct TeleopAdmissionRequest {
   std::string decode_error;
 };
 
-struct TeleopAdmissionContext {
-  double receive_s{0.0};
-  bool motion_allowed{false};
-  bool autonomy_mode{true};
-  bool allow_takeover{false};
-  bool operator_takeover_latched{false};
-  bool has_active_teleop{false};
-  double max_age_s{0.0};
-  double future_tolerance_s{0.0};
-  double request_not_before_s{0.0};
-  double min_motion{0.0};
-  bool publish_cmd_vel{false};
-};
-
-struct TeleopAdmissionActions {
-  std::function<void()> hold_operator_takeover;
-  std::function<void()> stop_control;
-  std::function<bool(const nav_kernel::Twist &)> begin_operator_takeover;
-  std::function<bool(const std::string &)> clear_motion;
-  std::function<void(const std::string &)> pause_inspection;
-  std::function<bool(const nav_kernel::Twist &)> accept_teleop;
-  std::function<bool()> publish_zero;
-};
-
 struct TeleopAdmissionDelta {
   std::uint64_t command_count{1};
   std::uint64_t frame_rejected{0};
@@ -68,15 +44,6 @@ struct TeleopAdmissionResult {
   TeleopAdmissionObservation observation;
 };
 
-class TeleopAdmissionController {
- public:
-  explicit TeleopAdmissionController(TeleopAdmissionActions actions);
-
-  TeleopAdmissionResult admit(const TeleopAdmissionRequest &request,
-                              const TeleopAdmissionContext &context) const;
-
- private:
-  TeleopAdmissionActions actions_;
-};
+TeleopAdmissionResult admitTeleop(const TeleopAdmissionRequest &request);
 
 }  // namespace lingtu::nav::endpoint

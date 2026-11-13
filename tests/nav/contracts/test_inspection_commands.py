@@ -107,7 +107,7 @@ def test_native_endpoint_only_forwards_inspection_command_requests_to_coordinato
 
     assert '#include "app/inspection/inspection_command_coordinator.hpp"' in endpoint
     assert "InspectionCommandCoordinator inspection_command_coordinator" in endpoint
-    assert "inspection_command_coordinator.handle" in command_block
+    assert "inspection_commands.handle" in command_block
     assert "InspectionTaskAckOutput" in endpoint
     assert "dds.publish" in endpoint
     assert "inspection_runtime.requestStatus()" in endpoint

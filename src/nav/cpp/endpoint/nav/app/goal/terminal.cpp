@@ -42,6 +42,16 @@ GoalTerminalResult GoalTerminal::advance(const GoalReplanRuntimeResult &runtime_
   if (!delivery_.isCommitted(runtime_result.terminal_intent_id)) {
     MotionStopTerminalBarrierResult terminal_result;
     switch (runtime_result.terminal_stop_policy) {
+      case TerminalStopPolicy::kReached:
+        // FinalControl already published the zero command for a normal goal
+        // reached outcome. Do not turn ordinary arrival into a stop transaction.
+        terminal.commit();
+        if (!delivery_.markCommitted(runtime_result.terminal_intent_id)) {
+          actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
+          return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
+        }
+        actions_.sync_goal_diagnostics();
+        break;
       case TerminalStopPolicy::kStop:
         terminal_result = stop_.stopPreservingGoalTerminal(terminal.commit);
         break;
@@ -53,12 +63,9 @@ GoalTerminalResult GoalTerminal::advance(const GoalReplanRuntimeResult &runtime_
         break;
       case TerminalStopPolicy::kShutdown:
         return {false, false, "shutdown_terminal_requires_transaction"};
-      case TerminalStopPolicy::kReached:
       case TerminalStopPolicy::kGenericStop: {
         const MotionStopResult stopped =
-            stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit,
-                runtime_result.terminal_stop_policy == TerminalStopPolicy::kReached
-                    ? std::optional{StopConfirmationEvidencePolicy::ZeroOutputOnly} : std::nullopt);
+            stop_.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
         terminal_result =
             MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason, stopped.accepted,
                                              stopped.pending};
@@ -66,18 +73,20 @@ GoalTerminalResult GoalTerminal::advance(const GoalReplanRuntimeResult &runtime_
       }
     }
 
-    if (terminal_result.pending) return {false, false, "stop_confirmation_pending"};
-    if (!terminal_result.accepted || !terminal_result.terminal_committed) {
-      const std::string failure = "goal_terminal_stop_unconfirmed:" + terminal_result.reason;
-      if (!terminal_result.accepted) actions_.pause_inspection(failure);
-      actions_.report_error(failure);
-      return {false, false, terminal_result.reason};
+    if (runtime_result.terminal_stop_policy != TerminalStopPolicy::kReached) {
+      if (terminal_result.pending) return {false, false, "stop_confirmation_pending"};
+      if (!terminal_result.accepted || !terminal_result.terminal_committed) {
+        const std::string failure = "goal_terminal_stop_unconfirmed:" + terminal_result.reason;
+        if (!terminal_result.accepted) actions_.pause_inspection(failure);
+        actions_.report_error(failure);
+        return {false, false, terminal_result.reason};
+      }
+      if (!delivery_.markCommitted(runtime_result.terminal_intent_id)) {
+        actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
+        return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
+      }
+      actions_.sync_goal_diagnostics();
     }
-    if (!delivery_.markCommitted(runtime_result.terminal_intent_id)) {
-      actions_.report_error("goal_terminal_delivery_commit_identity_rejected");
-      return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
-    }
-    actions_.sync_goal_diagnostics();
   }
 
   const GoalTerminalStatusDelivery::FlushResult delivery =

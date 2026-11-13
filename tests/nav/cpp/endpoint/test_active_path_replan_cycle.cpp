@@ -216,13 +216,13 @@ struct Fixture {
       decision.reason = "accepted";
       return decision;
     };
-    actions.shape = [](const nav_kernel::Twist &command) {
+    actions.shape = [](const nav_kernel::Twist &command, double) {
       nav_kernel::VelocitySmootherOutput output;
       output.command = command;
       output.valid = true;
       return output;
     };
-    actions.commit = [](const nav_kernel::Twist &) { return true; };
+    actions.commit = [](const nav_kernel::Twist &, double) { return true; };
     actions.stop = [](double, const std::string &) {};
     return actions;
   }
@@ -357,13 +357,13 @@ void testRecoveryExhaustionRunsOneAtomicReplacementCycle() {
       tick.outcome, captured_snapshot, false, false};
   const auto armed = fixture.coordinator.handleAutonomyOutcome(fixture.frame(30.0), event);
   require(armed.handled && armed.reason == "backoff_pending" && !armed.replan_started &&
-              !armed.terminal_after_stop.has_value() && fixture.stop_control_calls == 1 &&
-              fixture.clear_motion_calls == 1 && fixture.planner_calls.load() == 1,
-          "confirmed stop did not arm exactly one bounded replacement cycle");
+              !armed.terminal_after_stop.has_value() && fixture.stop_control_calls == 0 &&
+              fixture.clear_motion_calls == 0 && fixture.planner_calls.load() == 1,
+          "local recovery did not arm exactly one bounded replacement cycle");
 
   const auto early = fixture.coordinator.advancePlanningCycle(fixture.frame(30.499));
   require(early.handled && early.reason == "backoff_pending" && early.zero_kept_fresh &&
-              !early.replan_started && fixture.keep_zero_calls == 1 &&
+              !early.replan_started && fixture.keep_zero_calls == 0 &&
               fixture.planner_calls.load() == 1,
           "replacement planning started before the 0.5 second backoff elapsed");
 
@@ -390,9 +390,8 @@ void testRecoveryExhaustionRunsOneAtomicReplacementCycle() {
           "successful replacement changed goal ownership or did not advance its generation");
 }
 
-void testStopConfirmationWaitsBeforeReplanning() {
+void testReplanningDoesNotWaitForStopConfirmation() {
   Fixture fixture;
-  fixture.confirmation = StopConfirmationState::TimedOut;
   fixture.activateInitialPath();
 
   const GoalReplanTrigger trigger = fixture.localRecoveryTrigger();
@@ -402,35 +401,15 @@ void testStopConfirmationWaitsBeforeReplanning() {
 
   const GoalReplanRuntimeAutonomyEvent event{
       tick.outcome, captured_snapshot, false, false};
-  const auto pending = fixture.coordinator.handleAutonomyOutcome(fixture.frame(40.0), event);
-  require(pending.handled && pending.reason == "stop_pending" &&
-              !pending.replan_started && !pending.terminal_after_stop.has_value() &&
-              !fixture.coordinator.terminalPending(),
-          "pending stop confirmation ended the destination instead of waiting");
-  require(fixture.stop_control_calls == 1 && fixture.clear_motion_calls == 1 &&
-              fixture.stop_evidence_failure_calls == 1 &&
-              fixture.last_stop_evidence_failure ==
-                  "stop_confirmation_timeout_goal_replan_pending" &&
+  const auto armed = fixture.coordinator.handleAutonomyOutcome(fixture.frame(40.0), event);
+  require(armed.handled && armed.reason == "backoff_pending" && !armed.replan_started &&
+              !armed.terminal_after_stop.has_value() && fixture.stop_control_calls == 0 &&
+              fixture.clear_motion_calls == 0 && fixture.stop_evidence_failure_calls == 0 &&
               fixture.planner_calls.load() == 1 && fixture.activations.size() == 1U,
-          "failed stop confirmation was not held fail-closed before replanning");
-  const auto retry = fixture.coordinator.snapshot();
-  require(retry.state == BoundedGoalReplanState::kIdle &&
-              fixture.goal_plan.snapshot().active_task_id == trigger.goal.task_id,
-          "stop-pending wait changed destination ownership or started a retry");
-  const auto waiting = fixture.coordinator.advancePlanningCycle(fixture.frame(40.1));
-  require(waiting.reason == "stop_pending" && waiting.zero_kept_fresh &&
-              !waiting.replan_started && !waiting.terminal_after_stop.has_value() &&
-              fixture.planner_calls.load() == 1 &&
-              !decideGoalTerminalScheduling(waiting, false).run_autonomy_tick,
-          "stop-pending tick resumed local motion or started global search without confirmation");
-  fixture.confirmation = StopConfirmationState::Confirmed;
-  const auto armed = fixture.coordinator.advancePlanningCycle(fixture.frame(40.2));
-  require(armed.reason == "backoff_pending" && !armed.replan_started &&
-              !armed.terminal_after_stop.has_value(),
-          "confirmed stop could not arm the retained destination");
-  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frame(40.7));
+          "ordinary replan still entered stop confirmation");
+  const auto started = fixture.coordinator.advancePlanningCycle(fixture.frame(40.5));
   require(started.replan_started && !started.terminal_after_stop.has_value(),
-          "confirmed stop did not permit search after the usual backoff");
+          "ordinary replan did not start after the usual backoff");
   const auto completed = fixture.waitForReplacementActivation(40.701);
   require(completed.reason == "replan_completed" && fixture.activations.size() == 2U &&
               fixture.statuses.back().state == NavigationGoalState::PathActive,
@@ -456,7 +435,7 @@ void testSubsequentRecoveryUsesFreshGoalPlan() {
 
 int main() {
   testRecoveryExhaustionRunsOneAtomicReplacementCycle();
-  testStopConfirmationWaitsBeforeReplanning();
+  testReplanningDoesNotWaitForStopConfirmation();
   testSubsequentRecoveryUsesFreshGoalPlan();
   return 0;
 }

@@ -385,8 +385,8 @@ void testNormalReplanChainHasNoIntermediateTerminal() {
   require(armed.handled && armed.reason == "backoff_pending",
           "eligible local recovery failure did not arm backoff");
   require(!armed.terminal_after_stop.has_value(), "normal replan arm returned a terminal intent");
-  require(fixture.stop_control_calls == 1 && fixture.clear_motion_calls == 1,
-          "normal replan did not confirm stop exactly once");
+  require(fixture.stop_control_calls == 0 && fixture.clear_motion_calls == 0,
+          "normal replan entered the explicit stop transaction");
   require(fixture.statuses.size() == 2U,
           "normal replan published an intermediate lifecycle state while arming");
 
@@ -442,8 +442,8 @@ void testInputGapPausesInFlightReplanWithoutTerminal() {
               !held.terminal_after_stop.has_value() && !fixture.coordinator.terminalPending(),
           "input gap cancelled or terminalized an in-flight replan");
   require(fixture.goal_plan.snapshot().active_task_id == "task-a" &&
-              fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls > 0,
-          "input gap changed the active goal or stopped refreshing zero");
+              fixture.cancelled_plans.load() == 0 && fixture.keep_zero_calls == 0,
+          "input gap changed the active goal or made runtime publish zero");
 
   fixture.release_blocked.store(true);
   bool resumed = false;
@@ -1063,8 +1063,8 @@ void testReplacementWaitsForFreshInputsThenReplansFromStoppedPose() {
                   fixture.countStatus("task-b", NavigationGoalState::Failed) == 0U,
               "input wait lost replacement identity or published premature failure");
     }
-    require(fixture.keep_zero_calls > zero_calls_before_wait && fixture.planner_calls.load() == 2,
-            "stale replacement did not refresh zero or planned without fresh input");
+    require(fixture.keep_zero_calls == zero_calls_before_wait && fixture.planner_calls.load() == 2,
+            "stale replacement made runtime publish zero or planned without fresh input");
 
     fixture.block_on_call.store(3);
     auto fresh = fixture.frameInput(31.1);
@@ -1820,35 +1820,19 @@ void testInspectionOutcomesSurfaceTicketedTerminalsAndRollingStaysExcluded() {
   });
 }
 
-void testStopAndZeroFailuresOnlyReturnTerminalIntents() {
-  Fixture stop_failed;
-  stop_failed.activate(stop_failed.request());
-  stop_failed.clear_motion_ok = false;
-  auto stopped = stop_failed.arm(20.0);
-  require(stopped.terminal_after_stop.has_value(), "stop failure did not return terminal intent");
-  require(stop_failed.coordinator.snapshot().state ==
-              lingtu::nav::endpoint::BoundedGoalReplanState::kCancelled,
-          "failed zero publication did not cancel retry execution");
-  require(stop_failed.countStatus("task-a", NavigationGoalState::Failed) == 0U,
-          "stop failure published terminal before a confirmed stop");
-  stop_failed.clear_motion_ok = true;
-  stop_failed.commitTerminal(stopped);
-  require(stop_failed.countStatus("task-a", NavigationGoalState::Failed) == 1U,
-          "stop failure terminal did not commit exactly once");
-
+void testNormalReplanDoesNotTerminalizeOnZeroFailure() {
   Fixture zero_failed;
   zero_failed.activate(zero_failed.request());
   require(zero_failed.arm(30.0).reason == "backoff_pending", "zero failure fixture did not arm");
   zero_failed.keep_zero_ok = false;
   auto refreshed = zero_failed.coordinator.advancePlanningCycle(zero_failed.frameInput(30.1));
-  require(refreshed.reason == "zero_refresh_failed" && refreshed.terminal_after_stop.has_value(),
-          "zero refresh failure did not return terminal intent");
+  require(refreshed.reason == "backoff_pending" && refreshed.zero_kept_fresh &&
+              !refreshed.terminal_after_stop.has_value(),
+          "backoff wait still entered the zero refresh failure path");
   require(zero_failed.countStatus("task-a", NavigationGoalState::Failed) == 0U,
-          "zero refresh failure published terminal directly");
-  zero_failed.keep_zero_ok = true;
-  zero_failed.commitTerminal(refreshed);
-  require(zero_failed.countStatus("task-a", NavigationGoalState::Failed) == 1U,
-          "zero refresh terminal did not commit once");
+          "input wait published a terminal directly");
+  require(zero_failed.countStatus("task-a", NavigationGoalState::Failed) == 0U,
+          "backoff wait published a terminal directly");
 }
 
 void testInspectionLocalRecoveryRetriesWithoutEndingTheWaypoint() {
@@ -1954,21 +1938,14 @@ void testPlannerNoPathWaitsAndRetriesSameGoal() {
 }
 
 void testPendingReplanPauseResumeKeepsDestination() {
-  for (bool stop_pending : {false, true}) {
-    Fixture fixture;
-    fixture.activate(fixture.request());
-    if (stop_pending) {
-      fixture.confirmation = StopConfirmationState::Pending;
-      require(fixture.arm(420.0).reason == "stop_pending", "stop-pending fixture did not wait");
-      fixture.confirmation = StopConfirmationState::Confirmed;
-    } else {
-      fixture.fail_on_call.store(2);
-      (void)fixture.startReplan(420.0);
-      const auto waiting = fixture.waitForPlanning(
-          [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
-          420.501);
-      require(waiting.reason == "replan_waiting", "no-path fixture did not enter waiting");
-    }
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  fixture.fail_on_call.store(2);
+  (void)fixture.startReplan(420.0);
+  const auto waiting = fixture.waitForPlanning(
+      [](const GoalReplanRuntimeResult &result) { return result.plan_advance.completion_consumed; },
+      420.501);
+  require(waiting.reason == "replan_waiting", "no-path fixture did not enter waiting");
     require(fixture.coordinator.replanPending(), "pending retry lost its source before pausing");
     auto pause = fixture.goal_plan.deferPause("task-a", "pause-request", "operator_pause");
     require(pause.accepted, "waiting task rejected pause");
@@ -1991,12 +1968,6 @@ void testPendingReplanPauseResumeKeepsDestination() {
     require(resume.accepted, "waiting destination without an installed path rejected resume");
     resume.commit();
     auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(431.0));
-    if (stop_pending) {
-      require(started.reason == "backoff_pending" && !started.replan_started,
-              "resumed stop-pending task did not confirm stop before arming");
-      started = fixture.coordinator.advancePlanningCycle(
-          fixture.frameInput(fixture.coordinator.snapshot().deadline_s));
-    }
     require(started.replan_started && !started.terminal_after_stop.has_value(),
             "resumed retry rejected the changed command request identity");
     const auto completed = fixture.waitForPlanning(
@@ -2008,7 +1979,6 @@ void testPendingReplanPauseResumeKeepsDestination() {
                 !fixture.coordinator.replanPending() &&
                 fixture.countStatus("task-a", NavigationGoalState::Failed) == 0U,
             "pause/resume did not continue the same destination after waiting");
-  }
 }
 
 void testInFlightReplanPauseDrainsBeforeResume() {
@@ -3022,7 +2992,7 @@ int main() {
   testTypedTaskCancelRoutesQueuedAndReplacementPlanningWithoutStoppingActiveA();
   testTypedTaskCancelRejectsForeignTaskWithoutLifecycleEffects();
   testInspectionOutcomesSurfaceTicketedTerminalsAndRollingStaysExcluded();
-  testStopAndZeroFailuresOnlyReturnTerminalIntents();
+    testNormalReplanDoesNotTerminalizeOnZeroFailure();
   testPlannerNoPathWaitsAndRetriesSameGoal();
   testPendingReplanPauseResumeKeepsDestination();
   testInFlightReplanPauseDrainsBeforeResume();

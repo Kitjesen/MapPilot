@@ -12,6 +12,7 @@ class ControlAuthority {
  public:
   bool activatePath();
   bool acceptTeleop(const nav_kernel::Twist &request);
+  void setTeleop(const nav_kernel::Twist &request) noexcept;
   bool takeover(const nav_kernel::Twist &request);
   void setTeleopManualMode(bool active) noexcept;
   void holdOperator();

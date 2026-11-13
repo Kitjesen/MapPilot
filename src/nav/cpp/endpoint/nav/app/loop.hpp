@@ -43,7 +43,6 @@ class NavigationRuntimeController;
 class GoalTerminalStatusDelivery;
 class InspectionRuntimeController;
 class InspectionCommandCoordinator;
-class TeleopAdmissionController;
 class TeleopTickController;
 class AutonomyTickController;
 class RollingSegmentLifecycle;
@@ -86,7 +85,6 @@ struct EndpointLoopContext {
   GoalTerminalStatusDelivery &goal_terminal_delivery;
   InspectionRuntimeController &inspection_runtime;
   InspectionCommandCoordinator &inspection_command_coordinator;
-  TeleopAdmissionController &teleop_admission;
   TeleopTickController &teleop_tick;
   AutonomyTickController &autonomy_tick;
   RollingSegmentLifecycle &rolling_segment;

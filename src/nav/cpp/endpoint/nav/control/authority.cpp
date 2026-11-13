@@ -24,6 +24,11 @@ bool ControlAuthority::acceptTeleop(const nav_kernel::Twist &request) {
   return true;
 }
 
+void ControlAuthority::setTeleop(const nav_kernel::Twist &request) noexcept {
+  path_active_ = false;
+  teleop_request_ = request;
+}
+
 bool ControlAuthority::takeover(const nav_kernel::Twist &request) {
   if (!acceptTeleop(request)) return false;
   operator_takeover_latched_ = true;
