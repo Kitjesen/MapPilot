@@ -37,7 +37,6 @@
 #include "app/goal/runtime.hpp"
 #include "app/rolling/effects.hpp"
 #include "app/rolling/lifecycle.hpp"
-#include "app/navigation.hpp"
 #include "app/state.hpp"
 #include "app/semantic/view_query.hpp"
 #include "app/time.hpp"
@@ -115,7 +114,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &replan = ctx.goal_replan_runtime;
   auto &motion_stop = ctx.motion_stop;
   auto &goal_outbox = ctx.goal_status_outbox;
-  auto &runtime = ctx.navigation_runtime_controller;
+  auto &runtime = replan;
   auto &terminal_delivery = ctx.goal_terminal_delivery;
   auto &inspection_runtime = ctx.inspection_runtime;
   auto &inspection_commands = ctx.inspection_command_coordinator;
