@@ -363,7 +363,7 @@ void testRecoveryExhaustionRunsOneAtomicReplacementCycle() {
 
   const auto early = fixture.coordinator.advancePlanningCycle(fixture.frame(30.499));
   require(early.handled && early.reason == "backoff_pending" && early.zero_kept_fresh &&
-              !early.replan_started && fixture.keep_zero_calls == 1 &&
+              !early.replan_started && fixture.keep_zero_calls == 0 &&
               fixture.planner_calls.load() == 1,
           "replacement planning started before the 0.5 second backoff elapsed");
 

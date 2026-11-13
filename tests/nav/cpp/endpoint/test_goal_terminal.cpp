@@ -206,21 +206,15 @@ struct Fixture {
   }
 };
 
-void testOnlyReachedUsesDriverAckWithoutAdditionalOdometry() {
+void testReachedCommitsWithoutStopEvidence() {
   Fixture reached;
   reached.activateGoal();
-  reached.confirmation = StopConfirmationState::Pending;
   const auto intent = reached.reachedIntent();
-  require(!reached.transaction.advance(intent).action_committed,
-          "reached committed before the zero command ACK");
-  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
-          "reached retained the additional odometry wait");
-  (void)reached.motion_stop.poll();
-  require(reached.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
-          "pending reached transaction lost its evidence policy");
-  reached.confirmation = StopConfirmationState::Confirmed;
-  require(reached.transaction.advance(reached.coordinator.replayPendingTerminal()).delivery_acknowledged,
-          "reached did not finish on the matching zero ACK");
+  const auto reached_result = reached.transaction.advance(intent);
+  require(reached_result.action_committed && reached_result.delivery_acknowledged,
+          "reached did not commit directly after FinalControl zero output");
+  require(reached.evidence_policies.empty(),
+          "normal reached still entered stop evidence tracking");
 
   Fixture failed;
   failed.activateGoal();
@@ -229,14 +223,14 @@ void testOnlyReachedUsesDriverAckWithoutAdditionalOdometry() {
   require(!failed.evidence_policies.back(), "failed terminal weakened its stop evidence");
 }
 
-void testSafetyStopAndEstopReplaceReachedEvidencePolicy() {
+void testSafetyStopAndEstopKeepExplicitTerminalEvidence() {
   for (const bool estop : {false, true}) {
     Fixture fixture;
     fixture.activateGoal();
     fixture.confirmation = StopConfirmationState::Pending;
-    (void)fixture.transaction.advance(fixture.reachedIntent());
-    require(fixture.evidence_policies.back() == StopConfirmationEvidencePolicy::ZeroOutputOnly,
-            "reached fixture did not select ACK-only");
+    const auto pending_terminal = fixture.transaction.advance(fixture.terminalIntent());
+    require(pending_terminal.reason == "stop_confirmation_pending",
+            "explicit terminal did not enter stop confirmation");
     const auto stopped = estop ? fixture.transaction.estopPending("operator_request")
                                : fixture.transaction.stopPending();
     require(stopped.pending && !stopped.terminal_committed,
@@ -521,8 +515,8 @@ void testTaskCancelAcceptsPendingStopWithoutEarlyTerminal() {
 
 int main() {
   try {
-    testOnlyReachedUsesDriverAckWithoutAdditionalOdometry();
-    testSafetyStopAndEstopReplaceReachedEvidencePolicy();
+    testReachedCommitsWithoutStopEvidence();
+    testSafetyStopAndEstopKeepExplicitTerminalEvidence();
     testTaskCancelAcceptsPendingStopWithoutEarlyTerminal();
     testSuccessfulTerminalTransactionCommitsDeliversAndAcknowledges();
     testPendingDeliveryReplayAcknowledgesWithoutRepeatingCommit();

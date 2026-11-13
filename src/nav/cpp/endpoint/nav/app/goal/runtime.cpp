@@ -33,10 +33,6 @@ bool validLocalRecoveryTrigger(const GoalReplanTrigger &trigger) {
   return trigger.kind == GoalReplanTriggerKind::kLocalRecoveryExhausted;
 }
 
-const char *replanStopReason() {
-  return "local_recovery_replan";
-}
-
 lingtu::message::NavigationGoalState deferredReplacementAdmissionState(const std::string &reason) {
   if (reason == "map_drift" || reason == "invalid_replan_admission" ||
       reason == "map_odom_tf_not_ready" || reason == "odometry_not_ready" ||
@@ -662,18 +658,11 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
     return result;
   }
   const GoalReplanTrigger trigger = *event.outcome.replan_trigger;
-  const char *stop_reason = replanStopReason();
   if (!event.goal_snapshot.active_origin || !current_snapshot.active_origin) {
     if (current) {
-      const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
-      if (stopped.pending) {
-        result.handled = true;
-        result.reason = "stop_pending";
-        return result;
-      }
       observeAndCancel(*current, frame.steady_now_s, "active_goal_identity_missing");
       result.handled = true;
-      result.reason = stopped.accepted ? "active_goal_identity_missing" : stopped.reason;
+      result.reason = "active_goal_identity_missing";
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                              true);
     }
@@ -691,15 +680,9 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
   }
   const auto captured = activeGoal(event.goal_snapshot);
   if (!captured) {
-    const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
-    if (stopped.pending) {
-      result.handled = true;
-      result.reason = "stop_pending";
-      return result;
-    }
     observeAndCancel(*current, frame.steady_now_s, "active_goal_identity_missing");
     result.handled = true;
-    result.reason = stopped.accepted ? "active_goal_identity_missing" : stopped.reason;
+    result.reason = "active_goal_identity_missing";
     attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                            true);
     return result;
@@ -714,45 +697,27 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
       result.reason = "stale_autonomy_failure_ignored";
       return result;
     }
-    const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
-    if (stopped.pending) {
-      result.handled = true;
-      result.reason = "stop_pending";
-      return result;
-    }
     observeAndCancel(*current, frame.steady_now_s, "active_goal_map_identity_changed");
     result.handled = true;
-    result.reason = stopped.accepted ? "active_goal_map_identity_changed" : stopped.reason;
+    result.reason = "active_goal_map_identity_changed";
     attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                            true);
     return result;
   }
   if (!triggerMatchesSnapshot(trigger, event.goal_snapshot) ||
       !triggerMatchesSnapshot(trigger, current_snapshot)) {
-    const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
-    if (stopped.pending) {
-      result.handled = true;
-      result.reason = "stop_pending";
-      return result;
-    }
     observeAndCancel(*current, frame.steady_now_s, "replan_trigger_identity_mismatch");
     result.handled = true;
-    result.reason = stopped.accepted ? "replan_trigger_identity_mismatch" : stopped.reason;
+    result.reason = "replan_trigger_identity_mismatch";
     attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                            true);
     return result;
   }
   const bool valid_trigger = validLocalRecoveryTrigger(trigger);
   if (!valid_trigger) {
-    const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
-    if (stopped.pending) {
-      result.handled = true;
-      result.reason = "stop_pending";
-      return result;
-    }
     observeAndCancel(*current, frame.steady_now_s, "replan_trigger_payload_invalid");
     result.handled = true;
-    result.reason = stopped.accepted ? "replan_trigger_payload_invalid" : stopped.reason;
+    result.reason = "replan_trigger_payload_invalid";
     attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
                            true);
     return result;
@@ -770,26 +735,8 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
         state == BoundedGoalReplanState::kBackoffPending ? "backoff_pending" : "replan_in_flight";
     return result;
   }
-  const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(stop_reason);
   result.handled = true;
-  if (stopped.pending) {
-    pending_replan_trigger_ = trigger;
-    result.reason = "stop_pending";
-    return result;
-  }
-  const auto armed = bounded_.armAfterConfirmedStop(*current, frame.steady_now_s, stopped.accepted);
-  if (!stopped.accepted) {
-    if (stopped.reason == "stop_confirmation_timeout_goal_replan_pending") {
-      pending_replan_trigger_ = trigger;
-      result.reason = "stop_pending";
-      return result;
-    }
-    (void)bounded_.cancel(*current, frame.steady_now_s, stopped.reason);
-    result.reason = stopped.reason;
-    attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
-                           true);
-    return result;
-  }
+  const auto armed = bounded_.armAfterConfirmedStop(*current, frame.steady_now_s, true);
   if (armed.action == BoundedGoalReplanAction::kHold) {
     pending_replan_trigger_ = trigger;
     result.reason = "backoff_pending";
@@ -1002,17 +949,6 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       return interrupt(GoalReplanRuntimeInterruption::kEstop, input.steady_now_s);
     }
     if (!input.fresh_admission.input_ready) {
-      if (!motion_stop_.keepZeroFresh()) {
-        result.handled = true;
-        result.reason = "zero_refresh_failed";
-        if (const auto tracked = trackedGoal()) {
-          (void)bounded_.cancel(*tracked, input.steady_now_s, result.reason);
-        }
-        replacement_plan_in_progress_ = false;
-        attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
-                               result.reason, true);
-        return result;
-      }
       result.handled = true;
       result.reason = "input_gate_hold_pending";
       result.zero_kept_fresh = true;
@@ -1024,17 +960,6 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
          before.planning_origin != GoalPlanOrigin::kInspection) ||
         input.rolling_segment_active || input.fresh_admission.rolling_segment_active) {
       return interrupt(GoalReplanRuntimeInterruption::kControlHold, input.steady_now_s);
-    }
-    if (!motion_stop_.keepZeroFresh()) {
-      result.handled = true;
-      result.reason = "zero_refresh_failed";
-      if (const auto tracked = trackedGoal()) {
-        (void)bounded_.cancel(*tracked, input.steady_now_s, result.reason);
-      }
-      replacement_plan_in_progress_ = false;
-      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, result.reason,
-                             true);
-      return result;
     }
     result.zero_kept_fresh = true;
   }
@@ -1122,23 +1047,8 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
                              "replan_trigger_identity_mismatch", true);
       return result;
     }
-    const MotionStopResult stopped = motion_stop_.confirmGoalReplanStop(replanStopReason());
     result.handled = true;
-    if (stopped.pending) {
-      result.reason = "stop_pending";
-      return result;
-    }
-    const auto armed = bounded_.armAfterConfirmedStop(*current, input.steady_now_s, stopped.accepted);
-    if (!stopped.accepted) {
-      if (stopped.reason == "stop_confirmation_timeout_goal_replan_pending") {
-        result.reason = "stop_pending";
-        return result;
-      }
-      (void)bounded_.cancel(*current, input.steady_now_s, stopped.reason);
-      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, stopped.reason,
-                             true);
-      return result;
-    }
+    const auto armed = bounded_.armAfterConfirmedStop(*current, input.steady_now_s, true);
     if (armed.action != BoundedGoalReplanAction::kHold) {
       attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed, armed.reason,
                              true);
@@ -1248,12 +1158,6 @@ GoalReplanRuntimeCoordinator::drainPendingCycle(const GoalReplanRuntimeFrameInpu
                                 resumed.reason == "odometry_not_ready";
   const bool waiting_for_retry = resumed.reason == "planning_waiting";
   if (waiting_for_input || waiting_for_map || waiting_for_pose || waiting_for_retry) {
-    if (!motion_stop_.keepZeroFresh()) {
-      result.reason = "zero_refresh_failed";
-      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
-                             result.reason, true);
-      return result;
-    }
     result.zero_kept_fresh = true;
     if (waiting_for_input) {
       result.reason = "pending_waiting_for_inputs";

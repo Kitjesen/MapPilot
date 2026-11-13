@@ -323,8 +323,14 @@ void testInspectionCompletionAfterStop() {
     const auto pending = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
     require(pending.autonomy_result && pending.autonomy_result->handled,
             "inspection outcome did not reach its native owner");
+    if (kind == AutonomyTickOutcomeKind::kGoalReached) {
+      require(pending.inspection_completion && pending.terminal_delivery_acknowledged &&
+                  pending.pending_cycle_advanced && !fixture.runtime.terminalPending(),
+              "normal inspection arrival entered a stop transaction");
+      continue;
+    }
     require(!pending.inspection_completion && fixture.runtime.terminalPending(),
-            "inspection advanced before stop confirmation");
+            "inspection failure advanced before stop confirmation");
 
     fixture.confirmation = StopConfirmationState::Confirmed;
     const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.2), actions);
