@@ -43,11 +43,18 @@ int GridMap::getTrajectoryOccupancy(const Eigen::Vector3d &start,
     const Eigen::Vector3d &endVelocity, double startTime, double endTime,
     std::optional<double> *previousHeading) const noexcept {
   if (grid_ == nullptr) return -1;
-  // Candidate generation keeps measured occupancy separate from final-control forecasts.
-  return grid_->trajectoryOccupancy(
-      {start.x(), start.y(), start.z()}, {velocity.x(), velocity.y(), velocity.z()},
-      {end.x(), end.y(), end.z()}, {endVelocity.x(), endVelocity.y(), endVelocity.z()},
-      startTime, endTime, false, previousHeading);
+  static_cast<void>(startTime);
+  static_cast<void>(endTime);
+  const auto heading = [](const Eigen::Vector3d &value, double fallback) {
+    return std::hypot(value.x(), value.y()) > 0.03
+        ? std::atan2(value.y(), value.x()) : fallback;
+  };
+  const double startYaw = heading(velocity, previousHeading ? previousHeading->value_or(0.0) : 0.0);
+  const double endYaw = heading(endVelocity, startYaw);
+  if (previousHeading) *previousHeading = endYaw;
+  // The upstream optimizer queries the inflated voxel cylinder. Multipart body
+  // checks belong to the execution/safety layer and must not change this path.
+  return getInflateOccupancySegment(start, startYaw, end, endYaw);
 }
 
 }  // namespace nav_kernel::local::scan::upstream
