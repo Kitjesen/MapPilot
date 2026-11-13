@@ -475,7 +475,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
   auto handle_stop = [&](const std::string &) -> std::pair<bool, std::string> {
     runtime.cancelResume();
-    const auto interruption = runtime.interrupt(
+    const auto interruption = runtime.interruptAndService(
         GoalReplanRuntimeInterruption::kStop, steadySeconds());
     if (interruption.terminal) {
       const auto &terminal_result = *interruption.terminal;
@@ -488,7 +488,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
   auto handle_estop = [&](const std::string &reason) -> std::pair<bool, std::string> {
     runtime.cancelResume();
-    const auto interruption = runtime.interrupt(
+    const auto interruption = runtime.interruptAndService(
         GoalReplanRuntimeInterruption::kEstop, steadySeconds(), reason);
     if (interruption.terminal) {
       const auto &terminal_result = *interruption.terminal;
