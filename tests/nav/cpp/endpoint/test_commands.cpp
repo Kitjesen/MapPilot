@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "app/inspection/inspection_command_coordinator.hpp"
+#include "app/inspection/commands.hpp"
 
 namespace {
 
