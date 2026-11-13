@@ -23,7 +23,7 @@ int main() {
     for (std::uint64_t sequence = 1; sequence <= 200; ++sequence) {
       now += 20ms;
       const auto command = driver.accept(
-          {"host", "nav", sequence, now.time_since_epoch(), now.time_since_epoch()},
+          {"host", "nav", now.time_since_epoch(), now.time_since_epoch()},
           "body", 0.3, 0.0, 0.0, now);
       require(command.action && command.action->velocity.vx_mps == 0.3,
               "fresh commands below the target frequency must remain executable");
@@ -42,7 +42,7 @@ int main() {
                 stopped->velocity.yaw_rps == 0.0,
             "a real command gap must still stop all motion");
     const auto expired = driver.accept(
-        {"host", "nav", 201, now.time_since_epoch(), (now + 201ms).time_since_epoch()},
+        {"host", "nav", now.time_since_epoch(), (now + 201ms).time_since_epoch()},
         "body", 0.3, 0.0, 0.0, now + 201ms);
     require(!expired.action && !expired.freshness.accepted,
             "an old command restarted motion after the watchdog stop");
