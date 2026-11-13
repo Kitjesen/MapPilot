@@ -121,6 +121,26 @@ int runTests() {
           "planning status used the wrong lifecycle state");
   require(statuses.front().reason == "planning", "planning status reason changed");
 
+  GoalPlanActions mismatch_actions;
+  mismatch_actions.preempt_rolling = [](const std::string &) { return true; };
+  mismatch_actions.clear_external_inspection = [] {};
+  mismatch_actions.current_map_identity = [] {
+    return GoalPlanMapIdentityResult{lingtu::nav::plan::MapIdentity{"field", 7, "map"}, {}};
+  };
+  mismatch_actions.publish_status = [](const GoalPlanStatus &) {};
+  mismatch_actions.inspection_active = [] { return false; };
+  mismatch_actions.inspection_leg_failed = [](const std::string &, double) {};
+  mismatch_actions.inspection_pause = [](const std::string &) {};
+  mismatch_actions.inspection_plan_ready = [](double) { return GoalPlanInspectionDecision{}; };
+  mismatch_actions.activate_path = [](const GoalPlanPathActivation &) {};
+  GoalPlanController mismatch_controller(planImmediately, std::move(mismatch_actions));
+  GoalPlanRequest mismatched_request = request;
+  mismatched_request.expected_map_identity = lingtu::nav::plan::MapIdentity{"field", 8, "map"};
+  const auto mismatch = mismatch_controller.submit(mismatched_request, context);
+  require(!mismatch.accepted, "goal from a different map was admitted");
+  require(mismatch.reason == "goal_map_identity_mismatch",
+          "map mismatch returned the wrong rejection reason");
+
   bool blocked_external_inspection_cleared = false;
   std::vector<GoalPlanStatus> blocked_statuses;
   GoalPlanActions blocked_actions;

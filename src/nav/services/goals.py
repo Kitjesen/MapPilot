@@ -20,6 +20,7 @@ from runtime.msgs import (
     NavigationCommandReceipt,
     NavigationGoalState,
     NavigationGoalStatus,
+    NavigationState,
     VisualGoalCancel,
     VisualGoalRequest,
 )
@@ -105,6 +106,7 @@ class GoalService(Module, layer=6):
     navigation_goal_status: In[NavigationGoalStatus]
     goal_status: Out[dict]
     task_status: Out[NavigationGoalStatus]
+    navigation_state: In[NavigationState]
 
     def __init__(
         self,
@@ -127,7 +129,8 @@ class GoalService(Module, layer=6):
             str(product_session_id or "").strip()
             or str(os.environ.get("LINGTU_PRODUCT_SESSION_ID") or "").strip()
         )
-        self._map_identity = dict(map_identity) if map_identity is not None else None
+        self._map_identity = self._normalize_map_identity(map_identity)
+        self._navigation_state_seen = False
         resolved_task_ledger_path = task_ledger_path
         if resolved_task_ledger_path is None:
             resolved_task_ledger_path = (
@@ -147,6 +150,7 @@ class GoalService(Module, layer=6):
         self.visual_cancel_request.subscribe(self._on_visual_cancel_request)
         # Lifecycle transitions are low-rate and order-sensitive; do not coalesce them.
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
+        self.navigation_state.subscribe(self._on_navigation_state)
 
         self._reconcile_task_history()
         self._restore_visual_tasks()
@@ -206,6 +210,24 @@ class GoalService(Module, layer=6):
                 getattr(status, "task_id", ""),
                 exc,
             )
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        """Refresh the map binding used for the next native goal admission."""
+
+        map_id = str(state.map_id or "").strip()
+        try:
+            content_epoch = int(state.map_content_epoch)
+        except (TypeError, ValueError):
+            content_epoch = 0
+        self._navigation_state_seen = True
+        if map_id and content_epoch > 0:
+            self._map_identity = {
+                "map_id": map_id,
+                "content_epoch": content_epoch,
+                "frame_id": normalize_frame_id(state.frame_id) or self._planning_frame_id,
+            }
+        else:
+            self._map_identity = None
 
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
@@ -366,6 +388,7 @@ class GoalService(Module, layer=6):
         action: str = "goal_pose",
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
+        map_identity: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate and synchronously admit one typed goal."""
 
@@ -399,6 +422,9 @@ class GoalService(Module, layer=6):
                         raise ValueError(f"{key} must be positive and finite")
                     limits[key] = value
             target.update(limits)
+            expected_map_identity = self._normalize_map_identity(
+                map_identity if map_identity is not None else self._map_identity
+            )
         except (AttributeError, TypeError, ValueError) as exc:
             return self._publish_status(
                 action,
@@ -417,7 +443,7 @@ class GoalService(Module, layer=6):
                 source=action,
                 target=target,
                 product_session_id=self._product_session_id,
-                map_identity=self._map_identity,
+                map_identity=expected_map_identity,
             )
         except TaskLedgerConflict as exc:
             return self._publish_status(
@@ -451,6 +477,7 @@ class GoalService(Module, layer=6):
             limits=limits,
             task_id=resolved_task_id,
             request_id=resolved_request_id,
+            map_identity=expected_map_identity,
         )
         if isinstance(dispatch_result, str):
             dispatch_error = dispatch_result or "navigation command failed without error detail"
@@ -508,6 +535,11 @@ class GoalService(Module, layer=6):
         *,
         frame_id: str,
     ) -> tuple[PoseStamped, dict[str, Any]]:
+        frame_id = normalize_frame_id(frame_id) or self._planning_frame_id
+        if frame_id != self._planning_frame_id:
+            raise ValueError(
+                f"unsupported target frame {frame_id!r}; expected {self._planning_frame_id!r}"
+            )
         orientation = goal.pose.orientation
         orientation_norm = math.sqrt(
             orientation.x * orientation.x
@@ -790,20 +822,47 @@ class GoalService(Module, layer=6):
         limits: dict[str, float],
         task_id: str,
         request_id: str,
+        map_identity: Mapping[str, Any] | None,
     ) -> NavigationCommandReceipt | str:
         try:
-            return self._call_commands(
-                "send_goal",
-                x=goal.x,
-                y=goal.y,
-                z=goal.z,
-                yaw=yaw,
+            kwargs: dict[str, Any] = {
+                "x": goal.x,
+                "y": goal.y,
+                "z": goal.z,
+                "yaw": yaw,
                 **limits,
-                task_id=task_id,
-                request_id=request_id,
-            )
+                "task_id": task_id,
+                "request_id": request_id,
+            }
+            identity = map_identity
+            if isinstance(identity, Mapping):
+                map_id = str(identity.get("map_id") or "").strip()
+                content_epoch = int(identity.get("content_epoch") or 0)
+                if map_id or content_epoch:
+                    kwargs.update(map_id=map_id, map_content_epoch=content_epoch)
+            return self._call_commands("send_goal", **kwargs)
         except Exception as exc:
             return str(exc)
+
+    @staticmethod
+    def _normalize_map_identity(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        map_id = str(value.get("map_id") or "").strip()
+        try:
+            content_epoch = int(value.get("content_epoch") or value.get("map_content_epoch") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("map_content_epoch must be an integer") from exc
+        frame_id = normalize_frame_id(value.get("frame_id")) or map_frame_id()
+        if not map_id and content_epoch == 0:
+            return None
+        if not map_id or content_epoch <= 0 or frame_id != map_frame_id():
+            raise ValueError("saved-map goal requires a complete map identity")
+        return {
+            "map_id": map_id,
+            "content_epoch": content_epoch,
+            "frame_id": frame_id,
+        }
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         """Return one durable task record without polling or mutating history."""

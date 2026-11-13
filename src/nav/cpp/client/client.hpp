@@ -327,7 +327,9 @@ class LINGTU_NAV_CLIENT_API Client {
         const std::string& task_id = {},
         const std::string& request_id = {},
         double max_speed_mps = 0.0,
-        double acceptance_radius_m = 0.0);
+        double acceptance_radius_m = 0.0,
+        const std::string& map_id = {},
+        std::int64_t map_content_epoch = 0);
     [[nodiscard]] PlanResult preview(
         double x,
         double y,

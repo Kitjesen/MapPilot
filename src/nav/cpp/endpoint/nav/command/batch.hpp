@@ -19,6 +19,8 @@ namespace lingtu::nav::endpoint {
 struct GoalSample {
   double stamp_s{0.0};
   std::string frame_id;
+  std::string map_id;
+  std::int64_t map_content_epoch{0};
   nav_kernel::Vec3 position{};
   Quaternion orientation{};
   bool has_orientation{false};

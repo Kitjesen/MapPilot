@@ -42,6 +42,7 @@ enum {
   LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_STATUS = 1ULL << 18,
   LINGTU_NAV_CLIENT_CAP_EXTERNAL_CONTROL = 1ULL << 19,
   LINGTU_NAV_CLIENT_CAP_PLANNER_SELECTION = 1ULL << 20,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_MAP_BINDING = 1ULL << 21,
 };
 
 enum {
@@ -491,6 +492,24 @@ LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_task_with_receipt_v2(
     double y,
     double z,
     double yaw,
+    double max_speed_mps,
+    double acceptance_radius_m,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
+
+// Submit a goal with an expected saved-map identity. Empty map_id and zero
+// content epoch retain the live-map behavior; a partial identity is rejected
+// by the native endpoint.
+LINGTU_NAV_CLIENT_API int lingtu_nav_client_start_task_with_receipt_v3(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    const char* map_id,
+    int64_t map_content_epoch,
     double max_speed_mps,
     double acceptance_radius_m,
     int timeout_ms,

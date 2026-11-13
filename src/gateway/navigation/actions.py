@@ -57,6 +57,7 @@ def go(gw: Any, body: GoalRequest | ClickNavRequest, *, command: str = "goal"):
             request_id=body.request_id,
             max_speed_mps=goal.max_speed_mps,
             acceptance_radius_m=goal.acceptance_radius_m,
+            map_identity=goal.metadata,
         )
         return {
             **goal.command_payload(

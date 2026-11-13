@@ -4016,6 +4016,23 @@ TEST(Executor, RouteHeightIsNotShiftedToRobot) {
   EXPECT_NEAR(later.target.z, 0.90, 0.02);
 }
 
+TEST(Executor, SteepRouteJoinUsesHorizontalProjection) {
+  auto executor = makeLoop(false, 0.5);
+  executor.setRoute(route({
+      {0.0, 0.0, 0.0},
+      {2.0, 0.0, 10.0},
+      {4.0, 0.0, 10.0},
+  }));
+
+  const auto output = executor.tick(
+      routeInput(pose(1.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
+
+  ASSERT_TRUE(output.active);
+  // The short lookahead starts from the measured horizontal join at x=1.0;
+  // a 3-D projection would incorrectly place it near x=0.02.
+  EXPECT_GT(output.target.x, 1.2);
+}
+
 TEST(Executor, ArrivalUsesRouteHeight) {
   auto executor = makeLoop();
   executor.setRoute(route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}));

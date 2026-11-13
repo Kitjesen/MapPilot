@@ -212,7 +212,7 @@ def resolve_env_spec(
         implementation_copy["processes"] = process_definitions
     if env_name == "real":
         robot_config_ref = _resolve_robot_config_ref(robot_name, robot_dir)
-        robot_config = load_config(str(robot_config_ref))
+        robot_config = load_config(str(robot_config_ref), required=True)
         slam_config_ref = None
         lidar_extrinsic_profile = None
         lidar_ip = robot_config.lidar.lidar_ip

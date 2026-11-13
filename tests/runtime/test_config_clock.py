@@ -34,6 +34,10 @@ class TestLoadConfigDefaults:
         cfg = load_config(path="/nonexistent/path.yaml")
         assert isinstance(cfg, RobotConfig)
 
+    def test_required_config_fails_closed_when_missing(self):
+        with pytest.raises(FileNotFoundError, match="RobotConfig not found"):
+            load_config(path="/nonexistent/path.yaml", required=True)
+
     def test_speed_defaults(self):
         cfg = load_config(path="/nonexistent/path.yaml")
         assert cfg.speed.max_linear == 1.0
