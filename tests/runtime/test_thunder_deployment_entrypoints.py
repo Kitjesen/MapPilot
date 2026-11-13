@@ -1006,7 +1006,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "state_.input_gate_state = gate_.evaluate(input);" in input_projector
     assert "input.path_active && !input.input_gate.ready" in source
     navigation_state_publish = endpoint_loop.split(
-        "navigation_state.sample(NavigationStateContext{", 1
+        "nav_state.sample(NavigationStateContext{", 1
     )[1].split("});", 1)[0]
     assert "input_gate_state.ready" in navigation_state_publish
     assert "input_gate_state.reason" in navigation_state_publish
@@ -1096,8 +1096,8 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "nav/app/navigation.cpp" in cmake
     assert "NavigationRuntimeController navigation_runtime_controller" in bootstrap
     assert "NavigationRuntimeController &navigation_runtime_controller;" in loop_context
-    assert "auto &navigation_runtime_controller = ctx.navigation_runtime_controller;" in loop
-    assert "navigation_runtime_controller.advanceFrame(runtime_frame, runtime_actions)" in loop
+    assert "auto &runtime = ctx.navigation_runtime_controller;" in loop
+    assert "runtime.advanceFrame(runtime_frame, runtime_actions)" in loop
 
     for old_bypass in (
         "goal_plan.advance(",
@@ -1152,7 +1152,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
         cursor = position + len(step)
     assert "if (!delivery_.isCommitted(runtime_result.terminal_intent_id))" in terminal_advance
     assert "ack.accepted = terminal_delivery_acknowledged" not in loop
-    assert "goal_status_outbox.flush" in loop
+    assert "goal_outbox.flush" in loop
 
     inspection_stop = bootstrap.split("inspection_command_actions.stop_and_commit", 1)[1].split(
         "inspection_command_actions.publish_ack", 1
@@ -1202,16 +1202,16 @@ def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_go
     assert "stop_.estopPreservingGoalTerminal" in terminal
     assert "motion_stop.stopPreservingGoalTerminal" not in loop
     assert "motion_stop.estopPreservingGoalTerminal" not in loop
-    assert "inspection_command_coordinator.reject" in loop
+    assert "inspection_commands.reject" in loop
     assert "RollingSegmentIngressRejected" in loop
     assert "goal_replan_runtime.terminalPending()" not in loop
 
     terminal_barrier = loop.split("auto terminal_ingress", 1)[1].split("GoalTaskCancelRouter", 1)[0]
-    assert "navigation_runtime_controller.terminalPending()" in terminal_barrier
+    assert "runtime.terminalPending()" in terminal_barrier
 
     inspection_busy = loop.split("inspection_tick_input.goal_plan_busy =", 1)[1].split(";", 1)[0]
     assert "goal_plan.snapshot().busy" in inspection_busy
-    assert "navigation_runtime_controller.terminalPending()" in inspection_busy
+    assert "runtime.terminalPending()" in inspection_busy
     assert "staged_inspection_goal" in loop
     assert 'completeGoalDispatch(false, "goal_terminal_pending"' not in loop
 

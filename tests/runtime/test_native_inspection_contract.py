@@ -179,10 +179,15 @@ def test_autonomy_input_gate_zero_intent_is_published_without_nav_output() -> No
     projection = endpoint.split("autonomy_result = autonomy_tick.tick", 1)[1].split(
         "switch (autonomy_result.outcome.kind)", 1
     )[0]
+    publisher = endpoint.split("auto publish_final_velocity", 1)[1].split(
+        "  };", 1
+    )[0]
 
     assert "result.publish.cmd_vel = input.publish_cmd_vel" in blocked_branch
     assert "result.publish.command = {}" in blocked_branch
-    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
+    assert "publish_final_velocity(" in projection
+    assert "autonomy_result.publish.command" in projection
+    assert "FinalVelocityOutput{command}" in publisher
     assert "dds.writeCmdVel" not in projection
 
 
@@ -192,16 +197,16 @@ def test_autonomy_publishes_planner_output_without_a_second_send_gate() -> None:
         "if (autonomy_result.clear_local_path)", 1
     )[0]
 
-    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
+    assert "publish_final_velocity(" in projection
+    assert "autonomy_result.publish.command" in projection
     assert "enforcePostPlanningInputReadiness" not in projection
     assert "post_planning_readiness" not in projection
     failure = endpoint.split("auto fail_output =", 1)[1].split("  };", 1)[0]
     assert "hold(" not in failure
-    assert "motion_stop.keepZeroFresh()" in failure
+    assert "motion_stop.keepZeroFresh()" not in failure
     main = Path("src/nav/cpp/endpoint/nav/main.cpp").read_text(encoding="utf-8")
     zero = main.split("auto publish_zero_command =", 1)[1].split("    };", 1)[0]
     assert "hold(" not in zero
-    assert "FinalVelocityOutput{autonomy_result.publish.command}" in projection
 
 
 def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:
@@ -252,7 +257,7 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     assert "motion_stop.cancel()" not in endpoint
     assert "motion_stop_.cancel()" not in cancel_router
     assert "GoalReplanRuntimeInterruption::kStop" in endpoint
-    assert "navigation_runtime_controller.interrupt(" in endpoint
+    assert "runtime.interrupt(" in endpoint
     assert "stop_.stopPreservingGoalTerminal(" in transaction
     assert "stop_.stopWithoutTerminalCommit(" in transaction
     assert "motion_stop.stop()" not in endpoint
@@ -364,8 +369,8 @@ def test_inspection_periodic_file_io_is_off_the_motion_loop() -> None:
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
     motion_loop = endpoint.split("while (running) {", 1)[1]
 
-    assert "inspection_status_writer.submit(inspection_status)" in endpoint
-    assert endpoint.index("inspection_status_writer.submit(inspection_status)") < endpoint.index(
+    assert "inspection_writer.submit(inspection_status)" in endpoint
+    assert endpoint.index("inspection_writer.submit(inspection_status)") < endpoint.index(
         "while (running) {"
     )
     assert "inspection_store->PutStatus" not in endpoint

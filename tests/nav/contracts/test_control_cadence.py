@@ -8,7 +8,7 @@ def test_performance_metrics_do_not_own_motion() -> None:
     bootstrap = (NAV / "main.cpp").read_text(encoding="utf-8")
     loop = (NAV / "app/loop.cpp").read_text(encoding="utf-8")
     assert "control_loop_guard" not in bootstrap + loop
-    assert "control_loop_health.observe" in loop
+    assert "loop_health.observe" in loop
     assert "inputs.evaluateGate" in loop
     assert "motion_stop.resumeAutonomy(request)" in loop
     assert "motion_stop.resumeTeleop(request)" in loop
@@ -29,11 +29,11 @@ def test_resume_does_not_latch_temporary_input_gaps() -> None:
     assert "deferred_control_ack && stop_result->accepted" not in loop
 
 
-def test_idle_zero_failure_remains_a_diagnostic() -> None:
+def test_idle_does_not_refresh_zero_from_navigation() -> None:
     loop = (NAV / "app/loop.cpp").read_text(encoding="utf-8")
-    idle = loop.split("const bool zero_published_this_frame", 1)[1].split(
-        "if (!navigation_runtime_controller.terminalPending())", 1
+    runtime_tail = loop.split("const double publish_now = nowSeconds();", 1)[1].split(
+        "flush_inspection_events();", 1
     )[0]
-    assert "motion_stop.keepZeroFresh()" in idle
-    assert "hold(" not in idle
-    assert 'frames.last_error = "idle_zero_publish_failed"' in idle
+    assert "motion_stop.keepZeroFresh()" not in runtime_tail
+    assert "idle_zero_publish_failed" not in runtime_tail
+    assert "driver watchdog" in loop

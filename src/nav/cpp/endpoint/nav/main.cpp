@@ -139,8 +139,6 @@ using lingtu::nav::endpoint::StopConfirmationConfig;
 using lingtu::nav::endpoint::StopConfirmationDiagnostics;
 using lingtu::nav::endpoint::StopConfirmationEvidencePolicy;
 using lingtu::nav::endpoint::StopConfirmationState;
-using lingtu::nav::endpoint::TeleopAdmissionActions;
-using lingtu::nav::endpoint::TeleopAdmissionController;
 using lingtu::nav::endpoint::TeleopTickActions;
 using lingtu::nav::endpoint::TeleopTickController;
 using lingtu::nav::endpoint::TimingDiagnostics;
@@ -1075,27 +1073,6 @@ int main(int argc, char **argv) {
     InspectionCommandCoordinator inspection_command_coordinator(
         inspection_executor, std::move(inspection_command_actions));
 
-    TeleopAdmissionActions teleop_actions;
-    teleop_actions.hold_operator_takeover = [&]() { control_authority.holdOperator(); };
-    teleop_actions.stop_control = [&]() { control_authority.stop(); };
-    teleop_actions.begin_operator_takeover = [&](const nav_kernel::Twist &command) {
-      if (control_authority.estopLatched()) return false;
-      (void)goal_replan_runtime.interrupt(GoalReplanRuntimeInterruption::kOperatorTakeover,
-                                          steadySeconds());
-      return control_authority.takeover(command);
-    };
-    teleop_actions.clear_motion = [&](const std::string &reason) {
-      return motion_stop.holdEndpointMotion(reason);
-    };
-    teleop_actions.pause_inspection = [&](const std::string &reason) {
-      (void)inspection_executor.Pause(reason);
-    };
-    teleop_actions.accept_teleop = [&](const nav_kernel::Twist &command) {
-      return control_authority.acceptTeleop(command);
-    };
-    teleop_actions.publish_zero = [&]() { return motion_stop.keepZeroFresh(); };
-    TeleopAdmissionController teleop_admission(std::move(teleop_actions));
-
     const auto execution_observation = [&](bool local_traversability) {
       state.observed_body = observedBody(executor.activeBody(), state.map_body_transform);
       lingtu::nav::navigation::ExecutionObservation observation{
@@ -1242,7 +1219,7 @@ int main(int argc, char **argv) {
         goal_terminal_delivery,
         inspection_runtime,
         inspection_command_coordinator,
-        teleop_admission,
+
         teleop_tick,
         autonomy_tick,
         rolling_segment,
