@@ -574,6 +574,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
   find_package(Threads REQUIRED)
   add_executable(test_goal_terminal_endpoint_acceptance
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_endpoint_acceptance.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
