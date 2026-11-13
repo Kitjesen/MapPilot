@@ -1,5 +1,8 @@
 name: Native motion build and tests
 
+# The driver CMake detects the installed Brainstem SDK capability; PRs may use
+# the currently published SDK without changing the navigation contract.
+
 on:
   pull_request:
     paths:
