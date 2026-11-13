@@ -66,7 +66,8 @@ def main():
     content = generate(args.directory)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if not args.output.exists() or args.output.read_text(encoding="utf-8") != content:
-        args.output.write_text(content, encoding="utf-8", newline="\n")
+        with args.output.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
 
 
 if __name__ == "__main__":
