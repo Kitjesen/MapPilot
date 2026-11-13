@@ -330,10 +330,15 @@ class PersonTracker:
         if dino_active and not pending:
             encode_batch = getattr(dino, "encode_batch", None)
             if authorized is None and len(eligible) > 1 and all(item[1] != str(current_id or "") for item in eligible) and callable(encode_batch):
-                batch = [
-                    (obj, self._crop_person(frame, obj)) for obj, *_ in eligible
-                    if self._provided_dino_feature(obj) is None
-                ]
+                batch = []
+                for obj, *_ in eligible:
+                    try:
+                        provided = self._provided_dino_feature(obj)
+                    except ValueError:
+                        obj["_appearance"]["dino"] = None
+                        continue
+                    if provided is None:
+                        batch.append((obj, self._crop_person(frame, obj)))
                 batch = [(obj, crop) for obj, crop in batch if crop is not None]
                 if batch:
                     try:
@@ -362,7 +367,7 @@ class PersonTracker:
                     verified_ts = self._get_observation_ts(authorized["object"])
                     reachable = timestamp is None or verified_ts is None or (
                         timestamp > verified_ts
-                        and math.dist(position, self._get_pos(authorized["object"]))
+                        and self._horizontal_distance(position, self._get_pos(authorized["object"]))
                         <= self.MAX_PERSON_SPEED * (timestamp - verified_ts) + self.POSITION_NOISE
                     )
                     if reachable and max(
@@ -796,25 +801,47 @@ class PersonTracker:
 
         # Strategy 2: motion match. A changed tracker ID is only a candidate;
         # it must remain the same for several frames before identity changes.
-        predicted_pos = self._predict_position()
         motion_candidates: list[tuple[float, dict]] = []
         for p in persons:
+            timestamp = self._get_observation_ts(p)
+            previous_timestamp = self._person.observation_ts
+            if timestamp is not None and previous_timestamp is not None:
+                if timestamp <= previous_timestamp:
+                    continue
+                gap = max(0.0, timestamp - previous_timestamp)
+            else:
+                gap = 0.0
+            predicted_pos = self._predict_position(min(gap, _MOTION_PREDICT_DT))
             pos = self._get_pos(p)
             dist = math.hypot(
                 pos[0] - predicted_pos[0],
                 pos[1] - predicted_pos[1],
             )
-            if dist < self.MATCH_DIST_THRESHOLD:
+            radius = self.MATCH_DIST_THRESHOLD + self.MAX_PERSON_SPEED * max(
+                0.0, gap - _MOTION_PREDICT_DT
+            )
+            if dist < radius:
                 motion_candidates.append((dist, p))
         motion_candidates.sort(key=lambda item: item[0])
 
         if not self._person.obj_id and motion_candidates:
-            self._reset_reacquire()
-            return motion_candidates[0][1]
-        for _, candidate in motion_candidates:
-            if not candidate.get("id"):
+            # Without a detector identity, the nearest track is safe only
+            # when it is the sole reachable candidate. Choosing among several
+            # anonymous people can silently switch the follow target during a
+            # crossing or occlusion.
+            if len(motion_candidates) == 1:
                 self._reset_reacquire()
-                return candidate
+                return motion_candidates[0][1]
+            self._reset_reacquire()
+            return None
+        anonymous_candidates = [
+            candidate
+            for _, candidate in motion_candidates
+            if not str(candidate.get("id") or "").strip()
+        ]
+        if len(motion_candidates) == 1 and len(anonymous_candidates) == 1:
+            self._reset_reacquire()
+            return anonymous_candidates[0]
 
         # Strategy 3: appearance Re-ID across new tracker IDs.
         if rgb_frame is None:
@@ -896,6 +923,10 @@ class PersonTracker:
         key = (str(obj.get("id", "")), tuple(np.asarray(bbox).reshape(-1)))
         if key not in self._frame_dino:
             feature = self._provided_dino_feature(obj)
+            if feature is None:
+                prepared = obj.get("_appearance", {}).get("dino")
+                if prepared is not None:
+                    feature = np.asarray(prepared, dtype=np.float32)
             if feature is None:
                 crop = self._crop_person(frame, obj)
                 if crop is None:
@@ -1055,7 +1086,7 @@ class PersonTracker:
                         dt = timestamp - verified_ts
                         if dt <= 0:
                             continue
-                        if math.dist(position, self._get_pos(authorized["object"])) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
+                        if self._horizontal_distance(position, self._get_pos(authorized["object"])) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
                             self._verified_identity = None
                             self._reset_reacquire()
                             continue
@@ -1215,7 +1246,7 @@ class PersonTracker:
                 return False
             if timestamp is not None and self._reacquire_ts is not None and self._reacquire_pos is not None:
                 dt = timestamp - self._reacquire_ts
-                if math.dist(self._get_pos(candidate), self._reacquire_pos) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
+                if self._horizontal_distance(self._get_pos(candidate), self._reacquire_pos) > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
                     self._reset_reacquire()
                     return False
             self._reacquire_count += 1
@@ -1312,7 +1343,7 @@ class PersonTracker:
 
         if observation_ts is not None and previous_observation_ts is not None:
             dt = observation_ts - previous_observation_ts
-            displacement = math.dist(new_pos, old_raw)
+            displacement = self._horizontal_distance(new_pos, old_raw)
             if displacement > self.MAX_PERSON_SPEED * dt + self.POSITION_NOISE:
                 self._observation_reason = "position_rejected"
                 if self._dino_encoder is not None:
@@ -1335,7 +1366,9 @@ class PersonTracker:
         self._person.last_seen = now
         self._person.observation_ts = observation_ts
         self._person.confidence = obj.get("confidence", 1.0)
-        self._person.obj_id = obj.get("id", self._person.obj_id)
+        candidate_id = str(obj.get("id") or "").strip()
+        if candidate_id:
+            self._person.obj_id = candidate_id
         self._person.bbox = obj.get("bbox", self._person.bbox)
         verified = self._verified_identity
         verified_commit = verified is not None and str(verified["object"].get("id")) == str(obj.get("id"))
@@ -1422,6 +1455,11 @@ class PersonTracker:
         if isinstance(pos, dict):
             return [pos.get("x", 0), pos.get("y", 0), pos.get("z", 0)]
         return list(pos[:3]) if len(pos) >= 3 else list(pos) + [0.0] * (3 - len(pos))
+
+    @staticmethod
+    def _horizontal_distance(left: list[float], right: list[float]) -> float:
+        """Return the XY distance used by ground navigation and following."""
+        return math.hypot(left[0] - right[0], left[1] - right[1])
 
     @staticmethod
     def _get_observation_ts(obj: dict) -> float | None:

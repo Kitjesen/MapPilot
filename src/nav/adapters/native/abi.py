@@ -40,6 +40,7 @@ NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY = 1 << 17
 NATIVE_COMMAND_CAP_OPERATOR_MOTION_STATUS = 1 << 18
 NATIVE_COMMAND_CAP_EXTERNAL_CONTROL = 1 << 19
 NATIVE_COMMAND_CAP_PLANNER_SELECTION = 1 << 20
+NATIVE_COMMAND_CAP_NAVIGATION_MAP_BINDING = 1 << 21
 NATIVE_JOINT_STATE_ABI_VERSION = 1
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
@@ -526,6 +527,7 @@ class NativeCommandSession:
         self._state_changed = threading.Condition(self.lock)
         self._active_calls = 0
         self._navigation_configured = False
+        self._navigation_map_binding_configured = False
         self._resume_autonomy_receipt_configured = False
         self._exploration_configured = False
         self._directed_exploration_configured = False
@@ -675,6 +677,37 @@ class NativeCommandSession:
                     "native resume autonomy receipt ABI is unavailable; rebuild liblingtu_nav_client.so"
                 ) from exc
             self._resume_autonomy_receipt_configured = True
+
+    def ensure_navigation_map_binding_abi(self) -> None:
+        """Configure the additive goal ABI that carries a saved-map identity."""
+
+        self.ensure_navigation_abi()
+        self._require_capability(
+            NATIVE_COMMAND_CAP_NAVIGATION_MAP_BINDING,
+            "saved-map goal binding",
+        )
+        with self.lock:
+            if self._navigation_map_binding_configured:
+                return
+            try:
+                function = self.library.lingtu_nav_client_start_task_with_receipt_v3
+                function.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    *([ctypes.c_double] * 4),
+                    ctypes.c_char_p,
+                    ctypes.c_int64,
+                    *([ctypes.c_double] * 2),
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+                ]
+                function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native saved-map goal ABI is unavailable; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._navigation_map_binding_configured = True
 
     def ensure_exploration_abi(self) -> None:
         """Validate and configure exploration-session command symbols lazily."""
@@ -1667,6 +1700,8 @@ class NativeCommandSession:
         yaw: float | None,
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
+        map_id: str | None = None,
+        map_content_epoch: int = 0,
     ) -> dict[str, object]:
         """Submit one navigation task and return the correlated native ACK."""
 
@@ -1677,6 +1712,10 @@ class NativeCommandSession:
             raise ValueError("task_id is required")
         if not request:
             raise ValueError("request_id is required")
+        expected_map_id = str(map_id or "").strip()
+        expected_map_epoch = int(map_content_epoch)
+        if bool(expected_map_id) != (expected_map_epoch > 0):
+            raise ValueError("saved-map goal requires map_id and positive map_content_epoch together")
         operation = self.library.lingtu_nav_client_start_task_with_receipt_v1
         constraints = []
         if max_speed_mps is not None or acceptance_radius_m is not None:
@@ -1688,17 +1727,41 @@ class NativeCommandSession:
                                   *([ctypes.c_double] * 6), ctypes.c_int,
                                   ctypes.POINTER(_NativeNavigationCommandReceiptV1)]
             operation.restype = ctypes.c_int
-        return self._write_navigation_command_receipt(
-            operation,
+        if expected_map_id:
+            self.ensure_navigation_map_binding_abi()
+            if not constraints:
+                constraints = [0.0, 0.0]
+            operation = self.library.lingtu_nav_client_start_task_with_receipt_v3
+            operation.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                *([ctypes.c_double] * 4),
+                ctypes.c_char_p,
+                ctypes.c_int64,
+                *([ctypes.c_double] * 2),
+                ctypes.c_int,
+                ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+            ]
+            operation.restype = ctypes.c_int
+        operation_args = [
             task.encode("utf-8"),
             request.encode("utf-8"),
             float(x),
             float(y),
             float(z),
             math.nan if yaw is None else float(yaw),
-            *constraints,
-            self.goal_timeout_ms,
-        )
+        ]
+        if expected_map_id:
+            operation_args.extend([
+                expected_map_id.encode("utf-8"),
+                expected_map_epoch,
+                *(constraints or [0.0, 0.0]),
+            ])
+        else:
+            operation_args.extend(constraints)
+        operation_args.append(self.goal_timeout_ms)
+        return self._write_navigation_command_receipt(operation, *operation_args)
 
     def cancel_navigation_task(
         self,

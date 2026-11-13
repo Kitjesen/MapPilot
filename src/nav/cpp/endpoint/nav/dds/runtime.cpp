@@ -526,6 +526,8 @@ CommandBatch Dds::takeCommands(double now_steady_s) {
         sample.goal.acceptance_radius_m = message.acceptance_radius_m;
         sample.goal.stamp_s = headerStampSeconds(message.header);
         sample.goal.frame_id = headerFrameId(message.header);
+        sample.goal.map_id = stringValue(message.map_id);
+        sample.goal.map_content_epoch = message.map_content_epoch;
         sample.goal.position = {message.goal.position.x, message.goal.position.y,
                                 message.goal.position.z};
         sample.goal.orientation = quaternionFromDds(message.goal.orientation);

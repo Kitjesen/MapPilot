@@ -858,6 +858,9 @@ struct NavigationCommandRequest {
   string profile_name;
   string external_session_id;
   string local_planner;
+  // Expected map binding for a saved-map goal. Empty/zero means live-map goal.
+  string map_id;
+  long long map_content_epoch;
 };
 @final
 struct NavigationCommandAck {

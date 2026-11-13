@@ -173,7 +173,11 @@ class PathAlgorithm {
       }
     }
 
-    double target_speed = params.maxSpeed * input.requestedSpeed;
+    // The requested speed is a normalized contract shared with the spline
+    // follower. Clamp it here as well so path execution cannot exceed the
+    // configured cap or turn a malformed negative request into reverse motion.
+    const double requested_speed = clamp(input.requestedSpeed, 0.0, 1.0);
+    double target_speed = params.maxSpeed * requested_speed;
     if (!state_.forward) {
       direction_error = wrapPi(direction_error + kPi);
       target_speed *= -1.0;
@@ -211,7 +215,7 @@ class PathAlgorithm {
     if (path_size <= 1) {
       target_speed = 0.0;
     } else if (params.slowDwnDisThre > 0.0 &&
-               end_distance / params.slowDwnDisThre < input.requestedSpeed) {
+               end_distance / params.slowDwnDisThre < requested_speed) {
       target_speed *= end_distance / params.slowDwnDisThre;
     }
 

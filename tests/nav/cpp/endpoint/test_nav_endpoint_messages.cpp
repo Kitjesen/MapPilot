@@ -166,6 +166,17 @@ void testSourceStampValidationRejectsReplayAndFutureCommands() {
   require(sourceStampError("clear_estop", 9.0, 10.0, 0.35, 0.05) ==
               "clear_estop_source_stamp_stale",
           "replayed clear-estop timestamp must fail");
+  require(sourceStampError("goal", 10.0, 10.1, 0.35, 0.05).empty(),
+          "fresh goal timestamp must pass");
+  require(sourceStampError("goal", 0.0, 10.0, 0.35, 0.05) ==
+              "goal_source_stamp_invalid",
+          "zero goal timestamp must fail");
+  require(sourceStampError("goal", 10.2, 10.0, 0.35, 0.05) ==
+              "goal_source_stamp_future",
+          "future goal timestamp must fail");
+  require(sourceStampError("goal", 9.0, 10.0, 0.35, 0.05) ==
+              "goal_source_stamp_stale",
+          "replayed goal timestamp must fail");
 }
 
 void testResumeBoundaryRejectsOldMotionRequests() {

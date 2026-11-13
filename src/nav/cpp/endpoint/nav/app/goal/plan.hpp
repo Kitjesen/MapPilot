@@ -30,6 +30,7 @@ struct GoalPlanRequest {
   std::string request_id;
   GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
   double source_stamp_s{0.0};
+  std::optional<lingtu::nav::plan::MapIdentity> expected_map_identity;
   std::optional<GoalPlanTarget> target;
   std::string decode_error;
 };

@@ -127,6 +127,51 @@ class TestPersonTrackerUpdate:
         ) is True
         assert tracker._person.obj_id == "person-b"
 
+    def test_anonymous_crossing_does_not_switch_the_locked_person(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        assert tracker.update(
+            [
+                {"label": "person", "position": [1.1, 0.0, 0.0], "ts": 21.0},
+                {"label": "person", "position": [1.2, 0.0, 0.0], "ts": 21.0},
+            ]
+        ) is False
+        assert tracker._person.position == [1.0, 0.0, 0.0]
+
+    def test_missing_track_id_does_not_erase_a_locked_identity(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-a",
+                "label": "person",
+                "position": [1.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        assert tracker.update(
+            [
+                {
+                    "id": "",
+                    "label": "person",
+                    "position": [1.1, 0.0, 0.0],
+                    "confidence": 0.9,
+                    "ts": 21.0,
+                }
+            ]
+        ) is True
+        assert tracker._person.obj_id == "person-a"
+
+
     def test_two_nearby_new_tracks_do_not_replace_the_locked_person(self):
         tracker = PersonTracker()
         tracker.lock_target(
@@ -171,6 +216,55 @@ class TestPersonTrackerUpdate:
         # EMA alpha=0.4: 0.4*10 + 0.6*0 = 4.0
         assert pos is not None
         assert abs(pos[0] - 4.0) < 0.5  # some tolerance for timing
+
+    def test_vertical_depth_jitter_does_not_reject_stationary_person(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "person-a",
+                "label": "person",
+                "position": [1.0, 0.0, 1.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        assert tracker.update(
+            [
+                {
+                    "id": "person-a",
+                    "label": "person",
+                    "position": [1.1, 0.0, 4.0],
+                    "confidence": 0.9,
+                    "ts": 21.0,
+                }
+            ]
+        ) is True
+        assert tracker._person.position[0] > 1.0
+
+    def test_motion_match_allows_long_source_gap_within_speed_limit(self):
+        tracker = PersonTracker()
+        tracker.lock_target(
+            {
+                "id": "",
+                "label": "person",
+                "position": [0.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "ts": 20.0,
+            }
+        )
+
+        assert tracker.update(
+            [
+                {
+                    "id": "",
+                    "label": "person",
+                    "position": [2.8, 0.0, 0.0],
+                    "confidence": 0.9,
+                    "ts": 21.0,
+                }
+            ]
+        ) is True
 
 
 class TestPersonTrackerWaypoint:

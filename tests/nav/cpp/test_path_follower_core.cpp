@@ -110,6 +110,23 @@ TEST(FollowerPath, AcceleratesUsingElapsedControlTime) {
   EXPECT_NEAR(follower.diagnostics().linearSpeed, 0.10, 1e-6);
 }
 
+TEST(FollowerPath, ClampsNormalizedRequestedSpeed) {
+  FollowerParams params;
+  params.maxSpeed = 1.0;
+  params.maxAccel = 100.0;
+  params.nominalDt = 0.05;
+  const auto path = straightPath();
+
+  Follower above_limit;
+  const auto fast = followPath(above_limit, path, params, 1.0, {}, 0.0, 2.0);
+  EXPECT_LE(std::hypot(fast.cmd.vx, fast.cmd.vy), params.maxSpeed + 1e-9);
+
+  Follower negative;
+  const auto reverse = followPath(negative, path, params, 1.0, {}, 0.0, -1.0);
+  EXPECT_DOUBLE_EQ(reverse.cmd.vx, 0.0);
+  EXPECT_DOUBLE_EQ(reverse.cmd.vy, 0.0);
+}
+
 TEST(FollowerSpline, TangentModeSharesTheCollisionQuietSpeedHeadingFallback) {
   for(const double speed:{.02,.04}) {
     auto params=FollowerParams{};

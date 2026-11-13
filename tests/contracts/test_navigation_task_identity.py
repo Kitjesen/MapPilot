@@ -36,6 +36,11 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "max_speed_mps",
             "acceptance_radius_m",
             "reason",
+            "profile_name",
+            "external_session_id",
+            "local_planner",
+            "map_id",
+            "map_content_epoch",
         ],
         "NavigationCommandAck": [
             "header",

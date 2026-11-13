@@ -53,7 +53,7 @@ MESSAGE_FIELDS = {
     'lingtu.dds.MotionProfileRequest': ('header', 'task_id', 'requirement'),
     'lingtu.dds.MotionProfileState': ('header', 'task_id', 'requirement', 'phase', 'requested_profile', 'active_profile', 'reason'),
     'lingtu.dds.NavigationCommandAck': ('header', 'task_id', 'request_id', 'kind', 'accepted', 'duplicate', 'reason'),
-    'lingtu.dds.NavigationCommandRequest': ('header', 'client_id', 'task_id', 'request_id', 'kind', 'goal', 'max_speed_mps', 'acceptance_radius_m', 'reason', 'profile_name', 'external_session_id', 'local_planner'),
+    'lingtu.dds.NavigationCommandRequest': ('header', 'client_id', 'task_id', 'request_id', 'kind', 'goal', 'max_speed_mps', 'acceptance_radius_m', 'reason', 'profile_name', 'external_session_id', 'local_planner', 'map_id', 'map_content_epoch'),
     'lingtu.dds.NavigationGoalStatus': ('header', 'boot_id', 'event_sequence', 'task_id', 'request_id', 'state', 'goal_epoch', 'reason'),
     'lingtu.dds.NavigationState': ('header', 'boot_id', 'state_sequence', 'control_mode', 'lifecycle_state', 'active_task_id', 'active_request_id', 'goal_epoch', 'map_id', 'map_content_epoch', 'planning_state', 'execution_state', 'recovery_state', 'progress', 'authority', 'hold_reason', 'failure_code'),
     'lingtu.dds.OccupancyGrid': ('header', 'info', 'data'),

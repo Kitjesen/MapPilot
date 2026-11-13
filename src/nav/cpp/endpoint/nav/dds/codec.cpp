@@ -92,6 +92,8 @@ commandIngressRequestFromDds(const lingtu_dds_NavigationCommandRequest &message)
   payload.profile_name = stringValue(message.profile_name);
   payload.external_session_id = stringValue(message.external_session_id);
   payload.local_planner = stringValue(message.local_planner);
+  payload.map_id = stringValue(message.map_id);
+  payload.map_content_epoch = message.map_content_epoch;
   return request;
 }
 
