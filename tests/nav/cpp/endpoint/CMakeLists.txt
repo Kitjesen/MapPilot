@@ -482,7 +482,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp")
   target_include_directories(test_goal_terminal_status_delivery PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
