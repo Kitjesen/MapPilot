@@ -535,13 +535,10 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_navigation_runtime_controller.cpp"
-    AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/navigation.cpp")
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_runtime_frame.cpp")
   find_package(Threads REQUIRED)
-  add_executable(test_navigation_runtime_controller
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_navigation_runtime_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/navigation.cpp"
+  add_executable(test_goal_runtime_frame
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_runtime_frame.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
@@ -550,7 +547,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
-  target_include_directories(test_navigation_runtime_controller PRIVATE
+  target_include_directories(test_goal_runtime_frame PRIVATE
     "${LINGTU_SRC_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
     "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
@@ -558,13 +555,13 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_CPP_ROOT}"
     "${LINGTU_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_navigation_runtime_controller PRIVATE Threads::Threads)
-  target_compile_options(test_navigation_runtime_controller PRIVATE
+  target_link_libraries(test_goal_runtime_frame PRIVATE Threads::Threads)
+  target_compile_options(test_goal_runtime_frame PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
     $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
   add_test(
-    NAME test_navigation_runtime_controller
-    COMMAND test_navigation_runtime_controller)
+    NAME test_goal_runtime_frame
+    COMMAND test_goal_runtime_frame)
 endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS
@@ -1080,11 +1077,10 @@ if(NOT TARGET test_goal_terminal
            COMMAND test_goal_terminal)
 endif()
 
-if(NOT TARGET test_navigation_runtime_controller
-    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_runtime_controller.cpp")
-  add_executable(test_navigation_runtime_controller
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_runtime_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/app/navigation.cpp"
+if(NOT TARGET test_goal_runtime_frame
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_runtime_frame.cpp")
+  add_executable(test_goal_runtime_frame
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_runtime_frame.cpp"
     "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
     "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
     "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
@@ -1093,17 +1089,17 @@ if(NOT TARGET test_navigation_runtime_controller
     "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
     "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
-  target_include_directories(test_navigation_runtime_controller PRIVATE
+  target_include_directories(test_goal_runtime_frame PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_NAV_CORE_DIR}"
     "${_NAV_CORE_DIR}"
     "${_NAV_KERNEL_DIR}/include"
     ${_EP_DIRS})
-  target_link_libraries(test_navigation_runtime_controller PRIVATE Threads::Threads)
-  lingtu_endpoint_enable_warnings(test_navigation_runtime_controller)
-  add_test(NAME test_navigation_runtime_controller
-           COMMAND test_navigation_runtime_controller)
+  target_link_libraries(test_goal_runtime_frame PRIVATE Threads::Threads)
+  lingtu_endpoint_enable_warnings(test_goal_runtime_frame)
+  add_test(NAME test_goal_runtime_frame
+           COMMAND test_goal_runtime_frame)
 endif()
 
 if(NOT TARGET test_goal_terminal_ingress_policy
@@ -1972,3 +1968,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     COMMAND test_inspection_task_event_outbox)
 endif()
 endif()
+
+
+\n

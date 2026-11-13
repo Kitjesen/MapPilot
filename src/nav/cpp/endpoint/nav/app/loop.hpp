@@ -39,7 +39,6 @@ class GoalPlanController;
 class GoalReplanRuntimeCoordinator;
 class MotionStopBarrier;
 class NavigationGoalStatusOutbox;
-class NavigationRuntimeController;
 class GoalTerminalStatusDelivery;
 class InspectionRuntimeController;
 class InspectionCommandCoordinator;
@@ -81,7 +80,6 @@ struct EndpointLoopContext {
   GoalReplanRuntimeCoordinator &goal_replan_runtime;
   MotionStopBarrier &motion_stop;
   NavigationGoalStatusOutbox &goal_status_outbox;
-  NavigationRuntimeController &navigation_runtime_controller;
   GoalTerminalStatusDelivery &goal_terminal_delivery;
   InspectionRuntimeController &inspection_runtime;
   InspectionCommandCoordinator &inspection_command_coordinator;

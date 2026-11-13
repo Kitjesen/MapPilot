@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "safety/stop.hpp"
-#include "app/navigation.hpp"
 #include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
@@ -41,7 +40,6 @@ using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::NavigationRuntimeAutonomyObservation;
-using lingtu::nav::endpoint::NavigationRuntimeController;
 using lingtu::nav::endpoint::NavigationRuntimeFrameActions;
 using lingtu::nav::endpoint::StopConfirmationState;
 
@@ -69,7 +67,6 @@ struct Fixture {
   MotionStopBarrier motion_stop;
   GoalTerminalStatusDelivery delivery;
   GoalReplanRuntimeCoordinator coordinator;
-  NavigationRuntimeController runtime;
 
   Fixture()
       : outbox([this](const GoalPlanStatus &status) { observed_statuses.push_back(status); },
@@ -90,8 +87,7 @@ struct Fixture {
             goalActions()),
         motion_stop(true, stopActions()),
         delivery(outbox),
-        coordinator(goal_plan, motion_stop, delivery, terminalActions()),
-        runtime(goal_plan, coordinator, motion_stop) {}
+        coordinator(goal_plan, motion_stop, delivery, terminalActions()) {}
 
   GoalPlanActions goalActions() {
     GoalPlanActions actions;
@@ -254,7 +250,7 @@ void testNormalFrameUsesStrictTypedContinuationOrder() {
     require(!runtime_outcome.handled, "empty autonomy outcome was unexpectedly handled");
   };
 
-  const auto result = fixture.runtime.advanceFrame(fixture.frame(10.0), actions);
+  const auto result = fixture.coordinator.advanceFrame(fixture.frame(10.0), actions);
 
   require(order == std::vector<std::string>({"endpoint_work", "autonomy", "apply_outputs"}),
           "normal frame callback order changed");
@@ -281,21 +277,21 @@ void testPlanningTerminalBlocksAutonomyAndDrainUntilReplayAcknowledges() {
             "planning cycle did not replay the exact terminal intent");
   };
 
-  const auto blocked = fixture.runtime.advanceFrame(fixture.frame(20.1), actions);
+  const auto blocked = fixture.coordinator.advanceFrame(fixture.frame(20.1), actions);
 
   require(endpoint_work_calls == 1U && run_calls == 0U && apply_calls == 0U,
           "terminal-pending frame ran autonomy callbacks or skipped endpoint work");
   require(!blocked.autonomy_result && !blocked.pending_cycle_advanced &&
-              !blocked.terminal_delivery_acknowledged && fixture.runtime.terminalPending(),
+              !blocked.terminal_delivery_acknowledged && fixture.coordinator.terminalPending(),
           "undelivered terminal did not block autonomy and pending drain");
 
   fixture.writes_allowed = true;
-  const auto replayed = fixture.runtime.advanceFrame(fixture.frame(20.2), actions);
+  const auto replayed = fixture.coordinator.advanceFrame(fixture.frame(20.2), actions);
 
   require(endpoint_work_calls == 2U && run_calls == 0U && apply_calls == 0U,
           "acknowledged replay ran autonomy in the surfaced-terminal frame");
   require(replayed.terminal_delivery_acknowledged && replayed.pending_cycle_advanced &&
-              !fixture.runtime.terminalPending(),
+              !fixture.coordinator.terminalPending(),
           "exact terminal replay did not acknowledge and permit pending drain");
   require(fixture.diagnostic_syncs == 1U,
           "terminal replay repeated the stop-confirmed terminal commit");
@@ -316,20 +312,20 @@ void testInspectionCompletionAfterStop() {
       return NavigationRuntimeAutonomyObservation{
           fixture.frame(30.1), AutonomyTickOutcome{kind, reason}, true, false};
     };
-    const auto pending = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
+    const auto pending = fixture.coordinator.advanceFrame(fixture.frame(30.0), actions);
     require(pending.autonomy_result && pending.autonomy_result->handled,
             "inspection outcome did not reach its native owner");
     if (kind == AutonomyTickOutcomeKind::kGoalReached) {
       require(pending.inspection_completion && pending.terminal_delivery_acknowledged &&
-                  pending.pending_cycle_advanced && !fixture.runtime.terminalPending(),
+                  pending.pending_cycle_advanced && !fixture.coordinator.terminalPending(),
               "normal inspection arrival entered a stop transaction");
       continue;
     }
-    require(!pending.inspection_completion && fixture.runtime.terminalPending(),
+    require(!pending.inspection_completion && fixture.coordinator.terminalPending(),
             "inspection failure advanced before stop confirmation");
 
     fixture.confirmation = StopConfirmationState::Confirmed;
-    const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.2), actions);
+    const auto completed = fixture.coordinator.advanceFrame(fixture.frame(30.2), actions);
     require(run_calls == 1U, "terminal replay reran navigation");
     require(completed.inspection_completion && completed.inspection_completion->kind == kind &&
                 completed.inspection_completion->reason == reason,
@@ -337,7 +333,7 @@ void testInspectionCompletionAfterStop() {
     require(completed.terminal_delivery_acknowledged && completed.pending_cycle_advanced,
             "confirmed inspection leg did not release the next leg");
     require(fixture.write_attempts.empty(), "internal waypoint result leaked as a public task end");
-    const auto next = fixture.runtime.advanceFrame(fixture.frame(30.3), fixture.idleActions());
+    const auto next = fixture.coordinator.advanceFrame(fixture.frame(30.3), fixture.idleActions());
     require(!next.inspection_completion, "inspection completion was returned twice");
   }
 }
@@ -353,7 +349,7 @@ void testInspectionCompletionUsesCommittedResult() {
         frame, AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, "goal_reached"},
         true, false};
   };
-  const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.0), actions);
+  const auto completed = fixture.coordinator.advanceFrame(fixture.frame(30.0), actions);
   require(completed.inspection_completion &&
               completed.inspection_completion->kind == AutonomyTickOutcomeKind::kGoalFailed &&
               completed.inspection_completion->reason == "active_goal_map_identity_changed",
@@ -364,7 +360,7 @@ void testInspectionCancelDoesNotFinishWaypoint() {
   Fixture fixture;
   fixture.activateGoal(GoalPlanOrigin::kInspection);
   (void)fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kCancel, 30.0);
-  const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.1), fixture.idleActions());
+  const auto completed = fixture.coordinator.advanceFrame(fixture.frame(30.1), fixture.idleActions());
   require(completed.terminal_delivery_acknowledged && !completed.inspection_completion,
           "cancelling a route was returned as arrival or a retryable failure");
 }
@@ -380,10 +376,10 @@ void testConsecutiveInspectionLegs() {
           AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalReached, "goal_reached"},
           true, false};
     };
-    const auto completed = fixture.runtime.advanceFrame(fixture.frame(30.0 + leg), actions);
+    const auto completed = fixture.coordinator.advanceFrame(fixture.frame(30.0 + leg), actions);
     require(completed.inspection_completion &&
                 completed.inspection_completion->kind == AutonomyTickOutcomeKind::kGoalReached &&
-                !fixture.runtime.terminalPending(),
+                !fixture.coordinator.terminalPending(),
             "inspection leg did not finish and release the next goal");
   }
   require(fixture.write_attempts.empty(), "waypoint progress published multiple public tasks");
@@ -408,12 +404,12 @@ void testExternalGoalCannotCompleteInspection() {
             "unhandled autonomy fixture was unexpectedly consumed by the replan runtime");
   };
 
-  const auto result = fixture.runtime.advanceFrame(fixture.frame(35.0), actions);
+  const auto result = fixture.coordinator.advanceFrame(fixture.frame(35.0), actions);
 
   require(result.autonomy_result && !result.autonomy_result->handled,
           "unhandled autonomy observation was not preserved");
   require(!result.terminal_delivery_acknowledged && !result.inspection_completion &&
-              result.pending_cycle_advanced && !fixture.runtime.terminalPending(),
+              result.pending_cycle_advanced && !fixture.coordinator.terminalPending(),
           "external goal manufactured an inspection terminal");
 }
 
@@ -439,12 +435,12 @@ void testCapturedSnapshotCannotCommitReachedAfterGoalStateChangesDuringTick() {
   actions.apply_autonomy_outputs = [](const GoalReplanRuntimeResult &) {
   };
 
-  const auto result = fixture.runtime.advanceFrame(fixture.frame(40.0), actions);
+  const auto result = fixture.coordinator.advanceFrame(fixture.frame(40.0), actions);
 
   require(result.autonomy_result && result.autonomy_result->handled &&
               result.autonomy_result->reason == "goal_reached_plan_unstable",
           "goal change during tick was not rejected against the controller snapshot");
-  require(!result.terminal_delivery_acknowledged && !fixture.runtime.terminalPending() &&
+  require(!result.terminal_delivery_acknowledged && !fixture.coordinator.terminalPending() &&
               fixture.countStatus(NavigationGoalState::Reached) == 0U,
           "stale captured goal identity committed a Reached terminal");
 }
@@ -454,8 +450,8 @@ void testTerminalCompanionInterfacesForwardExactTransactions() {
     Fixture fixture;
     fixture.activateGoal();
     const auto terminal = fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kStop, 50.0);
-    const auto completed = fixture.runtime.completeTerminal(terminal);
-    require(completed.delivery_acknowledged && !fixture.runtime.terminalPending(),
+    const auto completed = fixture.coordinator.completeTerminal(terminal);
+    require(completed.delivery_acknowledged && !fixture.coordinator.terminalPending(),
             "completeTerminal did not forward the exact terminal transaction");
   }
 
@@ -463,8 +459,8 @@ void testTerminalCompanionInterfacesForwardExactTransactions() {
     Fixture fixture;
     fixture.activateGoal();
     (void)fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kMapDrift, 51.0);
-    const auto stopped = fixture.runtime.stopWhileTerminalPending();
-    require(stopped.accepted && stopped.terminal_committed && fixture.runtime.terminalPending() &&
+    const auto stopped = fixture.coordinator.stopWhileTerminalPending();
+    require(stopped.accepted && stopped.terminal_committed && fixture.coordinator.terminalPending() &&
                 fixture.stop_control_calls == 1U,
             "terminal-pending Stop did not forward through the controller");
   }
@@ -473,8 +469,8 @@ void testTerminalCompanionInterfacesForwardExactTransactions() {
     Fixture fixture;
     fixture.activateGoal();
     (void)fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kMapDrift, 52.0);
-    const auto estopped = fixture.runtime.estopWhileTerminalPending("operator_estop");
-    require(estopped.accepted && estopped.terminal_committed && fixture.runtime.terminalPending() &&
+    const auto estopped = fixture.coordinator.estopWhileTerminalPending("operator_estop");
+    require(estopped.accepted && estopped.terminal_committed && fixture.coordinator.terminalPending() &&
                 fixture.estop_reasons == std::vector<std::string>({"operator_estop"}),
             "terminal-pending Estop did not preserve the caller's exact reason");
   }
@@ -485,14 +481,14 @@ void testLifecycleInterruptionsAreCompletedByController() {
   fixture.activateGoal();
 
   const auto stopped =
-      fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kStop, 55.0);
+      fixture.coordinator.interruptAndService(GoalReplanRuntimeInterruption::kStop, 55.0);
   require(stopped.runtime_result.terminal_after_stop.has_value(),
           "controller interruption did not surface the Stop terminal");
   require(stopped.terminal.has_value() &&
               stopped.terminal->action_committed &&
               stopped.terminal->delivery_acknowledged,
           "controller interruption did not complete the Stop terminal transaction");
-  require(!fixture.runtime.terminalPending(),
+  require(!fixture.coordinator.terminalPending(),
           "completed interruption left an acknowledged terminal pending");
 }
 
@@ -501,7 +497,7 @@ void testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier() {
     Fixture fixture;
     fixture.activateGoal();
     const auto submitted =
-        fixture.runtime.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 56.0);
+        fixture.coordinator.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 56.0);
     require(submitted.plan_result.accepted,
             "controller did not admit an external replacement goal");
     require(!submitted.preemption_terminal,
@@ -516,10 +512,10 @@ void testGoalSubmissionOwnsExternalPreemptionAndTerminalBarrier() {
     require(pending.terminal_after_stop.has_value(),
             "fixture did not create a terminal barrier for goal admission");
     const auto blocked =
-        fixture.runtime.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 58.0);
+        fixture.coordinator.submitGoal(fixture.request("task-b", "request-b"), fixture.admission(), 58.0);
     require(!blocked.plan_result.accepted && blocked.plan_result.reason == "goal_terminal_pending",
             "new goal bypassed the pending terminal barrier");
-    require(fixture.runtime.terminalPending(),
+    require(fixture.coordinator.terminalPending(),
             "blocked new goal unexpectedly cleared the pending terminal");
   }
 }
@@ -545,11 +541,11 @@ void testRejectedReplacementPreservesTheActiveGoalRetry() {
   auto blocked_admission = fixture.admission();
   blocked_admission.autonomy_mode = false;
   blocked_admission.control_mode_name = "teleop";
-  const auto rejected = fixture.runtime.submitGoal(
+  const auto rejected = fixture.coordinator.submitGoal(
       fixture.request("task-b", "request-b"), blocked_admission, 58.2);
   require(!rejected.plan_result.accepted &&
               rejected.plan_result.reason == "goal_not_allowed_in_teleop" &&
-              !rejected.preemption_terminal && !fixture.runtime.terminalPending(),
+              !rejected.preemption_terminal && !fixture.coordinator.terminalPending(),
           "blocked replacement goal did not retain its admission rejection");
   const auto retained = fixture.goal_plan.snapshot();
   const auto retry_after = fixture.coordinator.snapshot();
@@ -587,9 +583,9 @@ void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
     actions.run_autonomy = [frame](const GoalPlanSnapshot &) {
       return NavigationRuntimeAutonomyObservation{frame, AutonomyTickOutcome{}, false, false};
     };
-    return fixture.runtime.advanceFrame(frame, actions);
+    return fixture.coordinator.advanceFrame(frame, actions);
   };
-  require(fixture.runtime.submitGoal(fixture.request("task-b", "request-b"),
+  require(fixture.coordinator.submitGoal(fixture.request("task-b", "request-b"),
                                       fixture.admission(), 58.3)
               .plan_result.accepted,
           "deferred replacement fixture could not submit B");
@@ -602,26 +598,26 @@ void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
   require(replacement.terminal_after_stop && replacement.terminal_task_id == "task-a",
           "replacement B did not wait for A terminal");
   require(fixture.coordinator.serviceTerminal(replacement).delivery_acknowledged &&
-              !fixture.runtime.terminalPending() &&
+              !fixture.coordinator.terminalPending() &&
               fixture.goal_plan.snapshot().deferred_replacement_task_id == "task-b",
           "replacement fixture did not retain B after A acknowledgement");
 
   fixture.writes_allowed = false;
-  const auto submitted = fixture.runtime.submitGoal(
+  const auto submitted = fixture.coordinator.submitGoal(
       fixture.request("task-c", "request-c"), fixture.admission(), 59.5);
   require(submitted.plan_result.accepted && submitted.preemption_terminal &&
               !submitted.preemption_terminal->delivery_acknowledged &&
-              fixture.runtime.terminalPending() &&
+              fixture.coordinator.terminalPending() &&
               fixture.goal_plan.snapshot().planning_task_id == "task-c",
           "accepted C was lost while superseding deferred B");
   const auto held = advance(59.6);
   require(!held.planning_result.plan_advance.path_activated &&
-              fixture.path_activations == 1U && fixture.runtime.terminalPending(),
+              fixture.path_activations == 1U && fixture.coordinator.terminalPending(),
           "new C path activated before superseded B terminal acknowledgement");
 
   fixture.writes_allowed = true;
   const auto acknowledged = advance(59.7);
-  require(acknowledged.terminal_delivery_acknowledged && !fixture.runtime.terminalPending(),
+  require(acknowledged.terminal_delivery_acknowledged && !fixture.coordinator.terminalPending(),
           "superseded B terminal could not be acknowledged");
   for (int index = 0; index < 1000; ++index) {
     const auto completed = advance(59.8 + index * .001);
@@ -646,7 +642,8 @@ void testControllerInterruptionPreservesEstopReason() {
   Fixture fixture;
   fixture.activateGoal();
   const auto estopped =
-      fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kEstop, 59.0, "operator_estop");
+      fixture.coordinator.interruptAndService(GoalReplanRuntimeInterruption::kEstop, 59.0,
+                                              "operator_estop");
   require(estopped.terminal.has_value() &&
               estopped.terminal->action_committed,
           "controller did not commit the estop terminal transaction");
@@ -659,21 +656,21 @@ void testIncompleteFrameActionsAreRejectedBeforeRuntimeMutation() {
   const auto before = fixture.goal_plan.snapshot();
   bool rejected = false;
   try {
-    (void)fixture.runtime.advanceFrame(fixture.frame(60.0), NavigationRuntimeFrameActions{});
+    (void)fixture.coordinator.advanceFrame(fixture.frame(60.0), NavigationRuntimeFrameActions{});
   } catch (const std::invalid_argument &) {
     rejected = true;
   }
   const auto after = fixture.goal_plan.snapshot();
   require(rejected, "controller accepted incomplete frame actions");
   require(before.goal_epoch == after.goal_epoch && before.busy == after.busy &&
-              !fixture.runtime.terminalPending(),
+              !fixture.coordinator.terminalPending(),
           "invalid frame actions mutated navigation runtime state");
 }
 
 void testManualTakeoverIsTheOnlyFrameOutputForPausedActiveGoal() {
   Fixture fixture;
   fixture.activateGoal();
-  const auto paused = fixture.runtime.interrupt(
+  const auto paused = fixture.coordinator.interruptAndService(
       GoalReplanRuntimeInterruption::kOperatorTakeover, 61.0);
   require(paused.runtime_result.reason == "task_paused" &&
               fixture.goal_plan.snapshot().active_paused,
@@ -684,7 +681,7 @@ void testManualTakeoverIsTheOnlyFrameOutputForPausedActiveGoal() {
   actions.complete_endpoint_work_before_autonomy = [&](const GoalReplanRuntimeResult &) {
     fixture.motion_outputs.emplace_back("manual_nonzero");
   };
-  (void)fixture.runtime.advanceFrame(fixture.frame(61.1), actions);
+  (void)fixture.coordinator.advanceFrame(fixture.frame(61.1), actions);
 
   require(fixture.motion_outputs == std::vector<std::string>{"manual_nonzero"},
           "paused active goal overwrote the frame's manual nonzero command with a later zero");
@@ -697,7 +694,7 @@ void testManualTakeoverIsTheOnlyFrameOutputForPausedInitialPlanning() {
   const auto original = fixture.goal_plan.snapshot();
   require(!original.planning_task_id.empty() && original.active_task_id.empty(),
           "initial-planning takeover fixture unexpectedly activated its goal");
-  const auto paused = fixture.runtime.interrupt(
+  const auto paused = fixture.coordinator.interruptAndService(
       GoalReplanRuntimeInterruption::kOperatorTakeover, 62.0);
   const auto retained = fixture.goal_plan.snapshot();
   require(paused.runtime_result.reason == "task_paused" && retained.active_paused &&
@@ -710,7 +707,7 @@ void testManualTakeoverIsTheOnlyFrameOutputForPausedInitialPlanning() {
   actions.complete_endpoint_work_before_autonomy = [&](const GoalReplanRuntimeResult &) {
     fixture.motion_outputs.emplace_back("manual_nonzero");
   };
-  (void)fixture.runtime.advanceFrame(fixture.frame(62.1), actions);
+  (void)fixture.coordinator.advanceFrame(fixture.frame(62.1), actions);
 
   require(fixture.motion_outputs == std::vector<std::string>{"manual_nonzero"},
           "paused pending drain overwrote the frame's manual nonzero command with zero");
@@ -719,7 +716,7 @@ void testManualTakeoverIsTheOnlyFrameOutputForPausedInitialPlanning() {
 void testPausedCoordinatorIsSilentAndEndpointOwnsZeroHeartbeat() {
   Fixture fixture;
   fixture.activateGoal();
-  (void)fixture.runtime.interrupt(GoalReplanRuntimeInterruption::kOperatorTakeover, 63.0);
+  (void)fixture.coordinator.interrupt(GoalReplanRuntimeInterruption::kOperatorTakeover, 63.0);
   fixture.motion_outputs.clear();
 
   const auto planning = fixture.coordinator.advancePlanningCycle(fixture.frame(63.1));
@@ -737,24 +734,24 @@ void testPauseResumeThroughSingleOwner() {
   Fixture fixture;
   fixture.activateGoal();
   fixture.confirmation = StopConfirmationState::Pending;
-  const auto paused = fixture.runtime.pauseTask("task-a", "pause-a", "operator_pause");
+  const auto paused = fixture.coordinator.pauseTask("task-a", "pause-a", "operator_pause");
   require(paused.first && fixture.goal_plan.snapshot().pause_pending, "pause did not wait for stop");
   int unused_context_calls = 0;
-  fixture.runtime.retryResume([&] { ++unused_context_calls; return fixture.admission(); },
+  fixture.coordinator.retryResume([&] { ++unused_context_calls; return fixture.admission(); },
                                {}, [] { return std::string{}; });
   require(unused_context_calls == 0, "idle resume polling rebuilt admission state");
   int released = 0, activated = 0;
   lingtu::nav::endpoint::GoalResumeActions actions{[&] { ++released; }, [&] { ++activated; }, [] {}};
-  const auto resumed = fixture.runtime.resumeTask("task-a", "resume-a", 3.0, fixture.admission(), actions);
+  const auto resumed = fixture.coordinator.resumeTask("task-a", "resume-a", 3.0, fixture.admission(), actions);
   require(resumed.first && released == 0 && activated == 0, "queued resume bypassed stop confirmation");
   fixture.confirmation = StopConfirmationState::Confirmed;
   (void)fixture.motion_stop.poll();
   require(fixture.goal_plan.snapshot().active_paused, "pause was not committed after stop");
-  fixture.runtime.retryResume([&] { return fixture.admission(); }, actions, [] { return std::string{}; });
+  fixture.coordinator.retryResume([&] { return fixture.admission(); }, actions, [] { return std::string{}; });
   (void)fixture.motion_stop.poll();
   require(released == 1 && activated == 1 && !fixture.goal_plan.snapshot().active_paused,
           "resume did not restore the same goal exactly once");
-  fixture.runtime.retryResume([&] { return fixture.admission(); }, actions, [] { return std::string{}; });
+  fixture.coordinator.retryResume([&] { return fixture.admission(); }, actions, [] { return std::string{}; });
   require(released == 1, "resume was dispatched twice");
 }
 
@@ -763,13 +760,13 @@ void testRelatedTaskCommitsOnlyAfterStop() {
   fixture.activateGoal(GoalPlanOrigin::kInspection);
   fixture.confirmation = StopConfirmationState::Pending;
   int parent_commits = 0;
-  auto result = fixture.runtime.interruptRelated(GoalReplanRuntimeInterruption::kInspectionCancel,
+  auto result = fixture.coordinator.interruptRelated(GoalReplanRuntimeInterruption::kInspectionCancel,
       5.0, "inspection_cancel_requested", [&] { ++parent_commits; return true; });
   require(result.pending && parent_commits == 0, "parent committed before child stopped");
   fixture.confirmation = StopConfirmationState::Confirmed;
   (void)fixture.motion_stop.poll();
   require(parent_commits == 1, "stopped parent was not committed");
-  result = fixture.runtime.interruptRelated(GoalReplanRuntimeInterruption::kInspectionCancel,
+  result = fixture.coordinator.interruptRelated(GoalReplanRuntimeInterruption::kInspectionCancel,
       5.1, "inspection_cancel_requested", [&] { ++parent_commits; return true; });
   require(result.accepted && parent_commits == 1, "retry repeated parent/child commit");
 }
@@ -800,7 +797,9 @@ int main() {
     testPausedCoordinatorIsSilentAndEndpointOwnsZeroHeartbeat();
     return 0;
   } catch (const std::exception &exc) {
-    std::fprintf(stderr, "test_navigation_runtime_controller: FAIL: %s\n", exc.what());
+    std::fprintf(stderr, "test_goal_runtime_frame: FAIL: %s\n", exc.what());
     return 1;
   }
 }
+
+\n
