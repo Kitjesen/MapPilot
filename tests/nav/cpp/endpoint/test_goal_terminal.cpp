@@ -526,8 +526,7 @@ int main() {
     testConstructorRejectsIncompleteActions();
     return 0;
   } catch (const std::exception &exc) {
-    std::fprintf(stderr, "test_goal_terminal: FAIL: %s
-", exc.what());
+    std::fprintf(stderr, "test_goal_terminal: FAIL: %s\n", exc.what());
     return 1;
   }
 }
