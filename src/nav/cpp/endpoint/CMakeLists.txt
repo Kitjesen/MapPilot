@@ -153,8 +153,8 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     nav/input/motion_worker.cpp
     nav/input/health.cpp
     nav/input/planner.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/nav/app/inspection/inspection_command_coordinator.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/nav/app/inspection/inspection_runtime_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/nav/app/inspection/commands.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/nav/app/inspection/runtime.cpp"
     nav/app/goal/task.cpp
     nav/app/goal/retry.cpp
     nav/app/goal/plan.cpp

@@ -603,12 +603,12 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_command_coordinator.cpp"
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_commands.cpp"
     AND EXISTS
-      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_command_coordinator.cpp")
+      "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/commands.cpp")
   add_executable(test_inspection_command_coordinator
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_command_coordinator.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_command_coordinator.cpp"
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_commands.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/commands.cpp"
     "${LINGTU_SRC_ROOT}/nav/inspection/inspection.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
     "${LINGTU_NAV_CPP_ROOT}"
@@ -648,10 +648,10 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_runtime_controller.cpp")
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_runtime.cpp")
   add_executable(test_inspection_runtime_controller
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_inspection_runtime_controller.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/inspection_runtime_controller.cpp"
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_runtime.cpp"
+    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/inspection/runtime.cpp"
     "${LINGTU_SRC_ROOT}/nav/inspection/inspection.cpp")
   target_include_directories(test_inspection_runtime_controller PRIVATE
     "${LINGTU_NAV_CPP_ROOT}/endpoint"
@@ -1601,10 +1601,10 @@ endif()
 
 if(NOT TARGET test_inspection_command_coordinator
     AND EXISTS
-      "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp")
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_commands.cpp")
   add_executable(test_inspection_command_coordinator
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp"
-    "${_ENDPOINT_DIR}/nav/app/inspection/inspection_command_coordinator.cpp")
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_commands.cpp"
+    "${_ENDPOINT_DIR}/nav/app/inspection/commands.cpp")
   target_include_directories(test_inspection_command_coordinator PRIVATE
     "${LINGTU_NAV_CPP_ROOT}"
     "${_ENDPOINT_DIR}"
@@ -1621,10 +1621,10 @@ endif()
 
 if(NOT TARGET test_inspection_runtime_controller
     AND EXISTS
-      "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp")
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_runtime.cpp")
   add_executable(test_inspection_runtime_controller
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp"
-    "${_ENDPOINT_DIR}/nav/app/inspection/inspection_runtime_controller.cpp")
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_runtime.cpp"
+    "${_ENDPOINT_DIR}/nav/app/inspection/runtime.cpp")
   target_include_directories(test_inspection_runtime_controller PRIVATE
     "${_ENDPOINT_DIR}"
     "${_LINGTU_ROOT}/src"
