@@ -327,10 +327,7 @@ class Backend::Impl {
     }
 
     const auto gridStarted = std::chrono::steady_clock::now();
-    auto collisionRequest = input;
-    collisionRequest.body.reset();
-    collisionRequest.observedBody.reset();
-    Grid grid(params_, collisionRequest);
+    Grid grid(params_, input);
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
