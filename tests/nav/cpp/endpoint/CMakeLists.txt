@@ -1968,6 +1968,3 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     COMMAND test_inspection_task_event_outbox)
 endif()
 endif()
-
-
-\n
