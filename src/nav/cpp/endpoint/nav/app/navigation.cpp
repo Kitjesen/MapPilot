@@ -32,10 +32,10 @@ inspectionCompletion(const GoalReplanRuntimeResult &result) {
 
 NavigationRuntimeController::NavigationRuntimeController(
     GoalPlanController &goal_plan, GoalReplanRuntimeCoordinator &goal_replan_runtime,
-    GoalTerminal &goal_terminal, MotionStopBarrier &motion_stop)
+    MotionStopBarrier &motion_stop)
     : goal_plan_(goal_plan),
       goal_replan_runtime_(goal_replan_runtime),
-      goal_terminal_(goal_terminal), motion_stop_(motion_stop) {}
+      motion_stop_(motion_stop) {}
 
 NavigationRuntimeFrameResult
 NavigationRuntimeController::advanceFrame(const GoalReplanRuntimeFrameInput &frame,
@@ -139,16 +139,16 @@ NavigationRuntimeGoalSubmissionResult NavigationRuntimeController::submitGoal(
 GoalTerminalResult
 NavigationRuntimeController::completeTerminal(const GoalReplanRuntimeResult &runtime_result,
                                               const std::string &estop_reason) {
-  return goal_terminal_.advance(runtime_result, estop_reason);
+  return goal_replan_runtime_.serviceTerminal(runtime_result, estop_reason);
 }
 
 MotionStopTerminalBarrierResult NavigationRuntimeController::stopWhileTerminalPending() {
-  return goal_terminal_.stopPending();
+  return goal_replan_runtime_.stopPendingTerminal();
 }
 
 MotionStopTerminalBarrierResult
 NavigationRuntimeController::estopWhileTerminalPending(const std::string &estop_reason) {
-  return goal_terminal_.estopPending(estop_reason);
+  return goal_replan_runtime_.estopPendingTerminal(estop_reason);
 }
 
 CommandAck NavigationRuntimeController::cancelTask(const GoalTaskCancelRequest &request) {
@@ -213,8 +213,8 @@ MotionStopResult NavigationRuntimeController::interruptRelated(
     GoalReplanRuntimeInterruption interruption, double now_s, const std::string &reason,
     std::function<bool()> commit) {
   cancelResume();
-  return goal_terminal_.commitRelated(goal_replan_runtime_.interrupt(interruption, now_s),
-                                      reason, std::move(commit));
+  return goal_replan_runtime_.commitRelated(goal_replan_runtime_.interrupt(interruption, now_s),
+                                            reason, std::move(commit));
 }
 
 }  // namespace lingtu::nav::endpoint

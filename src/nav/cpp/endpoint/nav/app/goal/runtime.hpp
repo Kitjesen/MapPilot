@@ -1,16 +1,31 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
 #include "control/autonomy.hpp"
 #include "app/goal/retry.hpp"
 #include "app/goal/plan.hpp"
+#include "safety/stop.hpp"
 
 namespace lingtu::nav::endpoint {
 
 class MotionStopBarrier;
+class GoalTerminalStatusDelivery;
+
+struct GoalTerminalActions {
+  std::function<void(const std::string &)> report_error;
+  std::function<void(const std::string &)> pause_inspection;
+  std::function<void()> sync_goal_diagnostics;
+};
+
+struct GoalTerminalResult {
+  bool action_committed{false};
+  bool delivery_acknowledged{false};
+  std::string reason;
+};
 
 enum class GoalReplanRuntimeInterruption {
   kNewGoal,
@@ -93,6 +108,8 @@ decideGoalTerminalScheduling(const GoalReplanRuntimeResult &result, bool termina
 class GoalReplanRuntimeCoordinator {
  public:
   GoalReplanRuntimeCoordinator(GoalPlanController &goal_plan, MotionStopBarrier &motion_stop,
+                               GoalTerminalStatusDelivery &delivery,
+                               GoalTerminalActions terminal_actions,
                                BoundedGoalReplanConfig config = {});
 
   // Production order: command ingress -> advancePlanningCycle -> service any
@@ -105,6 +122,14 @@ class GoalReplanRuntimeCoordinator {
   handleAutonomyOutcome(const GoalReplanRuntimeFrameInput &frame,
                         const GoalReplanRuntimeAutonomyEvent &event);
   [[nodiscard]] GoalReplanRuntimeResult drainPendingCycle(const GoalReplanRuntimeFrameInput &frame);
+  [[nodiscard]] GoalTerminalResult serviceTerminal(
+      const GoalReplanRuntimeResult &result, const std::string &estop_reason = "estop_latched");
+  [[nodiscard]] MotionStopResult commitRelated(const GoalReplanRuntimeResult &result,
+                                               const std::string &reason,
+                                               std::function<bool()> commit);
+  [[nodiscard]] MotionStopTerminalBarrierResult stopPendingTerminal();
+  [[nodiscard]] MotionStopTerminalBarrierResult
+  estopPendingTerminal(const std::string &estop_reason);
   [[nodiscard]] GoalReplanRuntimeResult interrupt(GoalReplanRuntimeInterruption interruption,
                                                   double steady_now_s);
   [[nodiscard]] GoalReplanRuntimeResult replayPendingTerminal() const;
@@ -152,9 +177,14 @@ class GoalReplanRuntimeCoordinator {
                               TerminalStopPolicy stop_policy = TerminalStopPolicy::kGenericStop);
   [[nodiscard]] bool surfacePendingTerminal(GoalReplanRuntimeResult &result) const;
   [[nodiscard]] std::uint64_t allocateTerminalIntentId();
+  enum class StopAction { kStop, kEstop };
+  [[nodiscard]] MotionStopTerminalBarrierResult
+  stopPendingTerminal(StopAction action, const std::string &estop_reason);
 
   GoalPlanController &goal_plan_;
   MotionStopBarrier &motion_stop_;
+  GoalTerminalStatusDelivery &delivery_;
+  GoalTerminalActions terminal_actions_;
   BoundedGoalReplanController bounded_;
   std::optional<GoalReplanTrigger> pending_replan_trigger_;
   bool replacement_plan_in_progress_{false};

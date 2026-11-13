@@ -151,6 +151,7 @@ target_link_libraries(octoplanner3d_runtime
     "$<BUILD_INTERFACE:lingtu_settings>"
   PRIVATE
     octoplanner3d_global_planner
+    lingtu_maps_surface
 )
 if(TARGET lingtu_maps_artifacts)
   target_link_libraries(octoplanner3d_runtime PRIVATE lingtu_maps_artifacts)

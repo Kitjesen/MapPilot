@@ -13,7 +13,6 @@
 #include "app/navigation.hpp"
 #include "app/goal/runtime.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "app/goal/terminal.hpp"
 #include "status/navigation_goal_status_outbox.hpp"
 
 namespace {
@@ -37,7 +36,6 @@ using lingtu::nav::endpoint::GoalReplanRuntimeFrameInput;
 using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
-using lingtu::nav::endpoint::GoalTerminal;
 using lingtu::nav::endpoint::GoalTerminalActions;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopBarrier;
@@ -69,9 +67,8 @@ struct Fixture {
   NavigationGoalStatusOutbox outbox;
   GoalPlanController goal_plan;
   MotionStopBarrier motion_stop;
-  GoalReplanRuntimeCoordinator coordinator;
   GoalTerminalStatusDelivery delivery;
-  GoalTerminal terminal;
+  GoalReplanRuntimeCoordinator coordinator;
   NavigationRuntimeController runtime;
 
   Fixture()
@@ -92,10 +89,9 @@ struct Fixture {
             },
             goalActions()),
         motion_stop(true, stopActions()),
-        coordinator(goal_plan, motion_stop),
         delivery(outbox),
-        terminal(coordinator, motion_stop, delivery, terminalActions()),
-        runtime(goal_plan, coordinator, terminal, motion_stop) {}
+        coordinator(goal_plan, motion_stop, delivery, terminalActions()),
+        runtime(goal_plan, coordinator, motion_stop) {}
 
   GoalPlanActions goalActions() {
     GoalPlanActions actions;
@@ -605,7 +601,7 @@ void testAcceptedGoalWaitsForSupersededDeferredReplacementTerminal() {
   }
   require(replacement.terminal_after_stop && replacement.terminal_task_id == "task-a",
           "replacement B did not wait for A terminal");
-  require(fixture.terminal.advance(replacement).delivery_acknowledged &&
+  require(fixture.coordinator.serviceTerminal(replacement).delivery_acknowledged &&
               !fixture.runtime.terminalPending() &&
               fixture.goal_plan.snapshot().deferred_replacement_task_id == "task-b",
           "replacement fixture did not retain B after A acknowledgement");
