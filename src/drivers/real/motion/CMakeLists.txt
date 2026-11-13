@@ -146,12 +146,21 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
     if(LINGTU_BRAINSTEM_CLIENT_PREFIX)
       list(PREPEND CMAKE_PREFIX_PATH "${LINGTU_BRAINSTEM_CLIENT_PREFIX}")
     endif()
-    find_package(BrainstemClient 0.6 CONFIG REQUIRED)
+    find_package(BrainstemClient CONFIG REQUIRED)
+    include(CheckIncludeFileCXX)
+    get_target_property(_BRAINSTEM_INCLUDE_DIRS brainstem::client
+      INTERFACE_INCLUDE_DIRECTORIES)
+    set(CMAKE_REQUIRED_INCLUDES "${_BRAINSTEM_INCLUDE_DIRS}")
+    check_include_file_cxx("brainstem/external.hpp" LINGTU_BRAINSTEM_EXTERNAL_API)
+    unset(CMAKE_REQUIRED_INCLUDES)
 
     target_sources(lingtu_driver_io PRIVATE robots/doso/doso.cpp)
     target_include_directories(lingtu_driver_io PUBLIC
       "${CMAKE_CURRENT_SOURCE_DIR}/robots/doso")
     target_link_libraries(lingtu_driver_io PUBLIC brainstem::client)
+    if(LINGTU_BRAINSTEM_EXTERNAL_API)
+      target_compile_definitions(lingtu_driver_io PRIVATE LINGTU_BRAINSTEM_EXTERNAL_API=1)
+    endif()
   endif()
 
   if(LINGTU_DRIVER_BACKEND STREQUAL "go2")
@@ -195,7 +204,8 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
     add_test(NAME test_driver_status COMMAND test_driver_status)
   endif()
 
-  if(BUILD_TESTING AND LINGTU_DRIVER_BACKEND STREQUAL "doso")
+  if(BUILD_TESTING AND LINGTU_DRIVER_BACKEND STREQUAL "doso" AND
+     LINGTU_BRAINSTEM_EXTERNAL_API)
     set(_BRAINSTEM_API_ROOT
       "${CMAKE_CURRENT_SOURCE_DIR}/robots/doso/protocol/brainstem_api")
     set(_PROTO_CMS_FILE "${_BRAINSTEM_API_ROOT}/brainstem_api/cms.proto")
