@@ -115,8 +115,12 @@ if ($sourceReceipt.checkout_eol_policy -ne "core.autocrlf=false;core.eol=lf;core
 }
 $patchPath = Join-Path $PSScriptRoot "patches\cyclonedds-cdr-geometric-growth.patch"
 $patches = @($sourceReceipt.local_patches)
+$expectedPatch = (Get-Content -Raw -LiteralPath $patchPath) -replace "`r`n", "`n" -replace "`r", "`n"
+$recordedPatch = if ($patches.Count -eq 1) {
+    ([string]$patches[0].diff) -replace "`r`n", "`n" -replace "`r", "`n"
+} else { "" }
 if ($patches.Count -ne 1 -or $patches[0].name -ne (Split-Path -Leaf $patchPath) -or
-    $patches[0].diff -cne (Get-Content -Raw -LiteralPath $patchPath)) {
+    $recordedPatch -cne $expectedPatch) {
     throw "CycloneDDS SDK lacks the current CDR growth patch; prepare a new SDK in a new directory"
 }
 $toolchainReceipt = ConvertFrom-LingTuJson (Get-Content -Raw -LiteralPath (Join-Path $SdkRoot "evidence\toolchain.json"))
