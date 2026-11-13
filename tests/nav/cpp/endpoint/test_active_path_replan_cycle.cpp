@@ -222,7 +222,7 @@ struct Fixture {
       output.valid = true;
       return output;
     };
-    actions.commit = [](const nav_kernel::Twist &) { return true; };
+    actions.commit = [](const nav_kernel::Twist &, double) { return true; };
     actions.stop = [](double, const std::string &) {};
     return actions;
   }
