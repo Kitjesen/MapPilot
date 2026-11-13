@@ -50,6 +50,7 @@ using lingtu::nav::endpoint::GoalReplanRuntimeFrameInput;
 using lingtu::nav::endpoint::GoalReplanRuntimeResult;
 using lingtu::nav::endpoint::GoalReplanTrigger;
 using lingtu::nav::endpoint::GoalReplanTriggerKind;
+using lingtu::nav::endpoint::GoalTerminalActions;
 using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::InputGateState;
