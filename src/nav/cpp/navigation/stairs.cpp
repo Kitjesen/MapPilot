@@ -404,6 +404,10 @@ bool StairTraversal::localPathAllowed(const std::vector<nav_kernel::Vec3>& path,
                                       double yaw) const {
   if (!active_ || phase_ != StairPhase::Traversing) return true;
   const auto& flight = active_->flight;
+  if (path.size() < 2) {
+    const double width = flight.lateralMax - flight.lateralMin;
+    return width > config_.bodyWidth + 2.0 * config_.entryMargin;
+  }
   const double axis_yaw = std::atan2(flight.axis.y, flight.axis.x);
   const double target = active_->ascending ? 0.0 : 3.14159265358979323846;
   const double from = nav_kernel::normalizeAngle(yaw - axis_yaw);

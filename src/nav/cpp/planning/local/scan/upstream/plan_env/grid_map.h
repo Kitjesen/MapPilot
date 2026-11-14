@@ -18,6 +18,7 @@ class GridMap {
   explicit GridMap(const Grid &grid) noexcept;
 
   void setGrid(const Grid *grid) noexcept;
+  void setPredictionMode(bool enabled) noexcept { usePredictions_ = enabled; }
 
   [[nodiscard]] double getResolution() const noexcept;
   [[nodiscard]] int getInflateOccupancy(const Eigen::Vector3d &position,
@@ -28,9 +29,14 @@ class GridMap {
       const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
       const Eigen::Vector3d &endVelocity, double startTime, double endTime,
       std::optional<double> *previousHeading = nullptr) const noexcept;
+  [[nodiscard]] int getTimedTrajectoryOccupancy(const Eigen::Vector3d &start,
+      const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+      const Eigen::Vector3d &endVelocity, double startTime, double endTime,
+      std::optional<double> *previousHeading = nullptr) const noexcept;
 
  private:
   const Grid *grid_{nullptr};
+  bool usePredictions_{false};
 };
 
 }  // namespace nav_kernel::local::scan::upstream

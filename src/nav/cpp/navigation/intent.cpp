@@ -229,6 +229,28 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   output.local_path_map = spline_provided
                               ? preview_path
                               : bodyPathToMap(odom_map_body, output.local_path_body);
+  if (output.path_found && plan_request.body && output.local_path_map.size() >= 2) {
+    std::vector<nav_kernel::Pose> body_sweep;
+    body_sweep.reserve(output.local_path_map.size());
+    double yaw = odom_map_body.yaw;
+    for (std::size_t index = 0; index < output.local_path_map.size(); ++index) {
+      const auto &point = output.local_path_map[index];
+      if (index > 0) {
+        const auto &previous = output.local_path_map[index - 1];
+        if (std::hypot(point.x - previous.x, point.y - previous.y) > 1e-9)
+          yaw = std::atan2(point.y - previous.y, point.x - previous.x);
+      }
+      body_sweep.push_back({point, yaw});
+    }
+    if (!local_planner_.sweepClear(plan_request, body_sweep)) {
+      output.path_found = false;
+      output.near_field_stop = true;
+      output.reason = "scan_body_collision";
+      output.cmd_vel = {};
+      follower_.stopLinear();
+      return output;
+    }
+  }
 
   const bool spline_trackable = !spline_provided || plan_ready;
   const bool path_trackable = spline_provided || output.local_path_body.size() >= 2;

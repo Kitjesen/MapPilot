@@ -331,11 +331,7 @@ class Backend::Impl {
     collisionRequest.body.reset();
     collisionRequest.observedBody.reset();
     Grid grid(params_, collisionRequest);
-    std::optional<Grid> bodyGrid;
-    if (input.body && input.environment.collision.measuredOccupiedStorage) {
-      Grid candidate(params_, input);
-      if (candidate.valid()) bodyGrid.emplace(std::move(candidate));
-    }
+    gridMap_->setPredictionMode(executionFeedback_ && input.environment.predictions.count > 0);
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
@@ -343,8 +339,31 @@ class Backend::Impl {
     if (!grid.valid())
       return stop(LocalPlanStatus::InvalidInput, grid.reason());
 
+    bool bodyCollision = false;
+    if (input.body && input.environment.collision.measuredOccupiedStorage) {
+      Grid bodyGrid(params_, input);
+      if (bodyGrid.valid()) {
+        for (int index = 1; index < route->count; ++index) {
+          const Vec3 &start = route->points[index - 1];
+          const Vec3 &end = route->points[index];
+          const double yaw = std::hypot(end.x - start.x, end.y - start.y) > 1e-9
+              ? std::atan2(end.y - start.y, end.x - start.x) : input.robot.pose.yaw;
+          if (bodyGrid.segmentInflatedOccupancy(start, yaw, end, yaw) != 0) {
+            bodyCollision = true;
+            break;
+          }
+        }
+      }
+    }
+
     PlanParameters plan = planParameters(params_);
     plan.motion_intent_ = input.intent() != nullptr;
+    // Replaced intent splines need headroom to reach cruise; Follower still
+    // applies the configured command acceleration to the published velocity.
+    if (const auto *intent = input.intent(); intent != nullptr &&
+        std::max(0.0, input.maxLinearSpeedMps) *
+            std::clamp(intent->speedNormalized, 0.0, 1.0) > 0.5)
+      plan.max_acc_ = std::max(plan.max_acc_, 4.0);
     plan.preserve_boundary_ = input.bodyHeading.has_value();
     plan.body_yaw_ = input.bodyHeading;
     // Intent keeps its independent collision/yaw policy. Use the observed
@@ -354,11 +373,13 @@ class Backend::Impl {
       plan.body_yaw_ = input.robot.pose.yaw;
     if (input.maxLinearSpeedMps > 0.0)
       plan.max_vel_ = std::min(plan.max_vel_, input.maxLinearSpeedMps);
+    const bool plannerModeChanged = plan.motion_intent_ != manager_->pp_.motion_intent_;
     if (plan.max_vel_ != manager_->pp_.max_vel_ ||
+        plan.max_acc_ != manager_->pp_.max_acc_ ||
         plan.max_body_vx_ != manager_->pp_.max_body_vx_ ||
         plan.max_body_vy_ != manager_->pp_.max_body_vy_ ||
         plan.body_yaw_ != manager_->pp_.body_yaw_ ||
-        plan.motion_intent_ != manager_->pp_.motion_intent_ ||
+        plannerModeChanged ||
         plan.preserve_boundary_ != manager_->pp_.preserve_boundary_)
       manager_->updatePlanParameters(plan, optimizerParameters(params_, plan));
 
@@ -410,7 +431,7 @@ class Backend::Impl {
       emergencyStopped_ = true;
       return stop(LocalPlanStatus::NearFieldStop, "scan_speed_transition_blocked");
     }
-    if (headingChanged || speedReduction) {
+    if (headingChanged || speedReduction || plannerModeChanged) {
       // A new body heading invalidates the previous collision footprint.
       // Executor also holds the old trajectory during a speed reduction. Its
       // derivatives are no longer the robot's motion state, so start a fresh
@@ -468,6 +489,11 @@ class Backend::Impl {
             detail::adaptReferencePath(*route, kOfficialBodyHeightM);
       }
       output = fsm_->tick(fsmInput);
+      if (executionFeedback_ && input.environment.predictions.count > 0) {
+        const FsmOutput timed = fsm_->checkFutureCollision(fsmInput);
+        if (timed.collisionDetected || timed.trajectory || timed.emergencyStopIssued)
+          output = timed;
+      }
     }
     if (!collisionTick && (output.targetAccepted || output.targetRejected)) {
       rememberReference(input, *route);
@@ -493,17 +519,7 @@ class Backend::Impl {
       lastObservedAttemptId_ = manager_->reboundDebug().attemptId;
       return stop(LocalPlanStatus::Cancelled, "planning_cancelled");
     }
-    recordAttempt(input, *route);
-    if (bodyGrid) {
-      for (int index = 1; index < route->count; ++index) {
-        const Vec3 &start = route->points[index - 1];
-        const Vec3 &end = route->points[index];
-        const double yaw = std::hypot(end.x - start.x, end.y - start.y) > 1e-9
-            ? std::atan2(end.y - start.y, end.x - start.x) : input.robot.pose.yaw;
-        if (bodyGrid->segmentInflatedOccupancy(start, yaw, end, yaw) != 0)
-          return stop(LocalPlanStatus::Blocked, "scan_body_collision");
-      }
-    }
+    recordAttempt(input, *route, bodyCollision);
     if (output.state == ScanReplanState::EMERGENCY_STOP || output.emergencyStopIssued) {
       // Keep the upstream stop trajectory inside the FSM. The native executor
       // owns stopping; publishing this stationary spline as Ready hides failure.
@@ -605,17 +621,19 @@ class Backend::Impl {
 
  private:
 
-  void recordAttempt(const LocalPlanRequest &input, const LocalRouteView &route) {
+  void recordAttempt(const LocalPlanRequest &input, const LocalRouteView &route,
+                     bool bodyCollision = false) {
     const auto &attempt = manager_->reboundDebug();
     if (!attempt.attempted || attempt.attemptId == lastObservedAttemptId_)
       return;
     lastObservedAttemptId_ = attempt.attemptId;
     lastAttempt_ = attemptDiagnostics(attempt);
     lastAttempt_.timestampS = input.clock.timestampS;
+    if (bodyCollision) lastAttempt_.success = false;
 
     // The final attempted result at the tick boundary defines a failure episode.
     // Failed internal retries followed by success in this tick do not start one.
-    if (attempt.success) {
+    if (attempt.success && !bodyCollision) {
       failureEpisodeActive_ = false;
       lastCollisionEvidence_.reset();
       return;
