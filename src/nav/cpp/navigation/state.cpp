@@ -324,6 +324,7 @@ void Executor::activateRoute(const std::vector<nav_kernel::Vec3> &path,
       std::max(0.0, stage_yaw_tolerance.value_or(kPoseYawToleranceRad));
   progress = 0;
   route_start_pending_ = true;
+  stair_replan_pending_ = false;
   resetMotion();
 }
 
@@ -345,6 +346,7 @@ void Executor::clearRoute() {
   reference_epoch.reset();
   route.clear();
   route_start_pending_ = false;
+  stair_replan_pending_ = false;
   autonomy_stall_stop_ = false;
   ++generation;
   stage_yaw_.reset();

@@ -62,16 +62,22 @@ ExecutionOutput Executor::tick(const ExecutionInput &input) {
   output.route_generation = generation;
   output.stairs = stair_step_;
   if (!stairs_.localPathAllowed(output.local_path_map, input.mapBody.yaw)) {
+    const bool waitingForReplan = stair_replan_pending_ && !output.path_found;
     output.cmd_vel = {};
     output.near_field_stop = true;
-    output.reason = "stair_route_wait";
+    output.reason = waitingForReplan ? "local_plan_pending" : "stair_route_wait";
     // A rejected trajectory cannot become valid by freezing its clock.
     // Keep the flight/profile, but regenerate locally from measured motion.
-    resetLocalPlanning();
+    if (!waitingForReplan) {
+      resetLocalPlanning();
+      stair_replan_pending_ = true;
+    }
     follower_.stopLinear();
     recovery_follower_.stopLinear();
     resetAutonomyProgress();
     output.tracking = {};
+  } else {
+    stair_replan_pending_ = false;
   }
   const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
   const double max_speed = stair_step_.speedLimit > 0.0
@@ -602,6 +608,13 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       std::min(follower_state.params.stopDisThre, endpoint_tolerance);
   follower_state.params.spline.finishDistance =
       std::min(follower_state.params.spline.finishDistance, endpoint_tolerance);
+  if (spline_provided && follower_state.goalDistance > endpoint_tolerance &&
+      follower_state.goalDistance < endpoint_tolerance + 0.08) {
+    follower_state.params.spline.positionGain =
+        std::max(follower_state.params.spline.positionGain, 2.0);
+    follower_state.params.spline.headingErrorThreshold = M_PI;
+    follower_state.params.spline.yawGain = 0.0;
+  }
   follower_state.params.maxSpeed = active_max_speed_mps_;
   follower_state.params.minSpeed = std::min(follower_state.params.minSpeed, active_max_speed_mps_);
   if (stair_step_.speedLimit > 0.0) {
