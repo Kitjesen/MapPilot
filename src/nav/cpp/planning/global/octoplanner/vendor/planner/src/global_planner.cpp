@@ -167,6 +167,14 @@ namespace global_planner
         has_goal_ = true;
         anchorPlanningLattice(start);
 
+        if (ground_support_ && support_height_m_ > 0.0 &&
+            surface_index_->observedSurfaces() == 0U) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            endpoint_resolution_.start_failure = TraversabilityFailure::None;
+            return;
+        }
+
         printf("start = (%f,%f,%f),goal = (%f,%f,%f) \n",start_point_.x,start_point_.y,start_point_.z,goal_point_.x,goal_point_.y,goal_point_.z);
 
         tryPlan();
