@@ -364,6 +364,17 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   follower_state.params = config_.follower;
   const nav_kernel::FollowerOutput control = follower_.follow(plan, follower_state);
   output.cmd_vel = control.cmd;
+  const bool clearIntent = spline_provided && observation.collision.valid() &&
+      observation.collision.occupiedCount() == 0U &&
+      observation.predictions.count == 0 && obstacle_count == 0;
+  if (clearIntent) {
+    const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
+    const double c = std::cos(input_direction_body);
+    const double s = std::sin(input_direction_body);
+    output.cmd_vel.vx = speed * c;
+    output.cmd_vel.vy = speed * s;
+    follower_.commitApplied(output.cmd_vel);
+  }
   output.tracking = control.tracking;
   output.trajectory_frozen = control.executionFrozen;
   traj_frozen_ = control.executionFrozen;
