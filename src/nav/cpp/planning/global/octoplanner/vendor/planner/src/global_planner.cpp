@@ -798,8 +798,25 @@ namespace global_planner
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
             if (actual_start && ground_support_) {
                 const auto cell = worldToGrid(from.x(), from.y(), from.z());
-                if (surface_index_->below(cell.x, cell.y, cell.z) &&
-                    !hasGroundSupport(cell, direct_support_only_, support_depth_cells_)) {
+                const auto [minimum_depth, maximum_depth] =
+                    supportDepthRange(support_depth_cells_);
+                bool support_found = false;
+                for (auto floor = surface_index_->below(cell.x, cell.y, cell.z);
+                     floor; floor = surface_index_->below(cell.x, cell.y, *floor)) {
+                    if (*floor >= cell.z - maximum_depth &&
+                        *floor <= cell.z - minimum_depth &&
+                        surface_index_->exposed(
+                            cell.x, cell.y, *floor,
+                            static_cast<int>(std::ceil(
+                                (support_height_m_ + std::max(
+                                    octree_->getResolution(), body_clearance_above_m_)) /
+                                octree_->getResolution())),
+                            !direct_support_only_)) {
+                        support_found = true;
+                        break;
+                    }
+                }
+                if (!support_found && surface_index_->below(cell.x, cell.y, cell.z)) {
                     if (failure) *failure = TraversabilityFailure::GroundSupport;
                     return false;
                 }
@@ -1139,6 +1156,8 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
+        if (!direct_support_only && surface_index_->inferred(idx.x, idx.y,
+                idx.z - maximum_depth, idx.z - minimum_depth)) return true;
         const auto floor = surface_index_->below(idx.x,idx.y,idx.z);
         if (!floor || *floor < idx.z-maximum_depth || *floor > idx.z-minimum_depth)
             return false;
