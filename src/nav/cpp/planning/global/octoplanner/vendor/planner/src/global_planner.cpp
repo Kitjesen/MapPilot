@@ -1164,11 +1164,11 @@ namespace global_planner
         }
         const double r = octree_->getResolution();
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells);
-        // Samples start at a voxel centre. Query the voxel containing the
-        // physical footprint edge, not the first centre beyond that edge.
-        // At 0.2 m resolution, a 0.43 m radius reaches offset 2, not offset 3.
-        const int n = std::max(0, static_cast<int>(std::floor(
-            robot_radius / std::max(1e-6, r) + 0.5)));
+        // Samples start at a voxel centre. A footprint ending exactly on a
+        // cell boundary also needs the next support cell to avoid edge snaps.
+        const double cells = robot_radius / std::max(1e-6, r);
+        int n = std::max(0, static_cast<int>(std::floor(cells + 0.5)));
+        if (n == 1 && std::abs(cells - 0.5) <= 1e-9) ++n;
         const std::array<GridIndex, 5> samples{{
             GridIndex{idx.x, idx.y, idx.z},
             GridIndex{idx.x + n, idx.y, idx.z},
