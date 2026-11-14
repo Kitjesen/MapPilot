@@ -615,11 +615,12 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
   follower_state.params.twoWayDrive = false;
   auto control = follower_.follow(plan, follower_state);
-  if (spline_provided &&
+  if (route_start_pending_ && spline_provided &&
       !following.tracking.active && !control.executionFrozen &&
       control.tracking.executionTimeS == 0.0) {
     follower_state.currentTime += follower_state.params.nominalDt;
     control = follower_.follow(plan, follower_state);
+    route_start_pending_ = false;
   }
   if (near_field_stop) {
     output.reason = "local_near_field_stop";
