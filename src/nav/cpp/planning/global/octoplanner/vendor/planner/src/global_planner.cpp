@@ -368,6 +368,13 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        if (ground_support_ && support_height_m_ > 0.0 &&
+            surface_index_->observedSurfaces() == 0U) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            endpoint_resolution_.start_failure = TraversabilityFailure::None;
+            return false;
+        }
         if (!resolveGoal()) return false;
         if (surface_graph_) {
             const auto valid = [&](const PointPose &a,const PointPose &b) {
