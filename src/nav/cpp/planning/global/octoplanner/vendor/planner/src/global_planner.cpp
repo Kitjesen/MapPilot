@@ -303,6 +303,13 @@ namespace global_planner
         endpoint_resolution_.failure = EndpointResolutionInfo::Failure::None;
         endpoint_resolution_.start_failure = TraversabilityFailure::None;
 
+        if (ground_support_ && support_height_m_ > 0.0 &&
+            surface_index_->observedSurfaces() == 0U) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            return false;
+        }
+
         if (!findNearestFreeCell(
                 start_raw,
                 robot_radius_,
