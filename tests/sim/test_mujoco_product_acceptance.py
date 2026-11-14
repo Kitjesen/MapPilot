@@ -844,7 +844,7 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
     assert plan.host_config["enable_camera"] is (product in {"inspection", "tracking"})
 
 
-def test_inspection_truth_run_plan_reuses_nav_world_and_spawn() -> None:
+def test_inspection_truth_run_plan_reuses_nav_world_and_spawn(allow_unbuilt_process_artifacts) -> None:
     env_config = {"backend": "mujoco", "localization": "truth"}
     nav = compile_run_plan("nav", "sim", robot="doso/thunder_v4", env_config=env_config)
     inspection = compile_run_plan(

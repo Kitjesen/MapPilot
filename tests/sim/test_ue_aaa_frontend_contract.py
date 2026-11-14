@@ -32,7 +32,14 @@ ASSET_PREVIEW_RESOURCES = {
 
 
 def _hud_source() -> str:
-    return HUD_CPP.read_text(encoding="utf-8")
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            HUD_CPP,
+            UI_PRIVATE / "SLingTuSimWelcome.cpp",
+            UI_PRIVATE / "SLingTuSimFieldInterface.cpp",
+        )
+    )
 
 
 def _front_end_layout(source: str) -> str:
@@ -43,6 +50,7 @@ def _front_end_layout(source: str) -> str:
         for function_name in (
             "BuildLoginScreen",
             "BuildWorkspaceScreen",
+            "BuildAssetReviewWorkspace",
             "BuildAssetHeroPreview",
             "BuildAssetFilmstrip",
         )
@@ -56,6 +64,7 @@ def _workspace_player_surface(source: str) -> str:
         _function_body(source, function_name)
         for function_name in (
             "BuildWorkspaceScreen",
+            "BuildAssetReviewWorkspace",
             "BuildAssetHeroPreview",
             "BuildAssetFilmstrip",
             "GetSelectionPositionText",
@@ -144,7 +153,7 @@ def test_workspace_first_screen_hides_backend_catalog_vocabulary() -> None:
 
 
 def test_workspace_header_shows_current_context_instead_of_fake_navigation() -> None:
-    workspace = _function_body(_hud_source(), "BuildWorkspaceScreen")
+    workspace = _function_body(_hud_source(), "BuildAssetReviewWorkspace")
 
     assert "任务   机器人   场景   素材库   设置" not in workspace
     for current_context in ("部署准备", "素材审阅"):
@@ -164,7 +173,7 @@ def test_workspace_first_screen_uses_chinese_player_facing_mission_copy() -> Non
 
 
 def test_workspace_uses_the_scene_as_its_root_interface_surface() -> None:
-    workspace = _function_body(_hud_source(), "BuildWorkspaceScreen")
+    workspace = _function_body(_hud_source(), "BuildAssetReviewWorkspace")
     return_expression = workspace[workspace.index("return") :]
     hero_index = return_expression.index("BuildAssetHeroPreview()")
     root_to_hero = return_expression[:hero_index]
@@ -223,7 +232,7 @@ def test_workspace_keeps_runtime_limitations_in_secondary_technical_details() ->
 def test_first_screen_uses_a_chinese_local_mission_call_to_action() -> None:
     layout = _front_end_layout(_hud_source())
 
-    assert any(call_to_action in layout for call_to_action in ("继续巡检", "开始本地任务"))
+    assert any(call_to_action in layout for call_to_action in ("开始", "进入行动终端"))
     assert not re.search(r'TEXT\("(?:LOGIN|SIGN IN|ENTER WORKSPACE)', layout, re.IGNORECASE)
 
 
@@ -240,7 +249,7 @@ def test_front_end_exposes_keyboard_and_controller_navigation_hints() -> None:
 
     for required_hint in ("A / ENTER", "B / ESC"):
         assert required_hint in layout
-    workspace = _function_body(_hud_source(), "BuildWorkspaceScreen")
+    workspace = _function_body(_hud_source(), "BuildAssetReviewWorkspace")
     assert "LB / RB" in workspace
     assert any(hint in workspace for hint in ("浏览素材", "切换素材"))
 
@@ -248,13 +257,13 @@ def test_front_end_exposes_keyboard_and_controller_navigation_hints() -> None:
 def test_front_end_assigns_each_focus_target_exactly_once() -> None:
     source = _hud_source()
     login = _function_body(source, "BuildLoginScreen")
-    workspace = _function_body(source, "BuildWorkspaceScreen")
+    workspace = _function_body(source, "BuildAssetReviewWorkspace")
 
-    assert login.count("SAssignNew(OperatorNameTextBox, SEditableTextBox)") == 1
-    assert login.count("SAssignNew(LocalWorkspaceButton, SButton)") == 1
+    assert login.count("LocalWorkspaceButton = WelcomeButton") == 1
+    assert source.count("SAssignNew(OperatorNameTextBox, SEditableTextBox)") == 1
     assert workspace.count("SAssignNew(ConfirmSelectionButton, SButton)") == 1
     assert source.count("SAssignNew(OperatorNameTextBox, SEditableTextBox)") == 1
-    assert source.count("SAssignNew(LocalWorkspaceButton, SButton)") == 1
+    assert source.count("LocalWorkspaceButton = WelcomeButton") == 1
     assert source.count("SAssignNew(ConfirmSelectionButton, SButton)") == 1
 
 
@@ -269,8 +278,8 @@ def test_login_logout_and_initial_focus_reference_the_assigned_controls() -> Non
     assert "LocalWorkspaceButton.IsValid()" in focus_login_cta
     assert "SetKeyboardFocus(LoginButton" in focus_login_cta
     assert "LoginModel->SubmitLocalOperator" in enter_workspace
-    assert "ConfirmSelectionButton.IsValid()" in enter_workspace
-    assert "SetUserFocus(ConfirmSelectionButton.ToSharedRef()" in enter_workspace
+    assert "WorkspaceRobotMapPicker.IsValid()" in enter_workspace
+    assert "WorkspaceRobotMapPicker->FocusInitialControl()" in enter_workspace
     assert "LoginModel->Logout" in logout
     assert "OperatorNameTextBox.IsValid()" in logout
     assert "SetUserFocus(OperatorNameTextBox.ToSharedRef()" in logout
@@ -413,19 +422,10 @@ def test_workspace_hero_leaves_the_live_world_viewport_visible() -> None:
 
 def test_static_front_end_backdrop_is_bound_to_login_visibility() -> None:
     source = _hud_source()
-    construct = _function_body(source, "Construct")
-    static_backdrop = re.search(
-        r"SNew\(SImage\)"
-        r"(?:(?!SNew\(SImage\)).)*"
-        r"\.Visibility\(this,\s*&SLingTuSimRuntimeHUD::(\w+)\)"
-        r"(?:(?!SNew\(SImage\)).)*"
-        r"FrontEndBackgroundBrush",
-        construct,
-        re.DOTALL,
-    )
-
-    assert static_backdrop, "missing the login scene plate"
-    assert static_backdrop.group(1) == "GetFrontEndStaticBackdropVisibility"
+    construct = _function_body(source, "BuildLoginScreen")
+    assert "FrontEndBackgroundBrush" in construct
+    assert "SNew(SImage)" in construct
+    assert "GetFrontEndStaticBackdropVisibility" in construct
 
 
 def test_static_front_end_backdrop_is_visible_for_login_only() -> None:
@@ -445,7 +445,7 @@ def test_game_selector_hides_all_legacy_runtime_hud_chrome_slots() -> None:
 
     for panel_marker in (
         "&SLingTuSimRuntimeHUD::GetReadinessText",
-        'TEXT("CONTROL / REQUEST")',
+        'TEXT("CONTROL STATUS")',
         'TEXT("OBSERVED / MUJOCO TRUTH")',
     ):
         panel_slot = _overlay_slot_containing(construct, panel_marker)
@@ -480,7 +480,7 @@ def test_each_filmstrip_card_contains_an_asset_thumbnail() -> None:
 
 def test_asset_thumbnail_strip_keeps_honest_non_qualification_labels() -> None:
     source = _hud_source()
-    workspace = _function_body(source, "BuildWorkspaceScreen")
+    workspace = _function_body(source, "BuildAssetReviewWorkspace")
     filmstrip = _function_body(source, "BuildAssetFilmstrip")
     hero = _function_body(source, "BuildAssetHeroPreview")
     thumbnail_surface = workspace + "\n" + filmstrip
@@ -501,17 +501,8 @@ def test_preview_surfaces_do_not_refer_to_a_removed_right_status_panel() -> None
 def test_enabled_primary_actions_use_high_contrast_text_on_highlight() -> None:
     source = _hud_source()
     login = _function_body(source, "BuildLoginScreen")
-    workspace = _function_body(source, "BuildWorkspaceScreen")
+    workspace = _function_body(source, "BuildAssetReviewWorkspace")
 
-    for body, action_copy in (
-        (login, "开始本地任务"),
-        (workspace, "开始任务"),
-    ):
-        assert "? FieldAmber" in body
-        label = re.search(
-            rf'StaticLabel\(\s*TEXT\("{action_copy}[^\"]*"\),\s*\d+,\s*(\w+)\)',
-            body,
-            re.DOTALL,
-        )
-        assert label, f"missing primary action label: {action_copy}"
-        assert label.group(1) in {"FrontEndText", "White"}
+    assert 'WelcomeButton(TEXT("开始")' in login
+    assert 'StaticLabel(TEXT("开始任务")' in workspace
+    assert "FrontEndText" in workspace

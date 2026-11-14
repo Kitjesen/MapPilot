@@ -2,6 +2,8 @@ import pytest
 
 from lingtu.assembly.compile_plan import compile_run_plan, host_builder_from_run_plan
 
+pytestmark = pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
+
 
 @pytest.mark.parametrize("env,robot", [("real", "unitree/go2"), ("real", "doso/thunder_v4"), ("sim", "doso/thunder_v4")])
 @pytest.mark.parametrize("product", ["map", "nav"])

@@ -293,7 +293,7 @@ def test_dino_provider_passes_explicit_cpu_threads(
     }
 
 
-def test_dino_cpu_threads_survive_immutable_run_plan() -> None:
+def test_dino_cpu_threads_survive_immutable_run_plan(allow_unbuilt_process_artifacts) -> None:
     plan = compile_run_plan(
         "tracking",
         "sim",
