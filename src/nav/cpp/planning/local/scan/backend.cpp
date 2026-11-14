@@ -358,12 +358,6 @@ class Backend::Impl {
 
     PlanParameters plan = planParameters(params_);
     plan.motion_intent_ = input.intent() != nullptr;
-    // Replaced intent splines need headroom to reach cruise; Follower still
-    // applies the configured command acceleration to the published velocity.
-    if (const auto *intent = input.intent(); intent != nullptr &&
-        std::max(0.0, input.maxLinearSpeedMps) *
-            std::clamp(intent->speedNormalized, 0.0, 1.0) > 0.5)
-      plan.max_acc_ = std::max(plan.max_acc_, 4.0);
     plan.preserve_boundary_ = input.bodyHeading.has_value();
     plan.body_yaw_ = input.bodyHeading;
     // Intent keeps its independent collision/yaw policy. Use the observed
@@ -375,7 +369,6 @@ class Backend::Impl {
       plan.max_vel_ = std::min(plan.max_vel_, input.maxLinearSpeedMps);
     const bool plannerModeChanged = plan.motion_intent_ != manager_->pp_.motion_intent_;
     if (plan.max_vel_ != manager_->pp_.max_vel_ ||
-        plan.max_acc_ != manager_->pp_.max_acc_ ||
         plan.max_body_vx_ != manager_->pp_.max_body_vx_ ||
         plan.max_body_vy_ != manager_->pp_.max_body_vy_ ||
         plan.body_yaw_ != manager_->pp_.body_yaw_ ||
