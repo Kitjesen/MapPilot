@@ -49,7 +49,9 @@ int GridMap::getTrajectoryOccupancy(const Eigen::Vector3d &start,
     return std::hypot(value.x(), value.y()) > 0.03
         ? std::atan2(value.y(), value.x()) : fallback;
   };
-  const double startYaw = heading(velocity, previousHeading ? previousHeading->value_or(0.0) : 0.0);
+  const double startYaw = heading(
+      velocity, previousHeading ? previousHeading->value_or(grid_->robotYaw())
+                                : grid_->robotYaw());
   const double endYaw = heading(endVelocity, startYaw);
   if (previousHeading) *previousHeading = endYaw;
   // The upstream optimizer queries the inflated voxel cylinder. Multipart body
