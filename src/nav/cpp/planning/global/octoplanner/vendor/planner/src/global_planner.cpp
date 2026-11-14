@@ -1131,13 +1131,21 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
-        if (!direct_support_only && surface_index_->inferred(idx.x,idx.y,
-                idx.z-maximum_depth,idx.z-minimum_depth)) return true;
-        const auto floor = surface_index_->below(idx.x,idx.y,idx.z);
-        if (!floor || *floor < idx.z-maximum_depth || *floor > idx.z-minimum_depth)
+        const double resolution = octree_->getResolution();
+        const double pose_z = (static_cast<double>(idx.z) + 0.5) * resolution - centre_offset;
+        const auto ground = surface_index_->height(
+            {(static_cast<double>(idx.x) + 0.5) * resolution,
+             (static_cast<double>(idx.y) + 0.5) * resolution,
+             pose_z - support_height_m_},
+            support_height_tolerance_m_);
+        if (!ground)
             return false;
-        return (*floor+1 != idx.z || !isOccupiedCell(idx)) &&
-               isSupportPatch({idx.x,idx.y,*floor});
+        const int floor = static_cast<int>(std::floor(*ground / resolution + 1e-7));
+        if (floor < idx.z - maximum_depth || floor > idx.z - minimum_depth ||
+            (direct_support_only && surface_index_->inferred(idx.x, idx.y, floor, floor)))
+            return false;
+        return (floor + 1 != idx.z || !isOccupiedCell(idx)) &&
+               isSupportPatch({idx.x, idx.y, floor});
     }
 
     bool OctoPlanner3D::hasFootprintGroundSupport(
