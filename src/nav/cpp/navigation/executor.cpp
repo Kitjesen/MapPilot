@@ -469,6 +469,31 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   output.local_path_map = !recovery.active && spline_provided
                               ? planningPathToMap(map_from_odom, preview_path)
                               : bodyPathToMap(map_body, output.local_path_body);
+  if (output.path_found && plan_request.body && output.local_path_map.size() >= 2) {
+    std::vector<nav_kernel::Pose> body_sweep;
+    body_sweep.reserve(output.local_path_map.size());
+    double yaw = planning_body.yaw;
+    for (std::size_t index = 0; index < output.local_path_map.size(); ++index) {
+      const auto &point = output.local_path_map[index];
+      const auto planning_point = config_.planning_frame == PlanningFrame::Map
+          ? point : map_from_odom.odomPointFromMap(point);
+      if (index > 0) {
+        const auto &previous = output.local_path_map[index - 1];
+        if (std::hypot(point.x - previous.x, point.y - previous.y) > 1e-9)
+          yaw = std::atan2(point.y - previous.y, point.x - previous.x) - map_from_odom.yaw;
+      }
+      body_sweep.push_back({planning_point, yaw});
+    }
+    if (!local_planner_.sweepClear(plan_request, body_sweep)) {
+      output.path_found = false;
+      output.near_field_stop = true;
+      output.reason = "scan_body_collision";
+      output.cmd_vel = {};
+      follower_.stopLinear();
+      recovery_follower_.stopLinear();
+      return output;
+    }
+  }
   if (!recovery.active && plan_ready && !near_field_stop &&
       plan.hints().retainRouteGuide &&
       output.local_path_map.size() >= 2) {
