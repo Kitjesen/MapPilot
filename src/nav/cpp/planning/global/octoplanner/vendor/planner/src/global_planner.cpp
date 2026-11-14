@@ -167,8 +167,16 @@ namespace global_planner
         has_goal_ = true;
         anchorPlanningLattice(start);
 
-        if (ground_support_ && support_height_m_ > 0.0 &&
-            surface_index_->observedSurfaces() == 0U) {
+        bool has_occupied_map = false;
+        if (ground_support_ && support_height_m_ > 0.0) {
+            for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+                if (octree_->isNodeOccupied(*it)) {
+                    has_occupied_map = true;
+                    break;
+                }
+            }
+        }
+        if (ground_support_ && support_height_m_ > 0.0 && !has_occupied_map) {
             endpoint_resolution_.failure =
                 EndpointResolutionInfo::Failure::StartSnapExhausted;
             endpoint_resolution_.start_failure = TraversabilityFailure::None;
