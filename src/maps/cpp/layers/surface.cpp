@@ -99,6 +99,18 @@ std::optional<int> SurfaceIndex::below(int x, int y, int z) const {
   return it == levels.begin() ? std::optional<int>{} : *--it;
 }
 
+bool SurfaceIndex::exposed(int x, int y, int z, int clearance_cells,
+                           bool include_inferred) const {
+  if (include_inferred && inferred(x, y, z, z)) return true;
+  const auto column = occupied_.find({x, y, 0});
+  if (column == occupied_.end()) return false;
+  const auto &levels = column->second;
+  const auto it = std::lower_bound(levels.begin(), levels.end(), z);
+  if (it == levels.end() || *it != z) return false;
+  const auto next = std::next(it);
+  return next == levels.end() || *next - z > std::max(0, clearance_cells);
+}
+
 bool SurfaceIndex::occupied(int x, int y, int minimum_z, int maximum_z) const {
   const auto column = occupied_.find({x,y,0});
   if (column == occupied_.end()) return false;

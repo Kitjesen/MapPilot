@@ -403,8 +403,6 @@ std::string endpointResolutionFailureReason(
       switch (resolution.start_failure) {
         case global_planner::OctoPlanner3D::TraversabilityFailure::OccupiedBody:
           return "start_occupied";
-        case global_planner::OctoPlanner3D::TraversabilityFailure::GroundSupport:
-          return "start_unsupported";
         case global_planner::OctoPlanner3D::TraversabilityFailure::ExternalPreblockedBelow:
         case global_planner::OctoPlanner3D::TraversabilityFailure::ExternalPreblockedBody:
           return "start_temporary_obstacle";

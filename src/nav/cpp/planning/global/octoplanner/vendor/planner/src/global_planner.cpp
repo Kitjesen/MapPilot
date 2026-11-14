@@ -156,6 +156,7 @@ namespace global_planner
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
     {
+        planner_results_.clear();
         occupied_blocks_.clear();
         last_occupied_block_ = nullptr;
         endpoint_resolution_ = {};
@@ -166,6 +167,22 @@ namespace global_planner
         goal_point_ = goal;
         has_goal_ = true;
         anchorPlanningLattice(start);
+
+        bool has_occupied_map = false;
+        if (ground_support_ && support_height_m_ > 0.0) {
+            for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+                if (octree_->isNodeOccupied(*it)) {
+                    has_occupied_map = true;
+                    break;
+                }
+            }
+        }
+        if (ground_support_ && support_height_m_ > 0.0 && !has_occupied_map) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            endpoint_resolution_.start_failure = TraversabilityFailure::None;
+            return;
+        }
 
         printf("start = (%f,%f,%f),goal = (%f,%f,%f) \n",start_point_.x,start_point_.y,start_point_.z,goal_point_.x,goal_point_.y,goal_point_.z);
 
@@ -303,6 +320,13 @@ namespace global_planner
         endpoint_resolution_.failure = EndpointResolutionInfo::Failure::None;
         endpoint_resolution_.start_failure = TraversabilityFailure::None;
 
+        if (ground_support_ && support_height_m_ > 0.0 &&
+            surface_index_->observedSurfaces() == 0U) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            return false;
+        }
+
         if (!findNearestFreeCell(
                 start_raw,
                 robot_radius_,
@@ -361,6 +385,13 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        if (ground_support_ && support_height_m_ > 0.0 &&
+            surface_index_->observedSurfaces() == 0U) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
+            endpoint_resolution_.start_failure = TraversabilityFailure::None;
+            return false;
+        }
         if (!resolveGoal()) return false;
         if (surface_graph_) {
             const auto valid = [&](const PointPose &a,const PointPose &b) {
@@ -796,6 +827,34 @@ namespace global_planner
             // The actual start may contain the robot or incomplete ground observations.
             const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+            if (actual_start && ground_support_) {
+                if (support_height_m_ > 0.0 && surface_index_->observedSurfaces() == 0U)
+                    return false;
+                const auto cell = worldToGrid(from.x(), from.y(), from.z());
+                const auto [minimum_depth, maximum_depth] =
+                    supportDepthRange(support_depth_cells_);
+                const bool robot_evidence = hasOccupiedNearZ(cell, 2);
+                bool support_found = false;
+                for (auto floor = surface_index_->below(cell.x, cell.y, cell.z);
+                     floor; floor = surface_index_->below(cell.x, cell.y, *floor)) {
+                    if (*floor >= cell.z - maximum_depth &&
+                        *floor <= cell.z - minimum_depth &&
+                        (robot_evidence || surface_index_->exposed(
+                            cell.x, cell.y, *floor,
+                            static_cast<int>(std::ceil(
+                                (support_height_m_ + std::max(
+                                    octree_->getResolution(), body_clearance_above_m_)) /
+                                octree_->getResolution())),
+                            !direct_support_only_))) {
+                        support_found = true;
+                        break;
+                    }
+                }
+                if (!support_found && surface_index_->below(cell.x, cell.y, cell.z)) {
+                    if (failure) *failure = TraversabilityFailure::GroundSupport;
+                    return false;
+                }
+            }
             if(from==to)return true;
             const auto target=queryWorld(to,robot_radius_,ground_support_);
             if(target!=TraversabilityFailure::None){if(failure)*failure=target;return false;}
@@ -815,6 +874,17 @@ namespace global_planner
             if(actual_start&&(i==0||from==to)) {
                 const auto origin=queryWorld(from,robot_radius_,false,false);
                 if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+                if (ground_support_) {
+                    const auto support = worldToGrid(from.x(), from.y(), from.z());
+                    if (surface_index_->below(support.x, support.y, support.z) &&
+                        (!hasGroundSupport(
+                            support, direct_support_only_, support_depth_cells_) ||
+                         (direct_support_only_ &&
+                          !hasFootprintGroundSupport(
+                              support, robot_radius_, support_depth_cells_)))) {
+                        return false;
+                    }
+                }
                 continue;
             }
             if (!isPlanningCellTraversableDetailed(
@@ -1131,10 +1201,17 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
-        if (!direct_support_only && surface_index_->inferred(idx.x,idx.y,
-                idx.z-maximum_depth,idx.z-minimum_depth)) return true;
+        if (!direct_support_only && surface_index_->inferred(idx.x, idx.y,
+                idx.z - maximum_depth, idx.z - minimum_depth)) return true;
         const auto floor = surface_index_->below(idx.x,idx.y,idx.z);
         if (!floor || *floor < idx.z-maximum_depth || *floor > idx.z-minimum_depth)
+            return false;
+        const double resolution = octree_->getResolution();
+        const double headroom = support_height_m_ +
+            std::max(resolution, body_clearance_above_m_);
+        const int clearance = static_cast<int>(std::ceil(headroom / resolution));
+        if (!surface_index_->exposed(idx.x, idx.y, *floor, clearance,
+                                     !direct_support_only))
             return false;
         return (*floor+1 != idx.z || !isOccupiedCell(idx)) &&
                isSupportPatch({idx.x,idx.y,*floor});
@@ -1151,11 +1228,11 @@ namespace global_planner
         }
         const double r = octree_->getResolution();
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells);
-        // Samples start at a voxel centre. Query the voxel containing the
-        // physical footprint edge, not the first centre beyond that edge.
-        // At 0.2 m resolution, a 0.43 m radius reaches offset 2, not offset 3.
-        const int n = std::max(0, static_cast<int>(std::floor(
-            robot_radius / std::max(1e-6, r) + 0.5)));
+        // Samples start at a voxel centre. A footprint ending exactly on a
+        // cell boundary also needs the next support cell to avoid edge snaps.
+        const double cells = robot_radius / std::max(1e-6, r);
+        int n = std::max(0, static_cast<int>(std::floor(cells + 0.5)));
+        if (n == 1 && std::abs(cells - 0.5) <= 1e-9) ++n;
         const std::array<GridIndex, 5> samples{{
             GridIndex{idx.x, idx.y, idx.z},
             GridIndex{idx.x + n, idx.y, idx.z},
@@ -1675,16 +1752,16 @@ namespace global_planner
                     return TraversabilityFailure::ExternalPreblockedBelow;
             }
         }
-        if (require_support) {
+        const auto supportFailure = [&]() {
+            if (!require_support) return TraversabilityFailure::None;
             const GridIndex support_seed = worldToGrid(p.x(), p.y(), p.z());
-            // The pose need not lie at the centre of its containing voxel.
             const double centre_offset = (support_seed.z + .5) * r - p.z();
-            if (!hasGroundSupport(
-                    support_seed, direct_support_only_, support_depth_cells_, centre_offset)) {
-                return TraversabilityFailure::GroundSupport;
-            }
-        }
-        if (!check_body) return TraversabilityFailure::None;
+            return hasGroundSupport(
+                       support_seed, direct_support_only_, support_depth_cells_, centre_offset)
+                ? TraversabilityFailure::None
+                : TraversabilityFailure::GroundSupport;
+        };
+        if (!check_body) return supportFailure();
         const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
         const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
@@ -1694,7 +1771,7 @@ namespace global_planner
             const int bottom=static_cast<int>(std::floor((p.z()-below+1e-7)/r));
             const int top=static_cast<int>(std::ceil((p.z()+above-1e-7)/r))-1;
             if (!surface_index_->regionOccupied(low.x,low.y,high.x,high.y,bottom,top))
-                return TraversabilityFailure::None;
+                return supportFailure();
             for (int x=low.x; x<=high.x; ++x) {
                 const double dx=std::max({x*r-p.x(),0.0,p.x()-(x+1)*r});
                 for (int y=low.y; y<=high.y; ++y) {
@@ -1727,7 +1804,7 @@ namespace global_planner
                 }
             }
         }
-        return TraversabilityFailure::None;
+        return supportFailure();
     }
 
     bool OctoPlanner3D::sweptRouteFree(

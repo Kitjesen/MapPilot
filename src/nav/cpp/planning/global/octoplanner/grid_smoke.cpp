@@ -1,6 +1,8 @@
 #include "global_planner.h"
 
 #include <iostream>
+#include <filesystem>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -9,6 +11,42 @@
 #include <vector>
 
 namespace global_planner {
+
+void eraseCell(std::shared_ptr<octomap::OcTree> &tree, const octomap::point3d &point)
+{
+  auto replacement = std::make_shared<octomap::OcTree>(tree->getResolution());
+  for (auto it = tree->begin_leafs(); it != tree->end_leafs(); ++it) {
+    const double half = 0.5 * it.getSize();
+    if (std::abs(point.x() - it.getX()) < half &&
+        std::abs(point.y() - it.getY()) < half &&
+        std::abs(point.z() - it.getZ()) < half) {
+      continue;
+    }
+    replacement->updateNode(
+      octomap::point3d(it.getX(), it.getY(), it.getZ()),
+      tree->isNodeOccupied(*it));
+  }
+  replacement->updateInnerOccupancy();
+  tree = std::move(replacement);
+}
+
+std::shared_ptr<octomap::OcTree> cloneTree(const octomap::OcTree &source)
+{
+  static std::uint64_t serial = 0;
+  const auto path = std::filesystem::temp_directory_path() /
+    ("lingtu-grid-clone-" + std::to_string(++serial) + ".ot");
+  if (!source.write(path.string()))
+    throw std::runtime_error("failed to serialize OctoMap fixture");
+  std::unique_ptr<octomap::AbstractOcTree> raw(octomap::AbstractOcTree::read(path.string()));
+  auto *tree = dynamic_cast<octomap::OcTree *>(raw.get());
+  if (tree == nullptr) {
+    std::filesystem::remove(path);
+    throw std::runtime_error("failed to restore OctoMap fixture");
+  }
+  raw.release();
+  std::filesystem::remove(path);
+  return std::shared_ptr<octomap::OcTree>(tree);
+}
 
 // These synthetic geometry probes use raw occupancy spacing and no surface closing.
 static PlannerConfig gridFixtureConfig() {
@@ -313,7 +351,7 @@ struct OctoPlannerGridQueryTest
       throw std::runtime_error("exact-goal fixture did not exercise an out-of-tolerance grid centre");
 
     // Both endpoints clear this saved slab; its connector must not cross it.
-    auto blocked_tree = std::make_shared<octomap::OcTree>(*tree);
+    auto blocked_tree = cloneTree(*tree);
     for (int x=-3;x<=2;++x) for (int y=-3;y<=2;++y)
       if (const double distance=std::hypot((x+.5)*.2,(y+.5)*.2);
           distance>=.3 && distance<=.5)
@@ -479,7 +517,7 @@ struct OctoPlannerGridQueryTest
     // A full-height barrier must still block search and path simplification.
     for (int y = -4; y <= 3; ++y) for (int z = -6; z <= 3; ++z)
       tree->updateNode(octomap::point3d(.325, (y+.5)*.05, (z+.5)*.05), true);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     planner.makePlan({.025,.025,.025}, {.625,.025,.025});
     planner.getPlannerResults(path);
     if (!path.empty())
@@ -587,7 +625,7 @@ struct OctoPlannerGridQueryTest
       if (clear != (resolution == .05))
         throw std::runtime_error("Go2 clearance no longer distinguishes coarse voxel expansion");
       tree->updateNode(octomap::point3d(.30, -.253, .026), true);
-      planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+      planner.setOctomap(cloneTree(*tree));
       if (planner.queryWorld(body, .43, false) == OctoPlanner3D::TraversabilityFailure::None)
         throw std::runtime_error("fine voxels accepted an actual obstacle inside the body");
     }
@@ -617,7 +655,7 @@ struct OctoPlannerGridQueryTest
       throw std::runtime_error("unknown planning cell was authorized");
 
     tree->updateNode(body, false);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     planner.makePlan({body.x(), body.y(), body.z()}, {body.x(), body.y(), body.z()});
     planner.getPlannerResults(path);
     if (path.empty())
@@ -638,36 +676,36 @@ struct OctoPlannerGridQueryTest
       for (int z = -3; z <= 3; ++z)
         tree->updateNode(octomap::point3d(
           body.x() + x * .05, body.y() + y * .05, body.z() + z * .05), false);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     c.direct_support_only=true;
 
     planner.setConfig(c);
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("strict direct support rejected an occupied exposed floor");
     c.direct_support_only=false;
-    tree->deleteNode(octomap::point3d(.025,.025,-.325));
+    eraseCell(tree, octomap::point3d(.025,.025,-.325));
     planner.setConfig(c);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("neighbouring occupied floor did not repair a sampling hole");
     for (int x=-15;x<=15;++x) for (int y=-15;y<=15;++y)
       tree->updateNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.275),false);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("free ray just above neighbouring floor blocked sparse support");
     tree->updateNode(octomap::point3d(.025,.025,-.375),false);
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+    planner.setOctomap(cloneTree(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("centre free ray vetoed an enclosed neighbouring floor patch");
     for (int x=-1;x<=1;++x) for (int y=-1;y<=1;++y)
-      tree->deleteNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+      eraseCell(tree, octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
+    planner.setOctomap(cloneTree(*tree));
     if (!planner.supportSurface()->inferred(0,0,-7,-7) ||
         planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
       throw std::runtime_error("bounded three-cell sampling hole was not prepared");
     for (int x=-1;x<=1;++x) for (int y=-15;y<=15;++y)
-      tree->deleteNode(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
-    planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+      eraseCell(tree, octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
+    planner.setOctomap(cloneTree(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::GroundSupport)
       throw std::runtime_error("open gap bypassed prepared support");
   }
@@ -678,7 +716,7 @@ struct OctoPlannerGridQueryTest
     tree->updateNode(octomap::point3d(-1,-1,-1),false);
     tree->updateNode(octomap::point3d(1,1,1),false);
     // The bounded missing sample is repaired before endpoint resolution.
-    tree->deleteNode(octomap::point3d(.025,.025,-.325));
+    eraseCell(tree, octomap::point3d(.025,.025,-.325));
     auto c = gridFixtureConfig();
     c.robot_radius=.10;
     c.surface_closing_radius_m=.2;
@@ -722,7 +760,7 @@ struct OctoPlannerGridQueryTest
       planner.setConfig(config);
       for (bool prune : {false, true}) {
         if (prune) tree->prune();
-        planner.setOctomap(std::make_shared<octomap::OcTree>(*tree));
+        planner.setOctomap(cloneTree(*tree));
         for (int i = 0; i < 90; ++i) {
           const octomap::point3d p(-.9 + .021*i, -.7 + .17*(i%9), -.15 + .05*(i%8));
           const double radius = i%2 ? .43 : .25;
@@ -787,7 +825,7 @@ struct OctoPlannerGridQueryTest
           if (std::abs(p.z-z) > 1e-6)
             throw std::runtime_error("flat path changed measured body height");
       }
-      tree = std::make_shared<octomap::OcTree>(*tree);
+      tree = cloneTree(*tree);
       tree->updateNode(octomap::point3d(.025,.025,.025), true);
       planner.setOctomap(tree);
       planner.makePlan({.025,.025,.01}, {.625,.025,.01});
@@ -900,8 +938,8 @@ struct OctoPlannerGridQueryTest
     const auto center = planner.worldToGrid(0.1, 0.1, 0.1);
     if (!planner.hasFootprintGroundSupport(center, 0.43, 2))
       throw std::runtime_error("support query extended outside the physical footprint edge cells");
-    tree = std::make_shared<octomap::OcTree>(*tree);
-    tree->deleteNode(octomap::point3d(0.1, 0.5, -0.1));
+    tree = cloneTree(*tree);
+    eraseCell(tree, octomap::point3d(0.1, 0.5, -0.1));
     planner.setOctomap(tree);
     if (planner.hasFootprintGroundSupport(center, 0.43, 2))
       throw std::runtime_error("missing support at a physical footprint edge was ignored");

@@ -342,8 +342,8 @@ int main()
     auto changed_options = cached_request;
     ++changed_options.options.max_iterations;
     const auto retuned = session.run(map_path, map_identity, changed_options);
-    if (!retuned.ok || session.mapLoadCount() != 2 || session.prepareCount() != 3) {
-      std::cerr << "changed options did not rebuild only prepared planner state\n";
+    if (!retuned.ok || session.mapLoadCount() != 2 || session.prepareCount() != 2) {
+      std::cerr << "changed query options replaced prepared planner state\n";
       return 35;
     }
 
