@@ -1131,10 +1131,15 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
-        if (!direct_support_only && surface_index_->inferred(idx.x,idx.y,
-                idx.z-maximum_depth,idx.z-minimum_depth)) return true;
         const auto floor = surface_index_->below(idx.x,idx.y,idx.z);
         if (!floor || *floor < idx.z-maximum_depth || *floor > idx.z-minimum_depth)
+            return false;
+        const double resolution = octree_->getResolution();
+        const double headroom = support_height_m_ +
+            std::max(resolution, body_clearance_above_m_);
+        const int clearance = static_cast<int>(std::ceil(headroom / resolution));
+        if (!surface_index_->exposed(idx.x, idx.y, *floor, clearance,
+                                     !direct_support_only))
             return false;
         return (*floor+1 != idx.z || !isOccupiedCell(idx)) &&
                isSupportPatch({idx.x,idx.y,*floor});

@@ -46,6 +46,8 @@ class SurfaceIndex {
                double max_hole_area_m2 = ::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2,
                double max_slope = ::lingtu::settings::global::native_nav::global::surface_max_slope);
   std::optional<int> below(int x, int y, int z) const;
+  bool exposed(int x, int y, int z, int clearance_cells,
+               bool include_inferred) const;
   bool occupied(int x, int y, int minimum_z, int maximum_z) const;
   bool inferred(int x, int y, int minimum_z, int maximum_z) const;
   bool regionOccupied(int min_x, int min_y, int max_x, int max_y, int min_z, int max_z) const;
