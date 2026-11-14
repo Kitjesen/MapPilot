@@ -800,18 +800,19 @@ namespace global_planner
                 const auto cell = worldToGrid(from.x(), from.y(), from.z());
                 const auto [minimum_depth, maximum_depth] =
                     supportDepthRange(support_depth_cells_);
+                const bool robot_evidence = hasOccupiedNearZ(cell, 2);
                 bool support_found = false;
                 for (auto floor = surface_index_->below(cell.x, cell.y, cell.z);
                      floor; floor = surface_index_->below(cell.x, cell.y, *floor)) {
                     if (*floor >= cell.z - maximum_depth &&
                         *floor <= cell.z - minimum_depth &&
-                        surface_index_->exposed(
+                        (robot_evidence || surface_index_->exposed(
                             cell.x, cell.y, *floor,
                             static_cast<int>(std::ceil(
                                 (support_height_m_ + std::max(
                                     octree_->getResolution(), body_clearance_above_m_)) /
                                 octree_->getResolution())),
-                            !direct_support_only_)) {
+                            !direct_support_only_))) {
                         support_found = true;
                         break;
                     }
@@ -840,6 +841,18 @@ namespace global_planner
             if(actual_start&&(i==0||from==to)) {
                 const auto origin=queryWorld(from,robot_radius_,false,false);
                 if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+                if (ground_support_) {
+                    const auto support = worldToGrid(from.x(), from.y(), from.z());
+                    if (surface_index_->below(support.x, support.y, support.z) &&
+                        (!hasGroundSupport(
+                            support, direct_support_only_, support_depth_cells_) ||
+                         (direct_support_only_ &&
+                          !hasFootprintGroundSupport(
+                              support, robot_radius_, support_depth_cells_)))) {
+                        if (failure) *failure = TraversabilityFailure::GroundSupport;
+                        return false;
+                    }
+                }
                 continue;
             }
             if (!isPlanningCellTraversableDetailed(
@@ -1707,16 +1720,16 @@ namespace global_planner
                     return TraversabilityFailure::ExternalPreblockedBelow;
             }
         }
-        if (require_support) {
+        const auto supportFailure = [&]() {
+            if (!require_support) return TraversabilityFailure::None;
             const GridIndex support_seed = worldToGrid(p.x(), p.y(), p.z());
-            // The pose need not lie at the centre of its containing voxel.
             const double centre_offset = (support_seed.z + .5) * r - p.z();
-            if (!hasGroundSupport(
-                    support_seed, direct_support_only_, support_depth_cells_, centre_offset)) {
-                return TraversabilityFailure::GroundSupport;
-            }
-        }
-        if (!check_body) return TraversabilityFailure::None;
+            return hasGroundSupport(
+                       support_seed, direct_support_only_, support_depth_cells_, centre_offset)
+                ? TraversabilityFailure::None
+                : TraversabilityFailure::GroundSupport;
+        };
+        if (!check_body) return supportFailure();
         const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
         const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
@@ -1726,7 +1739,7 @@ namespace global_planner
             const int bottom=static_cast<int>(std::floor((p.z()-below+1e-7)/r));
             const int top=static_cast<int>(std::ceil((p.z()+above-1e-7)/r))-1;
             if (!surface_index_->regionOccupied(low.x,low.y,high.x,high.y,bottom,top))
-                return TraversabilityFailure::None;
+                return supportFailure();
             for (int x=low.x; x<=high.x; ++x) {
                 const double dx=std::max({x*r-p.x(),0.0,p.x()-(x+1)*r});
                 for (int y=low.y; y<=high.y; ++y) {
@@ -1759,7 +1772,7 @@ namespace global_planner
                 }
             }
         }
-        return TraversabilityFailure::None;
+        return supportFailure();
     }
 
     bool OctoPlanner3D::sweptRouteFree(
