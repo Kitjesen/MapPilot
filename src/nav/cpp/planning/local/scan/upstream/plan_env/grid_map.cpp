@@ -20,7 +20,7 @@ int GridMap::getInflateOccupancy(const Eigen::Vector3d &position,
                                  double yaw) const noexcept {
   if (grid_ == nullptr) return -1;
   const Vec3 point{position.x(), position.y(), position.z()};
-  return grid_->cylinderOccupancy(point, yaw);
+  return grid_->inflatedOccupancy(point, yaw);
 }
 
 int GridMap::getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
