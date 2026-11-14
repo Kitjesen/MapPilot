@@ -72,7 +72,7 @@ def add_robot(model: ET.Element, start: list) -> None:
                           contype="0", conaffinity="0", group="1")
 
 
-def build_scene(output: Path = DEFAULT_OUTPUT) -> dict:
+def build_scene(output: Path = DEFAULT_OUTPUT, *, include_robot: bool = True) -> dict:
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     for filename in ("world.xml", "render_scene.xml", "scene.json"):
@@ -148,7 +148,8 @@ def build_scene(output: Path = DEFAULT_OUTPUT) -> dict:
     ET.indent(model)
     ET.ElementTree(model).write(output / "world.xml", encoding="utf-8", xml_declaration=True)
     combined = deepcopy(model)
-    add_robot(combined, start)
+    if include_robot:
+        add_robot(combined, start)
     ET.indent(combined)
     ET.ElementTree(combined).write(output / "render_scene.xml", encoding="utf-8", xml_declaration=True)
     (output / "scene.json").write_text(json.dumps(description, indent=2) + "\n", encoding="utf-8")

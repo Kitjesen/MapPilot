@@ -359,7 +359,7 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                                [SNew(SVerticalBox)
 
                                 + SVerticalBox::Slot().AutoHeight()[StaticLabel(
-                                      TEXT("CONTROL / REQUEST"), 10, TealAccent)]
+                                      TEXT("CONTROL STATUS"), 10, TealAccent)]
 
                                 + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 7.0F, 0.0F, 0.0F)
                                       [SNew(STextBlock)
@@ -401,6 +401,9 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                               + SVerticalBox::Slot().AutoHeight()
                                     [StaticLabel(TEXT("OBSERVED / MUJOCO TRUTH"), 10, TealAccent)]
 
+                              + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 3.0F, 0.0F, 0.0F)
+                                    [StaticLabel(TEXT("ADMITTED"), 9, MutedInk)]
+
                               + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 7.0F, 0.0F, 0.0F)
                                     [SNew(STextBlock)
                                          .Text(this, &SLingTuSimRuntimeHUD::GetObservedVelocityText)
@@ -413,6 +416,12 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                                          .Font(Font(9))
                                          .ColorAndOpacity(MutedInk)]
 
+                              + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F, 0.0F)
+                                    [StaticLabel(TEXT("RUNTIME ECHO"), 9, MutedInk)]
+
+                              + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F, 0.0F)
+                                    [StaticLabel(TEXT("R STOP + COMMIT"), 9, MutedInk)]
+
                               + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 7.0F, 0.0F, 0.0F)
                                     [SNew(STextBlock)
                                          .Text(this, &SLingTuSimRuntimeHUD::GetSensorsText)
@@ -424,6 +433,9 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                                          .Text(this, &SLingTuSimRuntimeHUD::GetRecordingText)
                                          .Font(Font(9, true))
                                          .ColorAndOpacity(TealAccent)]
+
+                              + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F, 0.0F)
+                                    [StaticLabel(TEXT("CAMERA  UE"), 9, MutedInk)]
 
                               + SVerticalBox::Slot().AutoHeight().Padding(0.0F, 4.0F, 0.0F, 0.0F)
                                     [SNew(STextBlock)
@@ -534,7 +546,7 @@ void SLingTuSimRuntimeHUD::Construct(const FArguments &InArgs) {
                                                        .BorderBackgroundColor(
                                                            FLinearColor(0.96F, 0.97F, 0.94F, 1.0F))
                                                        .Padding(FMargin(8.0F, 4.0F))
-                                                           [SNew(SEditableTextBox)
+                                                           [SAssignNew(OperatorNameTextBox, SEditableTextBox)
                                                                 .Text(FText::FromString(
                                                                     PendingOperatorName))
                                                                 .HintText(FText::FromString(
@@ -1946,7 +1958,9 @@ FReply SLingTuSimRuntimeHUD::HandleLogout() {
   }
   Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
   FReply Reply = FReply::Handled();
-  if (bLoggedOut && LocalWorkspaceButton.IsValid()) {
+  if (bLoggedOut && OperatorNameTextBox.IsValid()) {
+    Reply.SetUserFocus(OperatorNameTextBox.ToSharedRef(), EFocusCause::SetDirectly);
+  } else if (bLoggedOut && LocalWorkspaceButton.IsValid()) {
     Reply.SetUserFocus(LocalWorkspaceButton.ToSharedRef(), EFocusCause::SetDirectly);
   }
   return Reply;
@@ -2018,6 +2032,12 @@ EVisibility SLingTuSimRuntimeHUD::GetLoginVisibility() const {
   return GetPauseVisibility() == EVisibility::Visible && bFrontEndLoginRequired &&
                  !LoginModel->IsLoggedIn()
              ? EVisibility::Visible
+             : EVisibility::Collapsed;
+}
+
+EVisibility SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility() const {
+  return FactoryBackgroundBrush.IsValid() && GetLoginVisibility() == EVisibility::Visible
+             ? EVisibility::HitTestInvisible
              : EVisibility::Collapsed;
 }
 

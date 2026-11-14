@@ -46,7 +46,7 @@ def test_session_ingress_rejects_oversized_datagram_before_json_dispatch() -> No
         encoding="utf-8"
     )
 
-    assert "PendingBytes > MaxSnapshotDatagramBytes" in module_source
+    assert "BytesRead > static_cast<int32>(MaxSnapshotDatagramBytes)" in module_source
     assert "Rejected oversized snapshot datagram" in module_source
 
 
