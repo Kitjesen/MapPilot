@@ -849,7 +849,6 @@ namespace global_planner
                          (direct_support_only_ &&
                           !hasFootprintGroundSupport(
                               support, robot_radius_, support_depth_cells_)))) {
-                        if (failure) *failure = TraversabilityFailure::GroundSupport;
                         return false;
                     }
                 }
