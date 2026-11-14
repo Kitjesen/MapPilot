@@ -156,6 +156,7 @@ namespace global_planner
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
     {
+        planner_results_.clear();
         occupied_blocks_.clear();
         last_occupied_block_ = nullptr;
         endpoint_resolution_ = {};
