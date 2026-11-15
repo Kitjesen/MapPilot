@@ -1813,24 +1813,76 @@ namespace global_planner
             if (failed_point) *failed_point = (from + to) * .5f;
             return false;
         }
-        const double length = (to - from).norm();
-        const int count = std::max(1, static_cast<int>(std::ceil(
-            2.0 * length / octree_->getResolution())));
-        // Callers can reuse endpoints already checked against the same observations.
-        for (int i = endpoints_validated ? 1 : 0; i <= count-(endpoints_validated ? 1 : 0); ++i) {
-            const double t = static_cast<double>(i) / count;
+        const double resolution = octree_->getResolution();
+        const auto delta = to - from;
+        const auto start = worldToGrid(from.x(), from.y(), from.z());
+        const auto direction = [](float value) {
+            return value > 0.0F ? 1 : value < 0.0F ? -1 : 0;
+        };
+        const int step_x = direction(delta.x());
+        const int step_y = direction(delta.y());
+        const int step_z = direction(delta.z());
+        const double infinity = std::numeric_limits<double>::infinity();
+        const auto axis_times = [&](double coordinate, double difference, int cell, int step) {
+            if (step == 0) return std::pair<double, double>{infinity, infinity};
+            const double boundary = static_cast<double>(step > 0 ? cell + 1 : cell) * resolution;
+            return std::pair<double, double>{
+                (boundary - coordinate) / difference, std::abs(resolution / difference)};
+        };
+        auto [next_x, step_time_x] = axis_times(from.x(), delta.x(), start.x, step_x);
+        auto [next_y, step_time_y] = axis_times(from.y(), delta.y(), start.y, step_y);
+        auto [next_z, step_time_z] = axis_times(from.z(), delta.z(), start.z, step_z);
+        int cell_x = start.x;
+        int cell_y = start.y;
+        int cell_z = start.z;
+        double t = 0.0;
+        int interval = 0;
+        while (t < 1.0 - 1e-12) {
+            while (next_x <= t + 1e-12) {
+                cell_x += step_x;
+                next_x += step_time_x;
+            }
+            while (next_y <= t + 1e-12) {
+                cell_y += step_y;
+                next_y += step_time_y;
+            }
+            while (next_z <= t + 1e-12) {
+                cell_z += step_z;
+                next_z += step_time_z;
+            }
+            const double next_t = std::min({1.0, next_x, next_y, next_z});
+            if (next_t <= t + 1e-12) break;
+            ++interval;
+            if (endpoints_validated && interval == 1 && next_t >= 1.0 - 1e-12)
+                break;
+            const double sample_t = 0.5 * (t + next_t);
             const octomap::point3d point(
-                from.x() + t * (to.x() - from.x()),
-                from.y() + t * (to.y() - from.y()),
-                from.z() + t * (to.z() - from.z()));
+                from.x() + sample_t * delta.x(),
+                from.y() + sample_t * delta.y(),
+                from.z() + sample_t * delta.z());
             const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, check_body);
-            if (failure == TraversabilityFailure::None) continue;
+            if (failure == TraversabilityFailure::None) {
+                t = next_t;
+                if (next_x <= t + 1e-12) {
+                    cell_x += step_x;
+                    next_x += step_time_x;
+                }
+                if (next_y <= t + 1e-12) {
+                    cell_y += step_y;
+                    next_y += step_time_y;
+                }
+                if (next_z <= t + 1e-12) {
+                    cell_z += step_z;
+                    next_z += step_time_z;
+                }
+                continue;
+            }
             // A step connects two supported stances. Its body moves continuously,
             // while the observed tread height changes discontinuously. Keep the
             // actual body sweep, but do not require its interpolated height to
             // remain the nominal standing height above either tread.
             if (failure != TraversabilityFailure::GroundSupport ||
-                std::abs(to.z() - from.z()) < 1e-7 || i == 0 || i == count ||
+                std::abs(to.z() - from.z()) < 1e-7 || next_t >= 1.0 - 1e-12 ||
                 queryWorld(point, robot_radius_, false, check_body) != TraversabilityFailure::None) {
                 if (failure_out) *failure_out = failure;
                 if (failed_point) *failed_point = point;
@@ -1840,7 +1892,7 @@ namespace global_planner
             const double lower_z = std::min(from.z(), to.z());
             const double upper_z = std::max(from.z(), to.z());
             const int levels = std::max(1, static_cast<int>(std::ceil(
-                (upper_z - lower_z) / octree_->getResolution())));
+                (upper_z - lower_z) / resolution)));
             for (int level = 0; level <= levels && !supported; ++level) {
                 auto stance = point;
                 stance.z() = static_cast<float>(lower_z +
@@ -1853,6 +1905,19 @@ namespace global_planner
                 if (failure_out) *failure_out = failure;
                 if (failed_point) *failed_point = point;
                 return false;
+            }
+            t = next_t;
+            if (next_x <= t + 1e-12) {
+                cell_x += step_x;
+                next_x += step_time_x;
+            }
+            if (next_y <= t + 1e-12) {
+                cell_y += step_y;
+                next_y += step_time_y;
+            }
+            if (next_z <= t + 1e-12) {
+                cell_z += step_z;
+                next_z += step_time_z;
             }
         }
         return true;
