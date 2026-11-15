@@ -68,6 +68,7 @@ fn close_holes(
     let min_z = *by_z.keys().min().unwrap();
     let max_z = *by_z.keys().max().unwrap();
     let mut candidate_z = BTreeSet::new();
+    // Heights outside these bands have no samples and cannot infer holes.
     for &layer_z in by_z.keys() {
         for offset in -band..=band {
             let z = layer_z.saturating_add(offset);
