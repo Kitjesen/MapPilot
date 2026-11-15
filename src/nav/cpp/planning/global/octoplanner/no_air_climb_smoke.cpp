@@ -282,7 +282,8 @@ int main()
 
     auto support_footprint_options = testOptions();
     support_footprint_options.snap_search_radius_cells = 4;
-    support_footprint_options.robot_radius = 0.1;
+    // A radius greater than one cell must reach the unsupported outside cell.
+    support_footprint_options.robot_radius = 0.31;
 
     const auto unsupported_edge_start = plan(
       map_path.string(),
@@ -294,8 +295,8 @@ int main()
       std::cerr << "unsupported floor-edge start escaped through snapping\n";
       return 27;
     }
-    // The floor ends at iy=8; a two-cell support footprint is supported at
-    // iy=6, whereas the original iy=7 start requires unobserved ground at iy=9.
+    // The floor ends at iy=8; this footprint is supported at iy=6, whereas
+    // the iy=7 start reaches unobserved ground at iy=9.
     const auto support_footprint_result = plan(
       map_path.string(),
       {center(-18), center(6), center(1)},
