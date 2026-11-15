@@ -175,6 +175,14 @@ int32_t lt_mls_artifact_inferred(
     int32_t min_z,
     int32_t max_z);
 
+int32_t lt_mls_artifact_occupied_cells(
+    const LtMlsArtifact* handle,
+    LtMlsBuffer* cells);
+
+int32_t lt_mls_artifact_known_free_cells(
+    const LtMlsArtifact* handle,
+    LtMlsBuffer* cells);
+
 int32_t lt_mls_artifact_height(
     const LtMlsArtifact* handle,
     int32_t x,

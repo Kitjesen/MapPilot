@@ -193,6 +193,7 @@ namespace global_planner
         const bool has_rust = artifact_->rust_surface && artifact_->rust_graph;
         out.value<std::uint8_t>(has_rust ? 1 : 0);
         if (has_rust) {
+            mls::writeSourceMap(out, artifact_->rust_surface->source());
             mls::writeSurfaceMap(out, artifact_->rust_surface->surfaces());
             mls::writeSurfaceMap(out, artifact_->rust_graph->surfaces());
         }
@@ -1910,7 +1911,8 @@ namespace global_planner
 
     bool OctoPlanner3D::isOccupiedCell(const GridIndex & idx) const
     {
-        return artifact_->surface->occupied(idx.x, idx.y, idx.z, idx.z);
+        const auto state = cellState(idx);
+        return state == CellState::Occupied || state == CellState::OccupiedLeafCenter;
     }
 
     bool OctoPlanner3D::isOccupiedLeafCell(const GridIndex & idx) const
@@ -2054,19 +2056,18 @@ namespace global_planner
         if (external_preblocked_cells_.empty()) {
             const int bottom=static_cast<int>(std::floor((p.z()-below+1e-7)/r));
             const int top=static_cast<int>(std::ceil((p.z()+above-1e-7)/r))-1;
-            if (!artifact_->surface->regionOccupied(low.x,low.y,high.x,high.y,bottom,top))
-                return TraversabilityFailure::None;
             for (int x=low.x; x<=high.x; ++x) {
                 const double dx=std::max({x*r-p.x(),0.0,p.x()-(x+1)*r});
                 for (int y=low.y; y<=high.y; ++y) {
                     const double dy=std::max({y*r-p.y(),0.0,p.y()-(y+1)*r});
                     if (dx*dx+dy*dy>radius*radius+1e-9) continue;
-                    auto z=artifact_->surface->below(x,y,top+1);
-                    if (!z || *z<bottom) continue;
-                    if (!start_exemption_) return TraversabilityFailure::OccupiedBody;
-                    for (; z && *z>=bottom; z=artifact_->surface->below(x,y,*z))
-                        if (!start_exemption_({(x+.5)*r,(y+.5)*r,(*z+.5)*r},r))
+                    for (int z=bottom; z<=top; ++z) {
+                        const GridIndex voxel{x,y,z};
+                        if (!isOccupiedCell(voxel)) continue;
+                        if (!start_exemption_ ||
+                            !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r))
                             return TraversabilityFailure::OccupiedBody;
+                    }
                 }
             }
             return TraversabilityFailure::None;

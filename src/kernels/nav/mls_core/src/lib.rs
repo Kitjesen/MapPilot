@@ -1213,6 +1213,42 @@ pub unsafe extern "C" fn lt_mls_artifact_inferred(
 #[no_mangle]
 /// # Safety
 ///
+/// `handle` and `cells` must be valid pointers. The returned buffer is owned
+/// by the caller and must be released with `lt_mls_free_buffer`.
+pub unsafe extern "C" fn lt_mls_artifact_occupied_cells(
+    handle: *const LtMlsArtifactHandle,
+    cells: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null() || cells.is_null() {
+        return -1;
+    }
+    let handle = &*handle;
+    let cells = &mut *cells;
+    lt_mls_free_buffer(cells);
+    put_buffer(handle.state.occupied().to_vec(), cells).map_or(-2, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle` and `cells` must be valid pointers. The returned buffer is owned
+/// by the caller and must be released with `lt_mls_free_buffer`.
+pub unsafe extern "C" fn lt_mls_artifact_known_free_cells(
+    handle: *const LtMlsArtifactHandle,
+    cells: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null() || cells.is_null() {
+        return -1;
+    }
+    let handle = &*handle;
+    let cells = &mut *cells;
+    lt_mls_free_buffer(cells);
+    put_buffer(handle.state.known_free().to_vec(), cells).map_or(-2, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
 /// `handle` and `result` must be valid pointers for the duration of the call.
 pub unsafe extern "C" fn lt_mls_artifact_height(
     handle: *const LtMlsArtifactHandle,

@@ -89,6 +89,32 @@ SurfaceMap readSurfaceMap(lingtu::maps::BinaryReader& in) {
   return surface;
 }
 
+void writeSourceMap(lingtu::maps::BinaryWriter& out, const SourceMap& source) {
+  for (const auto* cells : {&source.occupied, &source.known_free}) {
+    out.value<std::uint64_t>(cells->size());
+    for (const auto& cell : *cells) {
+      out.value<std::int32_t>(cell.x);
+      out.value<std::int32_t>(cell.y);
+      out.value<std::int32_t>(cell.z);
+    }
+  }
+}
+
+SourceMap readSourceMap(lingtu::maps::BinaryReader& in) {
+  SourceMap source;
+  auto read = [&](std::vector<SurfaceCell>& cells) {
+    const auto count = in.count(sizeof(std::int32_t) * 3);
+    cells.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      cells.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
+                       in.value<std::int32_t>()});
+    }
+  };
+  read(source.occupied);
+  read(source.known_free);
+  return source;
+}
+
 PreparedArtifactHandle::~PreparedArtifactHandle() {
   lt_mls_artifact_free(handle_);
 }
@@ -167,6 +193,16 @@ SurfaceMap PreparedArtifactHandle::surfaces() const {
   RustBuffers buffers;
   if (lt_mls_artifact_surfaces(handle_, &buffers.observed, &buffers.inferred) != 0) {
     throw std::runtime_error("Rust MLS artifact surface export failed");
+  }
+  return {copyCells(buffers.observed), copyCells(buffers.inferred)};
+}
+
+SourceMap PreparedArtifactHandle::source() const {
+  if (handle_ == nullptr) throw std::runtime_error("empty Rust MLS artifact handle");
+  RustBuffers buffers;
+  if (lt_mls_artifact_occupied_cells(handle_, &buffers.observed) != 0 ||
+      lt_mls_artifact_known_free_cells(handle_, &buffers.inferred) != 0) {
+    throw std::runtime_error("Rust MLS source export failed");
   }
   return {copyCells(buffers.observed), copyCells(buffers.inferred)};
 }

@@ -20,7 +20,7 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.4";
+constexpr const char* kFormat="lingtu.navigation.prepared.5";
 constexpr std::uint32_t kEndian=0x01020304U;
 struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
 
@@ -41,6 +41,19 @@ struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std:
       static_cast<float>(std::max(0.0, config.max_slope)),
       std::max(0, static_cast<int>(std::ceil(config.max_step_height / resolution))),
       height_stride};
+}
+
+::LtMlsConfig rustSurfaceConfig(
+    const PlannerConfig& config, double resolution) {
+  return {
+      std::max(0, static_cast<int>(std::ceil(
+          (config.support_height_m + std::max(resolution, config.body_clearance_above_m)) /
+          resolution))),
+      static_cast<std::uint32_t>(std::max(0.0, std::ceil(
+          config.surface_closing_radius_m / resolution))),
+      static_cast<std::uint64_t>(std::max(0.0, std::floor(
+          config.surface_max_hole_area_m2 / (resolution * resolution)))),
+      static_cast<float>(config.surface_max_slope)};
 }
 
 Header readHeader(BinaryReader& in) {
@@ -93,12 +106,14 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
     std::shared_ptr<global_planner::mls::PreparedArtifactHandle> rust_surface;
     std::shared_ptr<global_planner::mls::PreparedArtifactHandle> rust_graph;
     if(has_rust) {
+      const auto source=global_planner::mls::readSourceMap(in);
       const auto raw=global_planner::mls::readSurfaceMap(in);
       const auto graph_surface=global_planner::mls::readSurfaceMap(in);
       const auto rust_config=rustGraphConfig(config,map->getResolution());
+      const auto surface_config=rustSurfaceConfig(config,map->getResolution());
       rust_surface=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
-          global_planner::mls::PreparedArtifactHandle::createFromSurface(
-              raw.observed,raw.inferred,rust_config,1));
+          global_planner::mls::PreparedArtifactHandle::create(
+              source.occupied,source.known_free,surface_config,rust_config,1));
       rust_graph=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
           global_planner::mls::PreparedArtifactHandle::createFromSurface(
               graph_surface.observed,graph_surface.inferred,rust_config,1));

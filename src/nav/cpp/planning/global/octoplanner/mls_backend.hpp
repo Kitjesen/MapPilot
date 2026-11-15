@@ -63,8 +63,15 @@ struct SurfaceMap {
   std::vector<SurfaceCell> inferred;
 };
 
+struct SourceMap {
+  std::vector<SurfaceCell> occupied;
+  std::vector<SurfaceCell> known_free;
+};
+
 void writeSurfaceMap(lingtu::maps::BinaryWriter& out, const SurfaceMap& surface);
 SurfaceMap readSurfaceMap(lingtu::maps::BinaryReader& in);
+void writeSourceMap(lingtu::maps::BinaryWriter& out, const SourceMap& source);
+SourceMap readSourceMap(lingtu::maps::BinaryReader& in);
 
 struct RustGraphSummary {
   std::uint64_t nodes{0};
@@ -128,6 +135,7 @@ public:
 
   ArtifactSummary summary() const;
   SurfaceMap surfaces() const;
+  SourceMap source() const;
   std::optional<std::int32_t> below(std::int32_t x, std::int32_t y,
                                     std::int32_t z) const;
   bool inferred(std::int32_t x, std::int32_t y, std::int32_t min_z,
