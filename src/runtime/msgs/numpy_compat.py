@@ -46,6 +46,10 @@ def numpy_import_is_safe() -> bool:
 
     if "numpy" in sys.modules:
         return True
+    # NumPy's Windows CPython 3.13 wheel can pass a child-process probe and
+    # still crash the parent while initializing its dtype registry.
+    if sys.platform == "win32" and sys.version_info >= (3, 13):
+        return False
 
     try:
         completed = subprocess.run(
