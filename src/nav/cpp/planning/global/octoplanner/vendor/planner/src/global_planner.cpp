@@ -11,7 +11,6 @@
 #include <cmath>
 #include <limits>
 #include <queue>
-#include <set>
 #include <stdexcept>
 
 namespace global_planner
@@ -88,7 +87,8 @@ namespace global_planner
             clearMapQueryCaches();
             if (preparation_changed || !artifact_ || !artifact_->surface) {
                 rebuildSurfaceIndex();
-                rebuildSurfaceGraph();
+                artifact_->graph.reset();
+                rebuildRustGraph();
             }
             rebuildExternalPreblockedCells();
             rebuildDerivedLayers();
@@ -179,7 +179,7 @@ namespace global_planner
         } else if (rust_surface && rust_graph) {
             artifact_->rust_surface = std::move(rust_surface);
             artifact_->rust_graph = std::move(rust_graph);
-        } else rebuildSurfaceGraph();
+        } else rebuildRustGraph();
         rebuildExternalPreblockedCells();
         rebuildDerivedLayers();
     }
@@ -1706,31 +1706,8 @@ namespace global_planner
             return;
         }
         const double r = octree_->getResolution();
-        const double surface_headroom = support_height_m_ +
-            std::max(r, body_clearance_above_m_);
-        const auto cells = artifact_->surface->surfaces(surface_headroom);
-        std::unordered_set<lingtu::maps::layers::SurfaceCell,
-                           lingtu::maps::layers::SurfaceCellHash> inferred_set;
-        for (const auto &cell : artifact_->surface->inferredPoints()) {
-            inferred_set.insert(cell);
-        }
-        std::vector<mls::SurfaceCell> prepared_observed;
-        std::vector<mls::SurfaceCell> prepared_inferred;
         std::vector<mls::SurfaceCell> observed;
         std::vector<mls::SurfaceCell> inferred;
-        prepared_observed.reserve(cells.size());
-        prepared_inferred.reserve(inferred_set.size());
-        observed.reserve(cells.size());
-        inferred.reserve(inferred_set.size());
-        for (const auto &cell : cells) {
-            const mls::SurfaceCell converted{cell.x, cell.y, cell.z};
-            const bool is_inferred = inferred_set.find(cell) != inferred_set.end();
-            if (is_inferred) prepared_inferred.push_back(converted);
-            else prepared_observed.push_back(converted);
-            if (!surfaceStance(cell.x, cell.y, cell.z)) continue;
-            if (is_inferred) inferred.push_back(converted);
-            else observed.push_back(converted);
-        }
         const int stride = std::max(1, static_cast<int>(std::ceil(search_resolution_m_ / r)));
         const int height_stride = max_slope_ > 0.0
             ? std::max(stride, static_cast<int>(std::ceil(1.0 / max_slope_))) : stride;
@@ -1756,66 +1733,29 @@ namespace global_planner
             mapCells(*octree_, true), mapCells(*octree_, false),
             surface_config, rust_config, 1);
         const auto raw_surface = raw_handle.surfaces();
-        const auto normalized = [](const std::vector<mls::SurfaceCell> &cells) {
-            std::set<std::array<int, 3>> result;
-            for (const auto &cell : cells) result.insert({cell.x, cell.y, cell.z});
-            return result;
-        };
-        const auto raw_observed = normalized(raw_surface.observed);
-        const auto expected_observed = normalized(prepared_observed);
-        const auto raw_inferred = normalized(raw_surface.inferred);
-        const auto expected_inferred = normalized(prepared_inferred);
-        const bool raw_matches = raw_observed == expected_observed &&
-            raw_inferred == expected_inferred;
-        std::set<std::array<int, 3>> raw_only;
-        std::set<std::array<int, 3>> expected_only;
-        std::set_difference(raw_observed.begin(), raw_observed.end(),
-                            expected_observed.begin(), expected_observed.end(),
-                            std::inserter(raw_only, raw_only.end()));
-        std::set_difference(expected_observed.begin(), expected_observed.end(),
-                            raw_observed.begin(), raw_observed.end(),
-                            std::inserter(expected_only, expected_only.end()));
         artifact_->rust_surface = std::make_shared<mls::PreparedArtifactHandle>(
             std::move(raw_handle));
+        const double surface_headroom = support_height_m_ +
+            std::max(r, body_clearance_above_m_);
+        const auto cells = artifact_->surface->surfaces(surface_headroom);
+        std::unordered_set<lingtu::maps::layers::SurfaceCell,
+                           lingtu::maps::layers::SurfaceCellHash> inferred_set;
+        for (const auto &cell : artifact_->surface->inferredPoints()) {
+            inferred_set.insert(cell);
+        }
+        observed.reserve(cells.size());
+        inferred.reserve(inferred_set.size());
+        for (const auto &cell : cells) {
+            const mls::SurfaceCell converted{cell.x, cell.y, cell.z};
+            if (!surfaceStance(cell.x, cell.y, cell.z)) continue;
+            if (inferred_set.find(cell) != inferred_set.end()) inferred.push_back(converted);
+            else observed.push_back(converted);
+        }
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
             mls::PreparedArtifactHandle::createFromSurface(observed, inferred, rust_config, 1));
-        printf("OctoPlanner3D Rust surface provider: raw_match=%s observed=%zu inferred=%zu "
-               "graph_cells=%zu\n",
-               raw_matches ? "true" : "false", raw_surface.observed.size(),
-               raw_surface.inferred.size(), observed.size() + inferred.size());
-        if (!raw_matches) {
-            std::set<std::array<int, 3>> raw_inferred_only;
-            std::set<std::array<int, 3>> expected_inferred_only;
-            std::set_difference(raw_inferred.begin(), raw_inferred.end(),
-                                expected_inferred.begin(), expected_inferred.end(),
-                                std::inserter(raw_inferred_only, raw_inferred_only.end()));
-            std::set_difference(expected_inferred.begin(), expected_inferred.end(),
-                                raw_inferred.begin(), raw_inferred.end(),
-                                std::inserter(expected_inferred_only, expected_inferred_only.end()));
-            printf("OctoPlanner3D Rust surface diff: raw_only=%zu expected_only=%zu "
-                   "raw_inferred_only=%zu expected_inferred_only=%zu\n",
-                   raw_only.size(), expected_only.size(), raw_inferred_only.size(),
-                   expected_inferred_only.size());
-            if (!raw_only.empty()) {
-                printf("OctoPlanner3D Rust surface raw-only first: [%d,%d,%d]\n",
-                       raw_only.begin()->at(0), raw_only.begin()->at(1), raw_only.begin()->at(2));
-            }
-            if (!expected_only.empty()) {
-                printf("OctoPlanner3D Rust surface expected-only first: [%d,%d,%d]\n",
-                       expected_only.begin()->at(0), expected_only.begin()->at(1),
-                       expected_only.begin()->at(2));
-            }
-            if (!raw_inferred_only.empty()) {
-                printf("OctoPlanner3D Rust surface raw-inferred-only first: [%d,%d,%d]\n",
-                       raw_inferred_only.begin()->at(0), raw_inferred_only.begin()->at(1),
-                       raw_inferred_only.begin()->at(2));
-            }
-            if (!expected_inferred_only.empty()) {
-                printf("OctoPlanner3D Rust surface expected-inferred-only first: [%d,%d,%d]\n",
-                       expected_inferred_only.begin()->at(0), expected_inferred_only.begin()->at(1),
-                       expected_inferred_only.begin()->at(2));
-            }
-        }
+        printf("OctoPlanner3D Rust surface provider: observed=%zu inferred=%zu graph_cells=%zu\n",
+               raw_surface.observed.size(), raw_surface.inferred.size(),
+               observed.size() + inferred.size());
     }
 
     void OctoPlanner3D::rebuildSurfaceGraph()
@@ -1928,13 +1868,21 @@ namespace global_planner
             return value >= 0 ? value / 16 : (value + 1) / 16 - 1;
         };
         const GridIndex block_index{block_axis(idx.x), block_axis(idx.y), block_axis(idx.z)};
-        if (!last_occupied_block_ || !(last_occupied_block_index_ == block_index)) {
-            last_occupied_block_ = &occupied_blocks_.try_emplace(block_index).first->second;
-            last_occupied_block_index_ = block_index;
+        auto block = occupied_blocks_.find(block_index);
+        if (block == occupied_blocks_.end()) {
+            block = occupied_blocks_.emplace(block_index, OccupancyBlock{}).first;
+        }
+        last_occupied_block_ = &block->second;
+        last_occupied_block_index_ = block_index;
+        const int local_x = idx.x - block_index.x * 16;
+        const int local_y = idx.y - block_index.y * 16;
+        const int local_z = idx.z - block_index.z * 16;
+        if (local_x < 0 || local_x >= 16 || local_y < 0 || local_y >= 16 ||
+            local_z < 0 || local_z >= 16) {
+            return CellState::Unknown;
         }
         const auto offset = static_cast<std::size_t>(
-            ((idx.x - block_index.x * 16) * 16 + idx.y - block_index.y * 16) * 16 +
-            idx.z - block_index.z * 16);
+            (local_x * 16 + local_y) * 16 + local_z);
         auto & cached = (*last_occupied_block_)[offset];
         if (cached != CellState::Unqueried) return cached;
         cached = CellState::Unknown;

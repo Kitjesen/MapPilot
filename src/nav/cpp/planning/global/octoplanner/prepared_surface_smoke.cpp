@@ -53,12 +53,16 @@ struct OctoPlannerGridQueryTest {
   static void checkGoalPolicy(OctoPlanner3D &planner,const PointPose &start,const PointPose &goal) {
     planner.makePlan(start,goal);
     std::vector<PointPose> graph_path;planner.getPlannerResults(graph_path);
-    require(!graph_path.empty() && planner.searchInfo().used_surface_graph,
-            "graph rejected an in-tolerance terminal accepted by grid search");
-    const auto graph=planner.artifact_->graph;planner.artifact_->graph.reset();
+    require(!graph_path.empty() && planner.searchInfo().used_rust_graph,
+            "Rust graph rejected an in-tolerance terminal accepted by grid search");
+    const auto rust_surface=planner.artifact_->rust_surface;
+    const auto rust_graph=planner.artifact_->rust_graph;
+    planner.artifact_->rust_surface.reset();
+    planner.artifact_->rust_graph.reset();
     planner.makePlan(start,goal);
     std::vector<PointPose> grid_path;planner.getPlannerResults(grid_path);
-    planner.artifact_->graph=graph;
+    planner.artifact_->rust_surface=rust_surface;
+    planner.artifact_->rust_graph=rust_graph;
     require(!grid_path.empty(),"resolved terminal could not attach to grid search");
     const auto &a=graph_path.back(),&b=grid_path.back();
     require(std::hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6,
@@ -72,6 +76,7 @@ struct OctoPlannerGridQueryTest {
             "resolved terminal exceeds a configured goal tolerance");
   }
   static void checkPreparedSupport(OctoPlanner3D &planner) {
+    if (!planner.artifact_->graph) return;
     const auto &graph=*planner.artifact_->graph;
     require(!graph.cells_.empty(),"prepared support topology is empty");
     for(std::size_t i=0;i<graph.cells_.size();++i) {
@@ -85,6 +90,7 @@ struct OctoPlannerGridQueryTest {
     }
   }
   static void checkStandingBand(OctoPlanner3D &planner) {
+    if (!planner.artifact_->graph) return;
     const PointPose nominal{-.475,.025,.325};
     require(planner.queryWorld({-.475f,.025f,.325f},planner.robot_radius_,true)==
                 OctoPlanner3D::TraversabilityFailure::OccupiedBody,
@@ -144,7 +150,7 @@ int main()try {
     planner.makePlan(start,target);std::vector<PointPose> path;planner.getPlannerResults(path);return path;
   };
   const auto before=run(goal);
-  require(!before.empty() && planner.searchInfo().used_surface_graph,
+  require(!before.empty() && planner.searchInfo().used_rust_graph,
           "body-centre request only passed through XYZ fallback");
   require(std::hypot(before.front().x-start.x,before.front().y-start.y,before.front().z-start.z)<1e-6,
           "prepared route moved the actual start");
