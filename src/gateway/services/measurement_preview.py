@@ -5,7 +5,7 @@ from __future__ import annotations
 from itertools import pairwise
 from typing import Any
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from gateway.services.measurements import Measurement
 from runtime.msgs.measurement import AcousticMeasurement, ThermalMeasurement

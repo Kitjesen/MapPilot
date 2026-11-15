@@ -6,7 +6,7 @@ import json
 import math
 from dataclasses import dataclass, field
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from decision.vision.vlm_scene import encode_image_b64
 

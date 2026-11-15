@@ -8,7 +8,7 @@ from dataclasses import asdict
 from math import isfinite
 from typing import Any
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from runtime.contracts.inspection_evidence import _validate_measurement_metadata
 from runtime.msgs.measurement import AcousticMeasurement, MeasurementIdentity, SemanticMeasurement, ThermalMeasurement
