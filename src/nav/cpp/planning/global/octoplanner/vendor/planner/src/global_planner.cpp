@@ -825,8 +825,36 @@ namespace global_planner
             body_clearance_above_m_ > 0.0) {
             const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
             // The actual start may contain the robot or incomplete ground observations.
-            const auto origin=queryWorld(from,robot_radius_,ground_support_,!actual_start);
+            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+            if (actual_start && ground_support_) {
+                if (support_height_m_ > 0.0 && surface_index_->observedSurfaces() == 0U)
+                    return false;
+                const auto cell = worldToGrid(from.x(), from.y(), from.z());
+                const auto [minimum_depth, maximum_depth] =
+                    supportDepthRange(support_depth_cells_);
+                const bool robot_evidence = hasOccupiedNearZ(cell, 2);
+                bool support_found = false;
+                for (auto floor = surface_index_->below(cell.x, cell.y, cell.z);
+                     floor; floor = surface_index_->below(cell.x, cell.y, *floor)) {
+                    if (*floor >= cell.z - maximum_depth &&
+                        *floor <= cell.z - minimum_depth &&
+                        (robot_evidence || surface_index_->exposed(
+                            cell.x, cell.y, *floor,
+                            static_cast<int>(std::ceil(
+                                (support_height_m_ + std::max(
+                                    octree_->getResolution(), body_clearance_above_m_)) /
+                                octree_->getResolution())),
+                            !direct_support_only_))) {
+                        support_found = true;
+                        break;
+                    }
+                }
+                if (!support_found && surface_index_->below(cell.x, cell.y, cell.z)) {
+                    if (failure) *failure = TraversabilityFailure::GroundSupport;
+                    return false;
+                }
+            }
             if(from==to)return true;
             const auto target=queryWorld(to,robot_radius_,ground_support_);
             if(target!=TraversabilityFailure::None){if(failure)*failure=target;return false;}
@@ -844,8 +872,16 @@ namespace global_planner
                 from.x()+t*(to.x()-from.x()), from.y()+t*(to.y()-from.y()),
                 from.z()+t*(to.z()-from.z()));
             if(actual_start&&(i==0||from==to)) {
-                const auto origin=queryWorld(from,robot_radius_,ground_support_,false);
+                const auto origin=queryWorld(from,robot_radius_,false,false);
                 if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+                if (ground_support_) {
+                    const auto support = worldToGrid(from.x(), from.y(), from.z());
+                    if (surface_index_->below(support.x, support.y, support.z) &&
+                        !hasFootprintGroundSupport(
+                            support, robot_radius_, support_depth_cells_)) {
+                        return false;
+                    }
+                }
                 continue;
             }
             if (!isPlanningCellTraversableDetailed(
