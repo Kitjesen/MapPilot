@@ -16,6 +16,7 @@ pub fn extract_surfaces_with_free(
 ) -> SurfaceMap {
     let columns = columns(occupied);
     let mut observed = Vec::new();
+    // Keep height layers ordered so hole closing only visits the slope band.
     let mut by_z: BTreeMap<i32, Vec<SurfaceCell>> = BTreeMap::new();
 
     for (&(x, y), levels) in &columns {
