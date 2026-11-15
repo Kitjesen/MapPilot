@@ -620,6 +620,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     // A small positional correction follows the active route without adding
     // curvature feed-forward from a terminal spline.
     follower_state.desiredHeading = planning_body.yaw;
+    follower_state.desiredYawRate = 0.0;
   }
   follower_state.params.maxSpeed = active_max_speed_mps_;
   follower_state.params.minSpeed = std::min(follower_state.params.minSpeed, active_max_speed_mps_);
