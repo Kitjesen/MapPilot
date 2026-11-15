@@ -482,7 +482,9 @@ class GatewayModule(Module, layer=6):
     def stop(self) -> None:
         stop_background_threads(self)
         self._recording.close_streams()
-        self._imu_monitor.close()
+        imu_monitor = self.__dict__.get("_imu_monitor")
+        if imu_monitor is not None:
+            imu_monitor.close()
         shutdown_teleop(self)
         super().stop()
 
