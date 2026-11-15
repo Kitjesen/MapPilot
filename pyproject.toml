@@ -21,6 +21,7 @@ dependencies = [
 sim-mujoco = [
     "mujoco>=3.2",
     "mujoco-lidar==0.3.3",
+    "jsonschema>=4.0",
     "onnxruntime>=1.17,<1.24; python_version == '3.10'",
     "onnxruntime>=1.24; python_version >= '3.11'",
 ]

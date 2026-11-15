@@ -2605,6 +2605,7 @@ perception = [
     { name = "ultralytics" },
 ]
 sim-mujoco = [
+    { name = "jsonschema" },
     { name = "mujoco" },
     { name = "mujoco-lidar" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2612,6 +2613,7 @@ sim-mujoco = [
 ]
 sim-recording = [
     { name = "imageio" },
+    { name = "jsonschema" },
     { name = "mujoco" },
     { name = "mujoco-lidar" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2638,6 +2640,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'gateway'" },
     { name = "imageio", marker = "extra == 'sim-recording'", specifier = ">=2.31" },
     { name = "jieba", marker = "extra == 'nlp'", specifier = ">=0.42" },
+    { name = "jsonschema", marker = "extra == 'sim-mujoco'", specifier = ">=4.0" },
     { name = "lingtu", extras = ["gateway"], marker = "extra == 'dev'" },
     { name = "lingtu", extras = ["gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector"], marker = "extra == 'all'" },
     { name = "lingtu", extras = ["sim-mujoco", "vision"], marker = "extra == 'sim-recording'" },
