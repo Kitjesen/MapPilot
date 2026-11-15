@@ -104,6 +104,8 @@ struct GlobalPlanRequest {
 struct GlobalPlanResult {
   bool ok{false};
   bool reached_goal{false};
+  bool used_surface_graph{false};
+  bool used_rust_graph{false};
   bool cancelled{false};
   std::string failure_reason{};
   double goal_error_m{-1.0};

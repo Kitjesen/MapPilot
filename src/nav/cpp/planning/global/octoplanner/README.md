@@ -7,9 +7,60 @@ default 3D global planner.
 navd
   -> GlobalPlanRequest / GlobalPlanResult
   -> octoplanner3d_runtime
+  -> PlannerArtifact (surface + sparse graph)
   -> vendor/planner
   -> system liboctomap
 ```
+
+The prepared state follows the same ownership split as the current DimOS MLS
+planner, while remaining a native C++ implementation:
+
+```text
+OctoMap snapshot
+  -> SurfaceIndex       observed and inferred multi-level cells
+  -> SurfaceGraph       sparse nodes and corridor edges
+  -> PlannerArtifact    one map-bound asset reused by route queries
+  -> OctoPlanner3D      endpoint attachment and route search
+```
+
+`PlannerArtifact` owns the prepared surface and graph together. A map or
+preparation-geometry change rebuilds that asset; query-only changes such as
+goal tolerance, snap radius, iteration budget, or same-floor preference update
+the existing graph query. This avoids rebuilding static geometry for every
+goal and leaves a small boundary for a future MLS or tomography backend to
+replace only the global route source.
+
+The Rust graph backend is built by this CMake target. The dependency-free
+`lingtu_mls_core` crate exposes multi-level surface extraction and a native
+sparse graph through a small C ABI. Its graph core follows the DimOS shape with
+four-neighbor surface edges, wall-distance node placement, a multi-source
+Voronoi partition, and predecessor corridors. On the fixed arrival-box map,
+with DimOS-compatible floor step conversion, the Rust native graph reports
+29 nodes, 45 edges, and 2 components. DimOS reports 29 nodes, 47 edges, and 2
+components. The current C++ production graph reports 36 nodes, 43 edges, and
+9 components. Rust corridors pass the same C++ endpoint, body, support, step,
+slope, and continuous sweep checks after geometry-aware edge filtering.
+
+The production `PlannerArtifact` now holds a Rust graph handle. `startPlan()`
+queries Rust first, converts its cells to executable body poses, and sends the
+candidate through the existing C++ metric, support, body, step, slope, and
+continuous-sweep checks. A rejected Rust route falls back to the C++ graph.
+The C++ `SurfaceIndex` and `SurfaceGraph` remain for surface queries, fallback,
+and cache compatibility until Rust surface queries and cache restore are matched.
+Support `below` and inferred-surface lookups already read the Rust handle. Raw
+OctoMap occupancy and continuous world-height fitting remain native geometry data.
+Route height fitting now also reads the Rust `height` query. When the geometry
+adapter rejects a Rust route, the request uses the existing C++ fallback or the
+outer replanning cycle. Dynamic path truncation belongs to the local execution
+layer and follows the DimOS `truncate_to_safe` boundary.
+The migration boundary and removal order are recorded in
+`docs/design/mls-rust-migration-20261115.md`.
+
+`PreparedArtifactHandle` holds a Rust-side `PlannerState` through the C ABI.
+The migration smoke test covers artifact creation, surface and graph export,
+graph-only query, limited endpoint query, regional update, stable revision, and
+destruction. Production `PlannerSession` still keeps the C++ surface and graph
+as the geometry/query fallback while Rust is the first graph candidate.
 
 `vendor/` contains only the four OctoPlanner3D files used by the product:
 the constrained planner header/source and the optional offline PCD converter
@@ -57,8 +108,9 @@ This changes the derived graph, not the saved OctoMap or the completion limits.
 
 ## Persistent preparation and query controls
 
-`PlannerSession` saves completed support columns, occupancy lookup blocks and
-the validated surface graph in `<map-directory>/.nav/profile-N.bin` after the
+`PlannerSession` saves the completed `PlannerArtifact` (support columns,
+occupancy lookup blocks, and the validated sparse graph) in
+`<map-directory>/.nav/profile-N.bin` after the
 first successful preparation. Later processes restore that artifact instead
 of fitting the same holes and constructing the same graph again. Preparation
 is lazy at navigation startup; saving a new raw map alone does not generate
@@ -87,6 +139,10 @@ validation during graph search. New endpoint connectors and smoothing chords
 still receive full 3D checks, as does the assembled route before smoothing.
 Requests carrying no-go regions or a temporary overlay retain full per-edge
 checks. This optimization adds no real-time occupancy input to global planning.
+The current field map pipeline still replaces the artifact for a changed
+OctoMap; it does not yet provide map-cell deltas to this planner. The boundary
+is ready for a regional update API, but claiming incremental updates before
+that input exists would be false.
 
 The matched 903 replay, graph visualization, cache roundtrip and native snapshot
 test are recorded in `artifacts/nav/903-persistent-20261110/README.md`. These are

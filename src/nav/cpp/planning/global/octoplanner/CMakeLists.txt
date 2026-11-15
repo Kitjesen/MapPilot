@@ -92,8 +92,49 @@ if(NOT TARGET lingtu_maps_surface)
   target_link_libraries(lingtu_maps_surface PUBLIC "$<BUILD_INTERFACE:lingtu_settings>" octomap_vendor octomath_vendor)
 endif()
 
+set(LINGTU_MLS_CORE_DIR "${LINGTU_NAV_CPP_DIR}/../../kernels/nav/mls_core")
+find_program(CARGO_EXECUTABLE cargo REQUIRED)
+set(LINGTU_MLS_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo-mls")
+if(WIN32)
+  set(LINGTU_MLS_LIBRARY "${LINGTU_MLS_TARGET_DIR}/release/lingtu_mls_core.lib")
+else()
+  set(LINGTU_MLS_LIBRARY "${LINGTU_MLS_TARGET_DIR}/release/liblingtu_mls_core.a")
+endif()
+add_custom_command(
+  OUTPUT "${LINGTU_MLS_LIBRARY}"
+  COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${LINGTU_MLS_TARGET_DIR}"
+          "${CARGO_EXECUTABLE}" build --release --manifest-path "${LINGTU_MLS_CORE_DIR}/Cargo.toml"
+  DEPENDS
+    "${LINGTU_MLS_CORE_DIR}/Cargo.toml"
+    "${LINGTU_MLS_CORE_DIR}/src/lib.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/adjacency.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/corridor.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/edge_repair.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/edges.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/nodes.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/node_relocation.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/surfaces.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/stable_graph.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/voronoi_repair.rs"
+    "${LINGTU_MLS_CORE_DIR}/include/lingtu_mls_core.h"
+  VERBATIM)
+add_custom_target(lingtu_mls_core_build DEPENDS "${LINGTU_MLS_LIBRARY}")
+add_library(lingtu_mls_core STATIC IMPORTED GLOBAL)
+set_target_properties(lingtu_mls_core PROPERTIES
+  IMPORTED_LOCATION "${LINGTU_MLS_LIBRARY}"
+  INTERFACE_INCLUDE_DIRECTORIES "${LINGTU_MLS_CORE_DIR}/include")
+if(WIN32)
+  set_property(TARGET lingtu_mls_core APPEND PROPERTY
+    INTERFACE_LINK_LIBRARIES "ws2_32;userenv;bcrypt;ntdll")
+elseif(UNIX)
+  set_property(TARGET lingtu_mls_core APPEND PROPERTY
+    INTERFACE_LINK_LIBRARIES "dl;pthread;m")
+endif()
+add_dependencies(lingtu_mls_core lingtu_mls_core_build)
+
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
+  mls_backend.cpp
   surface_graph.cpp
   route_smoothing.cpp
 )
@@ -106,6 +147,7 @@ target_include_directories(octoplanner3d_global_planner
 )
 target_link_libraries(octoplanner3d_global_planner
   PUBLIC lingtu_maps_surface
+  PUBLIC lingtu_mls_core
   PUBLIC "$<BUILD_INTERFACE:lingtu_settings>"
   PUBLIC
     octomap_vendor
@@ -215,6 +257,13 @@ set_target_properties(octoplanner3d_verify_path PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 
+add_executable(octoplanner3d_mls_surface_compare mls_surface_compare.cpp)
+target_link_libraries(octoplanner3d_mls_surface_compare PRIVATE octoplanner3d_global_planner)
+set_target_properties(octoplanner3d_mls_surface_compare PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
+
 add_executable(octoplanner3d_make_test_octomap make_test_octomap.cpp)
 target_link_libraries(octoplanner3d_make_test_octomap
   PRIVATE
@@ -232,6 +281,9 @@ if(BUILD_TESTING)
   add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp)
   target_link_libraries(octoplanner3d_surface_graph_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_surface_graph_smoke COMMAND octoplanner3d_surface_graph_smoke)
+  add_executable(octoplanner3d_mls_backend_smoke mls_backend_smoke.cpp)
+  target_link_libraries(octoplanner3d_mls_backend_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_mls_backend_smoke COMMAND octoplanner3d_mls_backend_smoke)
   add_executable(octoplanner3d_route_smoothing_smoke route_smoothing_smoke.cpp)
   target_link_libraries(octoplanner3d_route_smoothing_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_route_smoothing_smoke COMMAND octoplanner3d_route_smoothing_smoke)
