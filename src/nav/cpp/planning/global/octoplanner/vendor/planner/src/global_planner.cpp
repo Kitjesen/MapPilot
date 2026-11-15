@@ -1861,6 +1861,8 @@ namespace global_planner
             if (endpoints_validated && interval == 1 && next_t >= 1.0 - 1e-12)
                 break;
             const double sample_t = 0.5 * (t + next_t);
+            // shortcut: query one point per crossed voxel, upgrade to interval
+            // occupancy only if field replays expose thin intra-voxel obstacles.
             const octomap::point3d point(
                 from.x() + sample_t * delta.x(),
                 from.y() + sample_t * delta.y(),
