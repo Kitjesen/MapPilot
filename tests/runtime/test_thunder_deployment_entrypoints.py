@@ -275,7 +275,7 @@ def test_field_driver_service_is_native_product_entrypoint() -> None:
     assert "${LINGTU_REPO}/bin/lingtu_driver" in runner
     assert 'exec "${BIN}"' in runner
     assert "find_package(CycloneDDS REQUIRED)" in cmake
-    assert "find_package(BrainstemClient 0.6 CONFIG REQUIRED)" in cmake
+    assert "find_package(BrainstemClient CONFIG REQUIRED)" in cmake
     assert "brainstem::client" in cmake
     assert "test_driver_core" in cmake
     assert "test_driver_io" in cmake
@@ -284,8 +284,9 @@ def test_field_driver_service_is_native_product_entrypoint() -> None:
     assert "grpc::" not in doso
     assert "best_effort_stop(ActionReason::Fault)" in source
     assert "best_effort_stop(ActionReason::Shutdown)" in source
-    assert "dropped_disconnected" in source
-    assert "core.poll(now)" in source
+    assert "backend_errors" in source
+    assert "stop_output(stats.control.reason, \"refresh\"" in source
+    assert "core.take(send_time)" in source
     assert "cmd_vel_writer_gate.update(dds.matchedCommandWriters())" in source
     assert "if (!writer_decision.ready)" in source
     assert "body->stop()" in source
@@ -1077,8 +1078,8 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     bootstrap = _read("src/nav/cpp/endpoint/nav/main.cpp")
     loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
     loop_context = _read("src/nav/cpp/endpoint/nav/app/loop.hpp")
-    controller = _read("src/nav/cpp/endpoint/nav/app/navigation.cpp")
-    terminal = _read("src/nav/cpp/endpoint/nav/app/goal/terminal.cpp")
+    controller = _read("src/nav/cpp/endpoint/nav/app/goal/runtime.cpp")
+    terminal = controller
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
     callback = bootstrap.split("goal_plan_actions.publish_status", 1)[1].split(
@@ -1093,10 +1094,10 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "dds.writeNavigationGoalStatus" not in bootstrap
     assert "nav/status/navigation_goal_status_outbox.cpp" in cmake
     assert "nav/status/goal_terminal_status_delivery.cpp" in cmake
-    assert "nav/app/navigation.cpp" in cmake
-    assert "NavigationRuntimeController navigation_runtime_controller" in bootstrap
-    assert "NavigationRuntimeController &navigation_runtime_controller;" in loop_context
-    assert "auto &runtime = ctx.navigation_runtime_controller;" in loop
+    assert "nav/app/goal/runtime.cpp" in cmake
+    assert "GoalReplanRuntimeCoordinator" in bootstrap
+    assert "GoalReplanRuntimeCoordinator &goal_replan_runtime;" in loop_context
+    assert "auto &runtime = replan;" in loop
     assert "runtime.advanceFrame(runtime_frame, runtime_actions)" in loop
 
     for old_bypass in (
@@ -1116,30 +1117,30 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     ):
         assert controller_owned_operation not in loop
 
-    frame_lifecycle = controller.split("NavigationRuntimeController::advanceFrame", 1)[1].split(
-        "bool NavigationRuntimeController::terminalPending", 1
+    frame_lifecycle = controller.split("GoalReplanRuntimeCoordinator::advanceFrame", 1)[1].split(
+        "NavigationRuntimeInterruptionResult GoalReplanRuntimeCoordinator::interruptAndService", 1
     )[0]
     ordered_frame_steps = (
-        "goal_replan_runtime_.advancePlanningCycle(frame)",
-        "completeTerminal(result.planning_result)",
+        "result.planning_result = advancePlanningCycle(frame)",
+        "serviceTerminal(result.planning_result)",
         "actions.complete_endpoint_work_before_autonomy(result.planning_result)",
         "goal_plan_.snapshot()",
         "actions.run_autonomy(pre_autonomy_goal_snapshot)",
-        "goal_replan_runtime_.handleAutonomyOutcome(",
+        "handleAutonomyOutcome(",
         "actions.apply_autonomy_outputs(runtime_outcome)",
-        "completeTerminal(runtime_outcome)",
-        "goal_replan_runtime_.drainPendingCycle(frame)",
+        "serviceTerminal(runtime_outcome)",
+        "result.pending_result = drainPendingCycle(frame)",
     )
     cursor = 0
     for step in ordered_frame_steps:
         position = frame_lifecycle.find(step, cursor)
         assert position >= 0, f"missing ordered navigation runtime step: {step}"
         cursor = position + len(step)
-    assert "if (!goal_replan_runtime_.terminalPending())" in frame_lifecycle
+    assert "if (!terminalPending())" in frame_lifecycle
 
-    terminal_advance = terminal.split("GoalTerminal::advance(", 1)[1].split(
-        "GoalTerminal::stopPending", 1
-    )[0]
+    terminal_advance = terminal.split(
+        "GoalReplanRuntimeCoordinator::serviceTerminal", 1
+    )[1].split("MotionStopResult GoalReplanRuntimeCoordinator::commitRelated", 1)[0]
     ordered_ticket_steps = (
         "delivery_.stage(",
         "delivery_.markCommitted(",
@@ -1160,11 +1161,10 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
     assert "goal_plan.deferAbort" not in inspection_stop
     assert "GoalReplanRuntimeInterruption::kInspectionPause" in inspection_stop
     assert "GoalReplanRuntimeInterruption::kInspectionCancel" in inspection_stop
-    assert "navigation_runtime_controller.interruptRelated(" in inspection_stop
-    assert "goal_terminal_.commitRelated(goal_replan_runtime_.interrupt(" in controller
-    related_commit = terminal.split("GoalTerminal::commitRelated(", 1)[1].split(
-        "GoalTerminal::stopPending", 1
-    )[0]
+    assert "goal_replan_runtime.interruptRelated(" in inspection_stop
+    related_commit = terminal.split(
+        "MotionStopResult GoalReplanRuntimeCoordinator::commitRelated", 1
+    )[1].split("MotionStopTerminalBarrierResult GoalReplanRuntimeCoordinator::stopPendingTerminal", 1)[0]
     assert "delivery_.stage(" in related_commit
     assert "delivery_.markCommitted(" in related_commit
     # The ordinary MotionStop safety seam remains intentionally distinct from
@@ -1174,7 +1174,7 @@ def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle()
 
 def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_goals() -> None:
     loop = _read("src/nav/cpp/endpoint/nav/app/loop.cpp")
-    terminal = _read("src/nav/cpp/endpoint/nav/app/goal/terminal.cpp")
+    terminal = _read("src/nav/cpp/endpoint/nav/app/goal/runtime.cpp")
 
     assert "evaluateGoalTerminalIngress" in loop
     for ingress in (
@@ -1198,8 +1198,8 @@ def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_go
         assert ingress in loop
     assert "k" + "Legacy" not in loop
 
-    assert "stop_.stopPreservingGoalTerminal" in terminal
-    assert "stop_.estopPreservingGoalTerminal" in terminal
+    assert "motion_stop_.stopPreservingGoalTerminal" in terminal
+    assert "motion_stop_.estopPreservingGoalTerminal" in terminal
     assert "motion_stop.stopPreservingGoalTerminal" not in loop
     assert "motion_stop.estopPreservingGoalTerminal" not in loop
     assert "inspection_commands.reject" in loop
@@ -1653,8 +1653,9 @@ def test_product_switch_uses_gateway_availability_before_runtime_readiness() -> 
     assert "service_spec(service)" in runner
     assert "http_check=True" in runner
     assert '"http://127.0.0.1:5050/ready"' in runner
-    assert 'for field in ("data_ready", "non_motion_safe")' in runner
-    assert 'for field in ("failed_modules", "critical_failed_modules")' in runner
+    assert 'payload.get("startup_state") == "ready"' in runner
+    assert "http_startup_not_ready:" in runner
+    assert "status_file_stale:" in runner
 
 
 def test_product_nav_switch_failure_never_commits_current_run() -> None:
