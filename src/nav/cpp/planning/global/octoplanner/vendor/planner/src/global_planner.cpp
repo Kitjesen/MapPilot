@@ -1791,7 +1791,9 @@ namespace global_planner
         if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
         const auto started=std::chrono::steady_clock::now();
         const double r=octree_->getResolution();
-        const auto cells=artifact_->surface->surfaces(r);
+        const double surface_headroom = support_height_m_ +
+            std::max(r, body_clearance_above_m_);
+        const auto cells=artifact_->surface->surfaces(surface_headroom);
 
         rebuildRustGraph();
 

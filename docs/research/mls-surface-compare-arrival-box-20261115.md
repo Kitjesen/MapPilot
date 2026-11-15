@@ -164,6 +164,10 @@ Rust 图接入之前却用单个地图分辨率再次读取表面。两者不一
 不同的表面集合。Rust 接入现在复用准备阶段的净空，并直接从同一份 OctoMap
 occupied/free leaves 构造 `PreparedArtifactHandle`。
 
+C++ `SurfaceGraph` 的输入也改为同一个准备净空。随后仍由
+`surfaceStance()` 和 body geometry 过滤可执行节点，这是执行约束产生的节点数量
+差异，不再是表面层选择差异。
+
 同图 A/B 结果：
 
 | 地图 | raw provider | observed / inferred | 图与 C++ SurfaceIndex | 几何复核 |
