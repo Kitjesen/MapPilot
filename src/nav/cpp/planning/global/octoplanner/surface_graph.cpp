@@ -424,11 +424,13 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
     const EdgeCheck &check,const CancelCheck &cancelled,int &iterations,double upper,
     const EdgeCheck &prepared_edge_check) const {
   struct State {
-    double cost;
-    int parent;
-    int origin;
+    double cost{infinity};
+    int parent{-1};
+    int origin{-1};
   };
-  std::unordered_map<int,State> states;
+  // Cells already have stable indices. A dense table avoids a hash allocation
+  // for every local attachment query.
+  std::vector<State> states(cells_.size());
   std::priority_queue<QueueNode,std::vector<QueueNode>,QueueNodeCompare> queue;
   const auto estimate=[&](int cell) {
     double result=infinity;
@@ -442,16 +444,16 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
     double cost=0;
     for(std::size_t j=1;j<prefix.size();++j)cost+=distance(prefix[j-1],prefix[j]);
     const int cell=attachment.cell;
-    const auto found=states.find(cell);
-    if (found!=states.end() && found->second.cost<=cost) continue;
-    states.insert_or_assign(cell,State{cost,cell,i});
+    if (states[cell].cost<=cost) continue;
+    states[cell]=State{cost,cell,i};
     queue.push({{cell,0,0},cost+estimate(cell),cost});
   }
   while(!queue.empty()) {
     if(cancelled&&cancelled())return {};
     const auto current=queue.top();queue.pop();
     const int cell=current.idx.x;
-    const auto state=states.at(cell);
+    const auto &state=states[cell];
+    if (state.parent < 0) continue;
     if(current.g!=state.cost)continue;
     if(current.f>=upper)break;
     if(++iterations>config_.max_iterations)break;
@@ -478,12 +480,11 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
       const auto &to=cells_[edge.to];
       const int next=edge.to;
       const double cost=state.cost+edge.cost;
-      const auto found=states.find(next);
-      if(found!=states.end() && found->second.cost<=cost)continue;
+      if(states[next].cost<=cost)continue;
       const double estimate_cost=cost+estimate(edge.to);
       if(estimate_cost>=upper)continue;
       if(!prepared_edge_check(from,to))continue;
-      states.insert_or_assign(next,State{cost,cell,state.origin});
+      states[next]=State{cost,cell,state.origin};
       queue.push({{next,0,0},estimate_cost,cost});
     }
   }
