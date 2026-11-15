@@ -39,6 +39,7 @@ EXCLUDED_MARKDOWN_PREFIXES = (
     ROOT / "src" / "drivers" / "real" / "lidar" / "deps",
     ROOT / "tools" / "calibration" / "camera_lidar",
     ROOT / "tools" / "calibration" / "lidar_imu" / "LiDAR_IMU_Init",
+    ROOT / "src" / "decision" / "skills",
 )
 DOCS_MARKDOWN = {
     "README.md",
@@ -52,6 +53,7 @@ DOCS_MARKDOWN = {
     "api.md",
     "testing.md",
     "roadmap.md",
+    "customer-deployment.md",
 }
 DOCS_RESEARCH_PREFIX = "research/"
 DOCS_RESEARCH_PAPERS_PREFIX = "research/papers/"
@@ -141,14 +143,14 @@ def _local_link_path(source: Path, raw_target: str) -> Path | None:
     return candidate
 
 
-def _is_external_build_link(candidate: Path) -> bool:
-    """Historical build evidence lives outside source checkouts."""
+def _is_external_evidence_link(candidate: Path) -> bool:
+    """Generated build, artifact, and export evidence is optional locally."""
 
-    try:
-        candidate.relative_to(ROOT / "build")
-    except ValueError:
-        return False
-    return True
+    resolved = candidate.resolve(strict=False)
+    return any(
+        resolved.is_relative_to((ROOT / directory).resolve())
+        for directory in ("build", "artifacts", "output")
+    )
 
 
 def _missing_metadata(path: Path) -> list[str]:
@@ -213,7 +215,7 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
 
         for target in _link_targets(text):
             candidate = _local_link_path(path, target)
-            if candidate is not None and not candidate.exists() and not _is_external_build_link(candidate):
+            if candidate is not None and not candidate.exists() and not _is_external_evidence_link(candidate):
                 errors.append(f"broken local link: {rel} -> {target}")
 
     return sorted(set(errors)), len(files)

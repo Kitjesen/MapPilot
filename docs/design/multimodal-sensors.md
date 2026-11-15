@@ -206,7 +206,7 @@ The response retains measurement identity/time/status alongside
 Missing/stale data is not replaced with a synthetic display.
 
 The actual [Web MeasurementInspector](../../web/src/components/MeasurementInspector.tsx)
-is embedded in [InspectionWorkbench](../../web/src/components/InspectionWorkbench.tsx)
+is embedded in [InspectionWorkbench](../../web/src/components/InspectionCalendar.tsx)
 with preview, raw download and source-ACK controls. Current checks: 25 preview
 API tests, 391 combined control/data/inspection tests, targeted mypy on 12 source
 files; Web 47 tests, ESLint and production build pass. The existing large

@@ -217,7 +217,7 @@ raw NPZ 归档，不新建 worker。正式 feeder 可选测量链在当前 run �
 
 当前源码已有
 [`MeasurementInspector`](../../../web/src/components/MeasurementInspector.tsx)，接入实际
-[`InspectionWorkbench`](../../../web/src/components/InspectionWorkbench.tsx)，包含 preview、
+[`InspectionWorkbench`](../../../web/src/components/InspectionCalendar.tsx)，包含 preview、
 raw 下载和 acknowledged controls；这不等于 UE UI 或浏览器端到端验收。
 最终 preview API 25 项通过；控制／数据／巡检接线联合回归 391 项通过，相关 12 个源码
 文件定向 mypy 通过。Web 测量与既有工作台共 47 项测试、ESLint 和正式构建通过；保留
