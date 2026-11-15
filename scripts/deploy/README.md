@@ -5,6 +5,18 @@ assets. Product startup remains owned by ProductControl.
 
 ## Main commands
 
+Before installing or starting the formal SDK Gateway, run the read-only gRPC
+preflight. It checks the native release manifest, current runtime libraries,
+ProductControl's Host session gate, and the separate gRPC API-key/TLS files;
+it never writes credentials or starts a service:
+
+```bash
+python3 scripts/deploy/thunder/verify_gateway_grpc_preflight.py \
+  --manifest <aarch64-native-release-manifest.json> \
+  --gateway-env /etc/lingtu/gateway.env \
+  --json
+```
+
 Customer instructions are in [`docs/customer-deployment.md`](../../docs/customer-deployment.md),
 also included in new native archives. Prepare the locked Python runtime with:
 
