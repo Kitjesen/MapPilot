@@ -141,12 +141,14 @@ def _local_link_path(source: Path, raw_target: str) -> Path | None:
     return candidate
 
 
-def _is_external_build_link(raw_target: str) -> bool:
+def _is_external_build_link(candidate: Path) -> bool:
     """Historical build evidence lives outside source checkouts."""
 
-    target = unquote(raw_target.strip()).replace("\\", "/")
-    target = target.split("#", 1)[0].split("?", 1)[0]
-    return "build" in Path(target).parts
+    try:
+        candidate.relative_to(ROOT / "build")
+    except ValueError:
+        return False
+    return True
 
 
 def _missing_metadata(path: Path) -> list[str]:
@@ -211,7 +213,7 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
 
         for target in _link_targets(text):
             candidate = _local_link_path(path, target)
-            if candidate is not None and not candidate.exists() and not _is_external_build_link(target):
+            if candidate is not None and not candidate.exists() and not _is_external_build_link(candidate):
                 errors.append(f"broken local link: {rel} -> {target}")
 
     return sorted(set(errors)), len(files)
