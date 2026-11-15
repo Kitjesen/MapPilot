@@ -8,6 +8,7 @@ on the local numerical runtime even when no arrays are used.
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from functools import lru_cache
 from typing import Any
@@ -41,20 +42,19 @@ def is_numpy_array(value: Any) -> bool:
 
 @lru_cache(maxsize=1)
 def numpy_import_is_safe() -> bool:
-    """Return whether importing NumPy is safe in this host interpreter.
-
-    The probe runs in-process: a subprocess probe is unreliable on Windows
-    cold starts, where interpreter startup plus NumPy init can exceed any
-    reasonable timeout and wrongly report NumPy as unavailable.
-    """
+    """Return whether importing NumPy is safe in this host interpreter."""
 
     if "numpy" in sys.modules:
         return True
 
     try:
-        importlib.import_module("numpy")
-    except Exception:
-        # Drop any partially initialised module left behind by a failed import.
-        sys.modules.pop("numpy", None)
+        completed = subprocess.run(
+            [sys.executable, "-c", "import numpy"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
         return False
-    return True
+    return completed.returncode == 0
