@@ -827,7 +827,7 @@ namespace global_planner
             // The actual start may contain the robot or incomplete ground observations.
             const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
-            if (actual_start && ground_support_) {
+            if (actual_start && ground_support_ && support_height_m_ > 0.0) {
                 if (support_height_m_ > 0.0 && surface_index_->observedSurfaces() == 0U)
                     return false;
                 const auto cell = worldToGrid(from.x(), from.y(), from.z());
