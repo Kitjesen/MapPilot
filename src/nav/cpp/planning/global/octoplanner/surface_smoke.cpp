@@ -42,7 +42,7 @@ struct OctoPlannerGridQueryTest {
     require(planner.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::None,
             "updated closing radius did not repair planner support");
     const auto oldSurface=planner.supportSurface();
-    const auto oldGraph=planner.artifact_->graph;
+    const auto oldRustGraph=planner.artifact_->rust_graph;
     auto visibleHole=std::make_shared<octomap::OcTree>(*tree);
     visibleHole->updateNode(.025,.025,-.025,false);
     planner.setOctomap(visibleHole);
@@ -51,9 +51,10 @@ struct OctoPlannerGridQueryTest {
             "replacement free evidence retained old inferred height");
     require(planner.queryWorld(body,.1,true)==OctoPlanner3D::TraversabilityFailure::GroundSupport,
             "replacement free evidence retained cached planner support");
-    require(oldGraph && planner.artifact_->graph && oldGraph!=planner.artifact_->graph &&
+    require(oldRustGraph && planner.artifact_->rust_graph &&
+            oldRustGraph!=planner.artifact_->rust_graph &&
             oldSurface!=planner.supportSurface(),
-            "map replacement reused the old surface graph or index");
+            "map replacement reused the old surface index or Rust graph");
     require(oldSurface->inferred(0,0,-1,-1), "map replacement mutated a retained surface snapshot");
     planner.setOctomap(tree);
 

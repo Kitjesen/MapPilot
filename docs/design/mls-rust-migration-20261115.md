@@ -90,7 +90,7 @@ graph query
 ```
 
 每条候选 corridor 交给 C++ geometry adapter 复核。Rust graph 查询本身只负责一次
-静态路线搜索，几何不通过时交给现有 fallback 或外层重新规划。动态执行期间采用
+静态路线搜索，raw route 不通过几何时交给现有 fallback 或外层重新规划。动态执行期间采用
 DimOS `truncate_to_safe` 的职责边界，不在同一次 global query 中循环修改图。
 
 ### PlannerArtifact
@@ -120,11 +120,12 @@ smoke，但当前 mapd 仍以新 OctoMap 重新准备整张生产 artifact，尚
 5. 将 Rust surface 查询和 prepared cache 接到同一生产 artifact。
 6. 删除 C++ SurfaceGraph，再删除 C++ SurfaceIndex 的算法实现。
 
-## 当前不切换生产的原因
+## 当前不删除 C++ 图算法的原因
 
-当前 Rust graph 已经在 arrival-box 的生产 `startPlan()` 路径通过 C++ 几何合同。
-C++ SurfaceGraph 仍作为回退和对照，Rust surface 查询与 prepared cache 也仍未替换。
-这两个边界完成后，才能删除 C++ 图算法。
+当前 Rust raw surface 已经作为生产 `startPlan()` 的正常 graph 输入，并通过 C++
+几何合同或记录 fallback。C++ `SurfaceGraph` 仍作为拒绝路线时的回退和对照，
+`SurfaceIndex` 仍负责原生 surface 支持查询与回退准备。这两个边界完成后，才能删除
+C++ 图算法。
 
 迁移完成的最低证据是：
 

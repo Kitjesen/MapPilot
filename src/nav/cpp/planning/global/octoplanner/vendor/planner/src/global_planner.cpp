@@ -1735,22 +1735,8 @@ namespace global_planner
         const auto raw_surface = raw_handle.surfaces();
         artifact_->rust_surface = std::make_shared<mls::PreparedArtifactHandle>(
             std::move(raw_handle));
-        const double surface_headroom = support_height_m_ +
-            std::max(r, body_clearance_above_m_);
-        const auto cells = artifact_->surface->surfaces(surface_headroom);
-        std::unordered_set<lingtu::maps::layers::SurfaceCell,
-                           lingtu::maps::layers::SurfaceCellHash> inferred_set;
-        for (const auto &cell : artifact_->surface->inferredPoints()) {
-            inferred_set.insert(cell);
-        }
-        observed.reserve(cells.size());
-        inferred.reserve(inferred_set.size());
-        for (const auto &cell : cells) {
-            const mls::SurfaceCell converted{cell.x, cell.y, cell.z};
-            if (!surfaceStance(cell.x, cell.y, cell.z)) continue;
-            if (inferred_set.find(cell) != inferred_set.end()) inferred.push_back(converted);
-            else observed.push_back(converted);
-        }
+        observed = raw_surface.observed;
+        inferred = raw_surface.inferred;
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
             mls::PreparedArtifactHandle::createFromSurface(observed, inferred, rust_config, 1));
         printf("OctoPlanner3D Rust surface provider: observed=%zu inferred=%zu graph_cells=%zu\n",

@@ -53,8 +53,11 @@ struct OctoPlannerGridQueryTest {
   static void checkGoalPolicy(OctoPlanner3D &planner,const PointPose &start,const PointPose &goal) {
     planner.makePlan(start,goal);
     std::vector<PointPose> graph_path;planner.getPlannerResults(graph_path);
-    require(!graph_path.empty() && planner.searchInfo().used_rust_graph,
-            "Rust graph rejected an in-tolerance terminal accepted by grid search");
+    require(!graph_path.empty() &&
+                (planner.searchInfo().used_rust_graph ||
+                 (planner.searchInfo().rust_fallback &&
+                  planner.searchInfo().used_surface_graph)),
+            "raw Rust graph and its geometry fallback rejected an in-tolerance terminal");
     const auto rust_surface=planner.artifact_->rust_surface;
     const auto rust_graph=planner.artifact_->rust_graph;
     planner.artifact_->rust_surface.reset();
@@ -150,8 +153,10 @@ int main()try {
     planner.makePlan(start,target);std::vector<PointPose> path;planner.getPlannerResults(path);return path;
   };
   const auto before=run(goal);
-  require(!before.empty() && planner.searchInfo().used_rust_graph,
-          "body-centre request only passed through XYZ fallback");
+  require(!before.empty() &&
+              (planner.searchInfo().used_rust_graph ||
+               (planner.searchInfo().rust_fallback && planner.searchInfo().used_surface_graph)),
+          "body-centre request did not use the raw Rust graph or its geometry fallback");
   require(std::hypot(before.front().x-start.x,before.front().y-start.y,before.front().z-start.z)<1e-6,
           "prepared route moved the actual start");
   require(std::hypot(before.back().x-goal.x,before.back().y-goal.y,before.back().z-goal.z)<1e-6,
@@ -177,6 +182,6 @@ int main()try {
   planner.setOctomap(low_rail);
   OctoPlannerGridQueryTest::checkStandingBand(planner);
   OctoPlannerGridQueryTest::checkPreparedSupport(planner);
-  std::cout<<"Prepared surface integration passed: native graph selected, raw endpoints, separate floors and static wall\n";
+  std::cout<<"Prepared surface integration passed: raw graph input, geometry fallback, raw endpoints, separate floors and static wall\n";
   return 0;
 }catch(const std::exception &error){std::cerr<<error.what()<<'\n';return 1;}

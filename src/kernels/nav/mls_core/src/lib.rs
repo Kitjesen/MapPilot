@@ -72,7 +72,7 @@ pub struct SurfaceMap {
 /// Sparse node placement parameters.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GraphConfig {
-    /// Minimum 3-D distance between sparse nodes, in voxel cells.
+    /// Minimum 3-D distance between sparse nodes, while preserving stacked cells in one column.
     pub node_spacing_cells: i32,
     /// Maximum vertical difference accepted by a surface edge.
     pub max_link_cells: i32,
@@ -1755,6 +1755,32 @@ mod tests {
         assert!(map.observed.contains(&SurfaceCell::new(0, 0, 3)));
         assert!(map.observed.contains(&SurfaceCell::new(1, 0, 0)));
         assert!(map.observed.contains(&SurfaceCell::new(1, 0, 3)));
+    }
+
+    #[test]
+    fn keeps_stacked_nodes_in_one_connected_surface() {
+        let cells = [
+            SurfaceCell::new(0, 0, 0),
+            SurfaceCell::new(0, 0, 1),
+            SurfaceCell::new(1, 0, 0),
+            SurfaceCell::new(1, 0, 1),
+        ];
+        let graph = edges::build_graph(
+            &cells,
+            GraphConfig {
+                node_spacing_cells: 2,
+                max_link_cells: 1,
+                ..GraphConfig::default()
+            },
+        );
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.cell == SurfaceCell::new(0, 0, 0)));
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.cell == SurfaceCell::new(0, 0, 1)));
     }
 
     #[test]

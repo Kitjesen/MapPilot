@@ -168,10 +168,11 @@ C++ `SurfaceGraph` 的输入也改为同一个准备净空。随后仍由
 `surfaceStance()` 和 body geometry 过滤可执行节点，这是执行约束产生的节点数量
 差异，不再是表面层选择差异。
 
-生产 artifact 现在分别持有两个 Rust handle。完整 raw surface 用于
-`below/inferred/height` 查询，经过 `surfaceStance()` 过滤的 surface subset 用于
-Rust graph 和 Dijkstra。这样 graph 的输入只做一次执行适配，查询阶段不再逐点把
-已经选出的 Rust route 当成 unsupported cell 重新拒绝。
+生产 artifact 现在分别持有两个 Rust handle。完整 raw surface 同时用于
+`below/inferred/height` 查询和 Rust graph/Dijkstra，C++ 只在候选路线的端点、边和
+连续扫掠上做机器人几何复核。几何复核拒绝 raw 路线时，才按需构建 C++
+`SurfaceGraph` fallback，不再把 `SurfaceIndex` 的 stance 子集作为 Rust graph 的
+第二份输入。
 
 同图 A/B 结果：
 
@@ -186,9 +187,12 @@ Rust graph 和 Dijkstra。这样 graph 的输入只做一次执行适配，查�
 upper_floor 的 raw surface 已对齐，但起终点无法接入，Rust 查询随后回退到 C++
 graph，最终仍然不生成路线。
 
-当 raw 集合不一致时，当前仍回退到已经验证过的 C++ SurfaceIndex 输出，避免把
-未对齐的表面直接用于生产路线。这个回退只发生在表面准备阶段，不增加查询重试，
-也不改变 C++ 的 body、support、step、slope 和 continuous sweep 复核。
+当 raw 路线被 C++ 几何复核拒绝时，当前仍回退到已经验证过的 C++
+`SurfaceGraph` 输出。这个回退只发生在本次路线查询，不增加重复表面提取，也不改变
+C++ 的 body、support、step、slope 和 continuous sweep 复核。
+
+Rust graph 的节点稀疏化现在会保留同一 XY 柱中不同 Z 的节点。此前 3-D 距离阈值
+可能在同一连通 surface 中丢掉较近的堆叠层，新增的多层回归覆盖了这一情况。
 
 本轮没有删除 C++ `SurfaceIndex` 或 `SurfaceGraph`。下一步是把上述同图集合对照
 固化成自动回归，再迁移 prepared cache，最后删除 C++ 表面算法。

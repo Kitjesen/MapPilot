@@ -79,6 +79,39 @@ int main() try {
   require(!surface_handle.query({0, 0, 0}, {11, 0, 0}, 12).empty(),
           "Rust MLS surface artifact did not query a route");
 
+  std::vector<SurfaceCell> two_levels;
+  for (int x = -24; x < 24; ++x) {
+    for (int y = -14; y < 14; ++y) {
+      two_levels.push_back({x, y, -1});
+      two_levels.push_back({x, y, 39});
+    }
+  }
+  const LtMlsGraphConfig large_graph_config{2, 11, 0, 2, 0.0F, 0.0F};
+  auto large_surface = global_planner::mls::PreparedArtifactHandle::createFromSurface(
+      two_levels, {}, large_graph_config, 13);
+  require(large_surface.summary().observed_surfaces == two_levels.size(),
+          "Rust MLS multi-level surface artifact changed");
+  const auto large_graph = large_surface.graph();
+  require(!large_graph.nodes.empty(), "Rust MLS multi-level graph lost all nodes");
+
+  std::vector<SurfaceCell> stair;
+  for (int x = 0; x <= 4; ++x) {
+    for (int y = 0; y < 2; ++y) stair.push_back({x, y, 0});
+  }
+  for (int x = 4; x <= 8; ++x) {
+    for (int y = 0; y < 2; ++y) stair.push_back({x, y, 3});
+  }
+  for (int z = 0; z <= 3; ++z) {
+    for (int y = 0; y < 2; ++y) stair.push_back({4, y, z});
+  }
+  const LtMlsGraphConfig stair_graph_config{2, 3, 0, 0, 0.0F, 0.0F, 0.0F, 3, 1};
+  auto stair_surface = global_planner::mls::PreparedArtifactHandle::createFromSurface(
+      stair, {}, stair_graph_config, 14);
+  const auto stair_route = stair_surface.query({0, 0, 0}, {8, 0, 3}, 12);
+  require(!stair_route.empty() && stair_route.front() == SurfaceCell{0, 0, 0} &&
+              stair_route.back() == SurfaceCell{8, 0, 3},
+          "Rust MLS multi-level route lost a same-XY surface connector");
+
   const auto cell = global_planner::mls::cellFromWorld({0.0, 0.0, 0.0}, resolution);
   require(cell == SurfaceCell{0, 0, 0}, "world-to-cell conversion changed");
   const auto point = global_planner::mls::worldFromCell(cell, resolution);

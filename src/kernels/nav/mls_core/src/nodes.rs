@@ -95,12 +95,14 @@ pub(crate) fn place_nodes(
         .filter(|&index| wall[index] + 1e-6 >= clearance)
         .collect();
     candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
-    let mut nodes = Vec::new();
+    let mut nodes: Vec<usize> = Vec::new();
     for index in candidates {
-        if nodes
-            .iter()
-            .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
-        {
+        if nodes.iter().all(|&other| {
+            let same_column = cells[index].x == cells[other].x
+                && cells[index].y == cells[other].y
+                && cells[index].z != cells[other].z;
+            same_column || squared_distance(cells[index], cells[other]) >= spacing * spacing
+        }) {
             nodes.push(index);
         }
     }
