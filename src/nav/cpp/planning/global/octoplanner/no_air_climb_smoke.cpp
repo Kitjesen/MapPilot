@@ -302,7 +302,7 @@ int main()
     const auto support_footprint_result = plan(
       map_path.string(),
       {center(-18), center(6), center(1)},
-      {center(18), center(7), center(1)},
+      {center(18), center(6), center(1)},
       supported_route_options);
     if (!support_footprint_result.ok || !support_footprint_result.reached_goal) {
       std::cerr << "support-footprint route unexpectedly failed\n";
