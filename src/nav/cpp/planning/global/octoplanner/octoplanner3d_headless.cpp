@@ -552,6 +552,10 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
             << (octoplanner3d::runtime::pcdConversionEnabled() ? "true" : "false") << ','
             << "\"octomap_file\":true,"
             << "\"path_points\":" << result.path.size() << ','
+            << "\"used_surface_graph\":"
+            << (result.used_surface_graph ? "true" : "false") << ','
+            << "\"used_rust_graph\":"
+            << (result.used_rust_graph ? "true" : "false") << ','
             << "\"goal_error_m\":" << result.goal_error_m << ','
             << "\"goal_xy_error_m\":" << result.goal_xy_error_m << ','
             << "\"goal_z_error_m\":" << result.goal_z_error_m << ','

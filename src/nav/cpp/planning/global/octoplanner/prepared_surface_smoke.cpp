@@ -55,10 +55,10 @@ struct OctoPlannerGridQueryTest {
     std::vector<PointPose> graph_path;planner.getPlannerResults(graph_path);
     require(!graph_path.empty() && planner.searchInfo().used_surface_graph,
             "graph rejected an in-tolerance terminal accepted by grid search");
-    const auto graph=planner.surface_graph_;planner.surface_graph_.reset();
+    const auto graph=planner.artifact_->graph;planner.artifact_->graph.reset();
     planner.makePlan(start,goal);
     std::vector<PointPose> grid_path;planner.getPlannerResults(grid_path);
-    planner.surface_graph_=graph;
+    planner.artifact_->graph=graph;
     require(!grid_path.empty(),"resolved terminal could not attach to grid search");
     const auto &a=graph_path.back(),&b=grid_path.back();
     require(std::hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6,
@@ -72,7 +72,7 @@ struct OctoPlannerGridQueryTest {
             "resolved terminal exceeds a configured goal tolerance");
   }
   static void checkPreparedSupport(OctoPlanner3D &planner) {
-    const auto &graph=*planner.surface_graph_;
+    const auto &graph=*planner.artifact_->graph;
     require(!graph.cells_.empty(),"prepared support topology is empty");
     for(std::size_t i=0;i<graph.cells_.size();++i) {
       const auto &point=graph.cells_[i];
@@ -89,7 +89,7 @@ struct OctoPlannerGridQueryTest {
     require(planner.queryWorld({-.475f,.025f,.325f},planner.robot_radius_,true)==
                 OctoPlanner3D::TraversabilityFailure::OccupiedBody,
             "standing-band fixture must block the nominal body height");
-    const auto &graph=*planner.surface_graph_;
+    const auto &graph=*planner.artifact_->graph;
     const auto column=graph.columns_.find(graph.key(nominal));
     bool adjusted=false;
     if(column!=graph.columns_.end())for(int id:column->second) {
@@ -97,6 +97,17 @@ struct OctoPlannerGridQueryTest {
       adjusted|=point.z>nominal.z+.01 && point.z<=nominal.z+planner.support_height_tolerance_m_;
     }
     require(adjusted,"graph discarded a valid stance within the existing height band");
+  }
+  static void checkQueryReuse(OctoPlanner3D &planner,const PlannerConfig &config) {
+    const auto prepared_graph=planner.artifact_->graph;
+    auto query_config=config;
+    query_config.max_iterations=12000;
+    query_config.snap_search_radius_cells=10;
+    query_config.terminal_goal_tolerance_m=.12;
+    query_config.same_floor_preference=false;
+    planner.setConfig(query_config);
+    require(planner.artifact_->graph==prepared_graph,
+            "query-only changes rebuilt the prepared graph");
   }
 };
 }
@@ -124,6 +135,8 @@ int main()try {
   config.terminal_goal_z_tolerance_m=.05;config.enable_preblocked_costmap=false;
   const PointPose start{-.975,.025,.325},goal{.975,.025,.325};
   OctoPlanner3D planner;planner.setConfig(config);planner.setOctomap(fixture(false));
+  require(planner.artifact() && planner.artifact()->rust_graph,
+          "prepared PlannerArtifact did not retain the Rust MLS handle");
   OctoPlannerGridQueryTest::checkBodyHeight(planner);
   OctoPlannerGridQueryTest::checkPreparedSupport(planner);
   OctoPlannerGridQueryTest::checkLatticeCache(planner,start);
@@ -138,6 +151,7 @@ int main()try {
   require(std::hypot(before.back().x-goal.x,before.back().y-goal.y,before.back().z-goal.z)<1e-6,
           "valid raw goal was lost");
   for(const auto &p:before)require(std::abs(p.z-start.z)<.051,"route switched floors");
+  OctoPlannerGridQueryTest::checkQueryReuse(planner,config);
   OctoPlannerGridQueryTest::checkGoalPolicy(planner,start,{.125,-.075,.325});
   OctoPlannerGridQueryTest::checkGoalPolicy(planner,start,{.975,.025,.41});
   require(run({goal.x,goal.y,2.325}).empty(),"separate map floors were connected");

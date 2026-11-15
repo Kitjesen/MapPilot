@@ -142,6 +142,18 @@ struct PlannerConfig
 
 using SurfaceIndex = lingtu::maps::layers::SurfaceIndex;
 class SurfaceGraph;
+namespace mls { class PreparedArtifactHandle; }
+
+// Map-derived state used by every route query.  The surface and its sparse
+// graph are one prepared artifact; they must be replaced together when the
+// map or preparation geometry changes.
+struct PlannerArtifact
+{
+  std::shared_ptr<const SurfaceIndex> surface;
+  std::shared_ptr<SurfaceGraph> graph;
+  // Rust owns the candidate surface graph. C++ keeps geometry validation here.
+  std::shared_ptr<mls::PreparedArtifactHandle> rust_graph;
+};
 
 class OctoPlanner3D
 {
@@ -180,6 +192,19 @@ public:
     Outcome outcome{Outcome::NotStarted};
     int iterations{0};
     bool used_surface_graph{false};
+    bool used_rust_graph{false};
+  };
+
+  struct RouteValidation
+  {
+    bool valid{false};
+    bool metric_limits{true};
+    bool support{true};
+    bool body{true};
+    bool sweep{true};
+    std::size_t segments{0};
+    std::size_t failed_segment{std::numeric_limits<std::size_t>::max()};
+    TraversabilityFailure failure{TraversabilityFailure::None};
   };
 
   OctoPlanner3D();
@@ -206,10 +231,14 @@ public:
   void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);
+  RouteValidation validateRoute(const std::vector<PointPose>& route) const;
 
   EndpointResolutionInfo endpointResolution() const noexcept;
   SearchInfo searchInfo() const noexcept;
-  std::shared_ptr<const SurfaceIndex> supportSurface() const { return surface_index_; }
+  std::shared_ptr<const SurfaceIndex> supportSurface() const {
+    return artifact_ ? artifact_->surface : nullptr;
+  }
+  std::shared_ptr<const PlannerArtifact> artifact() const { return artifact_; }
 
   struct PlanningSlice {
     bool available{false};
@@ -323,6 +352,8 @@ private:
     TraversabilityFailure *failure = nullptr) const;
 
   void rebuildSurfaceIndex();
+  void rebuildRustGraph();
+  std::optional<PointPose> surfaceStance(int x, int y, int z) const;
   void rebuildSurfaceGraph();
   void rebuildDerivedLayers();
 
@@ -429,8 +460,7 @@ private:
   std::function<bool(const PointPose &, double)> start_exemption_;
 
   std::shared_ptr<octomap::OcTree> octree_;
-  std::shared_ptr<const SurfaceIndex> surface_index_;
-  std::shared_ptr<SurfaceGraph> surface_graph_;
+  std::shared_ptr<PlannerArtifact> artifact_;
   PlannerConfig graph_config_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;

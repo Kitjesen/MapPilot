@@ -1,0 +1,16 @@
+LingTu MLS Core
+===============
+
+This crate is a native LingTu adaptation of the multi-level surface, sparse
+node, and corridor graph ideas in Dimensional Inc.'s DimOS MLS planner.
+
+Reference source:
+https://github.com/dimensionalOS/dimos/tree/main/dimos/navigation/global_planner/mls_planner/rust/src
+
+The reference project and its MLS source files are Apache License 2.0.
+Copyright 2025 Dimensional Inc.
+
+This crate is an independent, dependency-free Rust implementation for LingTu.
+It does not include the DimOS module runtime, generated messages, or runtime
+bindings. LingTu-specific changes and code are covered by the repository
+license and the applicable Apache-2.0 terms for the referenced ideas.

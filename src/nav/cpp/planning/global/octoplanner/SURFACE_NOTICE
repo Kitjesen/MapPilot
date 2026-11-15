@@ -12,9 +12,27 @@ LingTu's 3D support, step/slope and cylinder checks, and retains native XYZ
 search when a cached static corridor cannot serve current observations.
 The Python/Rust bindings and Rust runtime dependencies are not included.
 
+The current DimOS `main` checked on 2026-11-15 (`5e0ebfd422`) keeps the same
+surface -> nodes -> edges/planner lifecycle and adds regional repair helpers.
+LingTu still uses the pinned C++ adaptation above; this notice does not claim
+that the Rust implementation has been linked into the product.
+
 2026-11-08: SurfaceIndex moved to src/maps/cpp/layers/surface.cpp for reuse by
 navigation and mapd. Its current completion method and attribution are described
 in src/maps/SURFACE_NOTICE. SurfaceGraph and route smoothing remain here.
 
 The existing OctoPlanner3D source remains under its accompanying MIT LICENSE.
 The applicable Apache 2.0 terms for this adaptation are in LICENSE-Apache-2.0.
+
+2026-11-15: `src/kernels/nav/mls_core` provides the dependency-free Rust surface
+and graph core with a C ABI bridge. On the fixed arrival-box map, after matching
+DimOS floor step conversion, the native Rust graph reports 29 nodes, 45 edges,
+and 2 components. Its filtered corridors pass the C++ body, support, step,
+slope, and continuous sweep checks. The Rust artifact is still an A/B boundary
+because endpoint query, stable CellId, regional update, cache restore, and the
+prepared artifact contract have not moved into Rust. The migration order is
+documented in docs/design/mls-rust-migration-20261115.md.
+
+The first owning `PreparedArtifactHandle` adapter now covers artifact creation,
+surface/graph export, graph-only query, region update and revision ownership.
+This is a migration seam, not a production backend switch.
