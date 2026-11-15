@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <set>
 #include <stdexcept>
 
 namespace global_planner
@@ -20,6 +21,28 @@ namespace global_planner
         // OctoMap exposes point coordinates as floats; preserve inclusive
         // metric bounds when those coordinates are compared with doubles.
         constexpr double kMetricToleranceEpsilonM = 1e-6;
+
+        std::vector<mls::SurfaceCell> mapCells(
+            const octomap::OcTree &tree, bool occupied) {
+            const double resolution = tree.getResolution();
+            std::vector<mls::SurfaceCell> cells;
+            for (auto it = tree.begin_leafs(); it != tree.end_leafs(); ++it) {
+                if (tree.isNodeOccupied(*it) != occupied) continue;
+                const int span = static_cast<int>(std::lround(it.getSize() / resolution));
+                const int x0 = static_cast<int>(std::lround(
+                    (it.getX() - .5 * it.getSize()) / resolution));
+                const int y0 = static_cast<int>(std::lround(
+                    (it.getY() - .5 * it.getSize()) / resolution));
+                const int z0 = static_cast<int>(std::lround(
+                    (it.getZ() - .5 * it.getSize()) / resolution));
+                for (int x = x0; x < x0 + span; ++x)
+                    for (int y = y0; y < y0 + span; ++y)
+                        for (int z = z0; z < z0 + span; ++z)
+                            cells.push_back({x, y, z});
+            }
+            return cells;
+        }
+
     }
 
     OctoPlanner3D::OctoPlanner3D()
@@ -1655,7 +1678,9 @@ namespace global_planner
             return;
         }
         const double r = octree_->getResolution();
-        const auto cells = artifact_->surface->surfaces(r);
+        const double surface_headroom = support_height_m_ +
+            std::max(r, body_clearance_above_m_);
+        const auto cells = artifact_->surface->surfaces(surface_headroom);
         std::unordered_set<lingtu::maps::layers::SurfaceCell,
                            lingtu::maps::layers::SurfaceCellHash> inferred_set;
         for (const auto &cell : artifact_->surface->inferredPoints()) {
@@ -1681,10 +1706,81 @@ namespace global_planner
             static_cast<float>(std::max(0.0, max_slope_)),
             std::max(0, static_cast<int>(std::ceil(max_step_height_ / r))),
             height_stride};
-        auto rust_handle = mls::PreparedArtifactHandle::createFromSurface(
-            observed, inferred, rust_config, 1);
+        const double closing = ground_support_ && !direct_support_only_
+            ? surface_closing_radius_m_ : 0.0;
+        const LtMlsConfig surface_config{
+            std::max(0, static_cast<int>(std::ceil(
+                (support_height_m_ + std::max(r, body_clearance_above_m_)) / r))),
+            static_cast<std::uint32_t>(std::max(0.0, std::ceil(closing / r))),
+            static_cast<std::uint64_t>(std::max(0.0, std::floor(
+                graph_config_.surface_max_hole_area_m2 / (r * r)))),
+            static_cast<float>(graph_config_.surface_max_slope)};
+
+        auto raw_handle = mls::PreparedArtifactHandle::create(
+            mapCells(*octree_, true), mapCells(*octree_, false),
+            surface_config, rust_config, 1);
+        const auto raw_surface = raw_handle.surfaces();
+        const auto normalized = [](const std::vector<mls::SurfaceCell> &cells) {
+            std::set<std::array<int, 3>> result;
+            for (const auto &cell : cells) result.insert({cell.x, cell.y, cell.z});
+            return result;
+        };
+        const auto raw_observed = normalized(raw_surface.observed);
+        const auto expected_observed = normalized(observed);
+        const auto raw_inferred = normalized(raw_surface.inferred);
+        const auto expected_inferred = normalized(inferred);
+        const bool raw_matches = raw_observed == expected_observed &&
+            raw_inferred == expected_inferred;
+        std::set<std::array<int, 3>> raw_only;
+        std::set<std::array<int, 3>> expected_only;
+        std::set_difference(raw_observed.begin(), raw_observed.end(),
+                            expected_observed.begin(), expected_observed.end(),
+                            std::inserter(raw_only, raw_only.end()));
+        std::set_difference(expected_observed.begin(), expected_observed.end(),
+                            raw_observed.begin(), raw_observed.end(),
+                            std::inserter(expected_only, expected_only.end()));
+        auto rust_handle = raw_matches
+            ? std::move(raw_handle)
+            : mls::PreparedArtifactHandle::createFromSurface(
+                observed, inferred, rust_config, 1);
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
             std::move(rust_handle));
+        printf("OctoPlanner3D Rust surface provider: raw_match=%s observed=%zu inferred=%zu\n",
+               raw_matches ? "true" : "false", raw_surface.observed.size(),
+               raw_surface.inferred.size());
+        if (!raw_matches) {
+            std::set<std::array<int, 3>> raw_inferred_only;
+            std::set<std::array<int, 3>> expected_inferred_only;
+            std::set_difference(raw_inferred.begin(), raw_inferred.end(),
+                                expected_inferred.begin(), expected_inferred.end(),
+                                std::inserter(raw_inferred_only, raw_inferred_only.end()));
+            std::set_difference(expected_inferred.begin(), expected_inferred.end(),
+                                raw_inferred.begin(), raw_inferred.end(),
+                                std::inserter(expected_inferred_only, expected_inferred_only.end()));
+            printf("OctoPlanner3D Rust surface diff: raw_only=%zu expected_only=%zu "
+                   "raw_inferred_only=%zu expected_inferred_only=%zu\n",
+                   raw_only.size(), expected_only.size(), raw_inferred_only.size(),
+                   expected_inferred_only.size());
+            if (!raw_only.empty()) {
+                printf("OctoPlanner3D Rust surface raw-only first: [%d,%d,%d]\n",
+                       raw_only.begin()->at(0), raw_only.begin()->at(1), raw_only.begin()->at(2));
+            }
+            if (!expected_only.empty()) {
+                printf("OctoPlanner3D Rust surface expected-only first: [%d,%d,%d]\n",
+                       expected_only.begin()->at(0), expected_only.begin()->at(1),
+                       expected_only.begin()->at(2));
+            }
+            if (!raw_inferred_only.empty()) {
+                printf("OctoPlanner3D Rust surface raw-inferred-only first: [%d,%d,%d]\n",
+                       raw_inferred_only.begin()->at(0), raw_inferred_only.begin()->at(1),
+                       raw_inferred_only.begin()->at(2));
+            }
+            if (!expected_inferred_only.empty()) {
+                printf("OctoPlanner3D Rust surface expected-inferred-only first: [%d,%d,%d]\n",
+                       expected_inferred_only.begin()->at(0), expected_inferred_only.begin()->at(1),
+                       expected_inferred_only.begin()->at(2));
+            }
+        }
     }
 
     void OctoPlanner3D::rebuildSurfaceGraph()

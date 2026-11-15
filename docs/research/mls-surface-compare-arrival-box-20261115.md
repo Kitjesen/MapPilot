@@ -155,3 +155,26 @@ handle，`startPlan()` 先查询 Rust 路线，并对端点连接和每段路线
 几何复核。Rust query 保持一次静态路线搜索，几何拒绝交给 C++ fallback 或外层重新规划。该接入已在 arrival-box headless
 查询中看到 `used_rust_graph=true`，但还不代表 C++ `SurfaceGraph` 已删除或 Rust
 surface/cache 已完成迁移。
+
+## raw OctoMap provider 对齐（2026-11-15）
+
+本轮修正了生产接入中的一个参数归属错误。`SurfaceIndex` 准备表面时使用
+`support_height_m + max(resolution, body_clearance_above_m)` 作为机身净空，
+Rust 图接入之前却用单个地图分辨率再次读取表面。两者不一致会使同一张地图产生
+不同的表面集合。Rust 接入现在复用准备阶段的净空，并直接从同一份 OctoMap
+occupied/free leaves 构造 `PreparedArtifactHandle`。
+
+同图 A/B 结果：
+
+| 地图 | raw provider | observed / inferred | 图与 C++ SurfaceIndex | 几何复核 |
+| --- | --- | --- | --- | --- |
+| `arrival-box-20261027/occlusion-map-final` | `true` | 2240 / 0 | 36 / 43 / 9，一致 | 通过 |
+| `body-depth-20261025/baseline/align` | `true` | 3456 / 0 | 11 / 13 / 3，一致 | 通过 |
+| `body-depth-20261025/baseline/upper_floor` | `true` | 9600 / 0 | 28 / 48 / 2，一致 | 两边都没有可接入端点 |
+
+当 raw 集合不一致时，当前仍回退到已经验证过的 C++ SurfaceIndex 输出，避免把
+未对齐的表面直接用于生产路线。这个回退只发生在表面准备阶段，不增加查询重试，
+也不改变 C++ 的 body、support、step、slope 和 continuous sweep 复核。
+
+本轮没有删除 C++ `SurfaceIndex` 或 `SurfaceGraph`。下一步是把上述同图集合对照
+固化成自动回归，再迁移 prepared cache，最后删除 C++ 表面算法。
