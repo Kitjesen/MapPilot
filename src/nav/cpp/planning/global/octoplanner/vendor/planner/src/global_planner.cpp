@@ -176,6 +176,9 @@ namespace global_planner
             } else {
                 rebuildRustGraph();
             }
+        } else if (rust_surface && rust_graph) {
+            artifact_->rust_surface = std::move(rust_surface);
+            artifact_->rust_graph = std::move(rust_graph);
         } else rebuildSurfaceGraph();
         rebuildExternalPreblockedCells();
         rebuildDerivedLayers();
@@ -187,8 +190,6 @@ namespace global_planner
             throw std::runtime_error("planner artifact is not prepared");
         }
         artifact_->surface->write(out);
-        out.value<std::uint8_t>(artifact_->graph ? 1 : 0);
-        if(artifact_->graph)artifact_->graph->write(out);
         const bool has_rust = artifact_->rust_surface && artifact_->rust_graph;
         out.value<std::uint8_t>(has_rust ? 1 : 0);
         if (has_rust) {
@@ -556,6 +557,7 @@ namespace global_planner
                 }
                 printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
                        error.what());
+                if (!artifact_->graph) rebuildSurfaceGraph();
             }
         }
         if (artifact_ && artifact_->graph) {
@@ -1816,17 +1818,22 @@ namespace global_planner
     void OctoPlanner3D::rebuildSurfaceGraph()
     {
         if (!artifact_) artifact_ = std::make_shared<PlannerArtifact>();
+        const bool rust_ready = artifact_->rust_surface && artifact_->rust_graph;
         artifact_->graph.reset();
-        artifact_->rust_surface.reset();
-        artifact_->rust_graph.reset();
-        if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
+        if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) {
+            if (!rust_ready) {
+                artifact_->rust_surface.reset();
+                artifact_->rust_graph.reset();
+            }
+            return;
+        }
         const auto started=std::chrono::steady_clock::now();
         const double r=octree_->getResolution();
         const double surface_headroom = support_height_m_ +
             std::max(r, body_clearance_above_m_);
         const auto cells=artifact_->surface->surfaces(surface_headroom);
 
-        rebuildRustGraph();
+        if (!rust_ready) rebuildRustGraph();
 
         std::vector<PointPose> points;
         points.reserve(cells.size());

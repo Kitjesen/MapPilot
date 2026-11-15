@@ -1,6 +1,5 @@
 #include "prepared.hpp"
 #include "mls_backend.hpp"
-#include "surface_graph.hpp"
 #include "lingtu/maps/io/binary.hpp"
 
 #include <algorithm>
@@ -21,7 +20,7 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.3";
+constexpr const char* kFormat="lingtu.navigation.prepared.4";
 constexpr std::uint32_t kEndian=0x01020304U;
 struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
 
@@ -85,12 +84,9 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
         header.preparation!=config.preparation() || header.size!=std::filesystem::file_size(source) ||
         header.modified!=std::filesystem::last_write_time(source).time_since_epoch().count())return false;
     auto surface=global_planner::SurfaceIndex::read(in);
-    std::shared_ptr<global_planner::SurfaceGraph> graph;
-    const auto has_graph=in.value<std::uint8_t>();
     const bool needs_graph=config.ground_support && config.support_height_m>0 && !config.lowest_traversable_only;
-    if(has_graph>1 || bool(has_graph)!=needs_graph || surface->resolution()!=map->getResolution())
+    if(surface->resolution()!=map->getResolution())
       throw std::runtime_error("prepared map does not match geometry");
-    if(has_graph)graph=global_planner::SurfaceGraph::read(in,config);
     const auto has_rust=in.value<std::uint8_t>();
     if(has_rust>1 || bool(has_rust)!=needs_graph)
       throw std::runtime_error("prepared map does not contain Rust MLS artifacts");
@@ -108,7 +104,7 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
               graph_surface.observed,graph_surface.inferred,rust_config,1));
     }
     if(!in.complete())throw std::runtime_error("unexpected prepared map tail");
-    planner.setOctomap(map,std::move(surface),std::move(graph),
+    planner.setOctomap(map,std::move(surface),{},
         std::move(rust_surface),std::move(rust_graph));
     std::fprintf(stderr,"OctoPlanner3D restored prepared map: %s\n",path.string().c_str());
     return true;

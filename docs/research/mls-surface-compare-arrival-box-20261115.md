@@ -192,3 +192,14 @@ graph，最终仍然不生成路线。
 
 本轮没有删除 C++ `SurfaceIndex` 或 `SurfaceGraph`。下一步是把上述同图集合对照
 固化成自动回归，再迁移 prepared cache，最后删除 C++ 表面算法。
+
+## cache 与 fallback 收敛（2026-11-15）
+
+prepared cache 已升级到 `lingtu.navigation.prepared.4`。缓存保存 C++ surface
+索引和两个 Rust surface cell 集合，恢复时直接建立 Rust surface/graph handle。
+C++ `SurfaceGraph` 不再写入或随缓存恢复。Rust route 失败后才按需构建 C++
+SurfaceGraph 作为 fallback，这条路径仍使用同一套 geometry adapter。
+
+prepared cache smoke 已覆盖首次保存、磁盘恢复、inferred support、机身参数、地图
+版本、源文件时间戳、查询预算、no-go 和截断缓存，全部通过。Rust route 成功的恢复
+路径不会重新打印 surface provider 准备日志，说明缓存没有重新从 OctoMap 构图。
