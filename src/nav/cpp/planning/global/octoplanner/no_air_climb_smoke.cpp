@@ -297,11 +297,13 @@ int main()
     }
     // The floor ends at iy=8; this footprint is supported at iy=6, whereas
     // the iy=7 start reaches unobserved ground at iy=9.
+    auto supported_route_options = support_footprint_options;
+    supported_route_options.robot_radius = 0.1;
     const auto support_footprint_result = plan(
       map_path.string(),
       {center(-18), center(6), center(1)},
       {center(18), center(7), center(1)},
-      support_footprint_options);
+      supported_route_options);
     if (!support_footprint_result.ok || !support_footprint_result.reached_goal) {
       std::cerr << "support-footprint route unexpectedly failed\n";
       return 27;
