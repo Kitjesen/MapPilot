@@ -1832,22 +1832,27 @@ namespace global_planner
         auto [next_x, step_time_x] = axis_times(from.x(), delta.x(), start.x, step_x);
         auto [next_y, step_time_y] = axis_times(from.y(), delta.y(), start.y, step_y);
         auto [next_z, step_time_z] = axis_times(from.z(), delta.z(), start.z, step_z);
-        int cell_x = start.x;
-        int cell_y = start.y;
-        int cell_z = start.z;
+        if (!endpoints_validated) {
+            for (const auto &endpoint : {from, to}) {
+                const auto failure = queryWorld(
+                    endpoint, robot_radius_, ground_support_ && require_support, check_body);
+                if (failure != TraversabilityFailure::None) {
+                    if (failure_out) *failure_out = failure;
+                    if (failed_point) *failed_point = endpoint;
+                    return false;
+                }
+            }
+        }
         double t = 0.0;
         int interval = 0;
         while (t < 1.0 - 1e-12) {
             while (next_x <= t + 1e-12) {
-                cell_x += step_x;
                 next_x += step_time_x;
             }
             while (next_y <= t + 1e-12) {
-                cell_y += step_y;
                 next_y += step_time_y;
             }
             while (next_z <= t + 1e-12) {
-                cell_z += step_z;
                 next_z += step_time_z;
             }
             const double next_t = std::min({1.0, next_x, next_y, next_z});
@@ -1864,15 +1869,12 @@ namespace global_planner
             if (failure == TraversabilityFailure::None) {
                 t = next_t;
                 if (next_x <= t + 1e-12) {
-                    cell_x += step_x;
                     next_x += step_time_x;
                 }
                 if (next_y <= t + 1e-12) {
-                    cell_y += step_y;
                     next_y += step_time_y;
                 }
                 if (next_z <= t + 1e-12) {
-                    cell_z += step_z;
                     next_z += step_time_z;
                 }
                 continue;
@@ -1908,15 +1910,12 @@ namespace global_planner
             }
             t = next_t;
             if (next_x <= t + 1e-12) {
-                cell_x += step_x;
                 next_x += step_time_x;
             }
             if (next_y <= t + 1e-12) {
-                cell_y += step_y;
                 next_y += step_time_y;
             }
             if (next_z <= t + 1e-12) {
-                cell_z += step_z;
                 next_z += step_time_z;
             }
         }
