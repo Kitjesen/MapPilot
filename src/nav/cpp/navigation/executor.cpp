@@ -608,12 +608,15 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       std::min(follower_state.params.stopDisThre, endpoint_tolerance);
   follower_state.params.spline.finishDistance =
       std::min(follower_state.params.spline.finishDistance, endpoint_tolerance);
-  if (spline_provided && follower_state.goalDistance > endpoint_tolerance &&
-      follower_state.goalDistance < endpoint_tolerance + 0.08) {
+  const bool terminal_correction = spline_provided &&
+      follower_state.goalDistance > endpoint_tolerance &&
+      follower_state.goalDistance < endpoint_tolerance + 0.08;
+  if (terminal_correction) {
     follower_state.params.spline.positionGain =
         std::max(follower_state.params.spline.positionGain, 2.0);
     follower_state.params.spline.headingErrorThreshold = M_PI;
     follower_state.params.spline.yawGain = 0.0;
+    follower_state.params.spline.maxYawRateRadS = 0.0;
     // A small positional correction follows the active route without adding
     // curvature feed-forward from a terminal spline.
     follower_state.desiredHeading = planning_body.yaw;
