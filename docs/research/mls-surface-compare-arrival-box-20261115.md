@@ -200,6 +200,11 @@ prepared cache 已升级到 `lingtu.navigation.prepared.4`。缓存保存 C++ su
 C++ `SurfaceGraph` 不再写入或随缓存恢复。Rust route 失败后才按需构建 C++
 SurfaceGraph 作为 fallback，这条路径仍使用同一套 geometry adapter。
 
+Rust cache 现在同时保存 occupied/free source evidence。恢复时调用 Rust
+`PreparedArtifactHandle::create()`，所以 `below/inferred/height/occupied` 查询来自
+同一个 raw artifact。C++ body geometry 直接读取 OctoMap，并复用已有 block cache，
+SurfaceIndex 不再参与 body occupancy 和 region collision 查询。
+
 prepared cache smoke 已覆盖首次保存、磁盘恢复、inferred support、机身参数、地图
 版本、源文件时间戳、查询预算、no-go 和截断缓存，全部通过。Rust route 成功的恢复
 路径不会重新打印 surface provider 准备日志，说明缓存没有重新从 OctoMap 构图。
