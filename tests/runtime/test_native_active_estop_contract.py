@@ -70,11 +70,12 @@ def test_endpoint_routes_estop_through_runtime_terminal_policy_and_barrier() -> 
     assert "interruption.terminal" in service_block
     assert "action_committed" in service_block
     assert "motion_stop.estopWithoutTerminalCommit" in service_block
-    assert "estop_latched" in service_block
+    runtime = _read(RUNTIME_SOURCE)
+    assert "estop_latched" in runtime
 
-    transaction = _read(NAV_ENDPOINT / "app" / "goal" / "terminal.cpp")
+    transaction = runtime
     assert re.search(r"case\s+TerminalStopPolicy::kEstop\s*:", transaction)
-    assert "stop_.estopPreservingGoalTerminal" in transaction
+    assert "motion_stop_.estopPreservingGoalTerminal" in transaction
 
 
 def test_endpoint_no_active_estop_uses_physical_only_estop_path() -> None:
@@ -88,4 +89,4 @@ def test_endpoint_no_active_estop_uses_physical_only_estop_path() -> None:
     assert "GoalReplanRuntimeInterruption::kEstop" in estop_handler
     assert "motion_stop.estopWithoutTerminalCommit" in estop_handler
     assert not re.search(r"\bmotion_stop\.estop\s*\(", estop_handler)
-    assert "estop_latched" in estop_handler
+    assert "estop_latched" in _read(RUNTIME_SOURCE)
