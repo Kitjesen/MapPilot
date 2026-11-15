@@ -59,7 +59,7 @@ def _ready_for_last_sent_command(transport: ScriptedTransport) -> str:
     ).split("\t")
     return (
         f"LT_DRIVER_READY_V2\t{BRIDGE_BOOT_ID}\t{controller_boot_id}"
-        f"\t{applied[3]}\t{applied[5]}\t{applied[6]}"
+        f"\t{applied[3]}"
     )
 
 
