@@ -151,7 +151,8 @@ struct PlannerArtifact
 {
   std::shared_ptr<const SurfaceIndex> surface;
   std::shared_ptr<SurfaceGraph> graph;
-  // Rust owns the candidate surface graph. C++ keeps geometry validation here.
+  // Rust owns the raw surface queries and the executable candidate graph.
+  std::shared_ptr<mls::PreparedArtifactHandle> rust_surface;
   std::shared_ptr<mls::PreparedArtifactHandle> rust_graph;
 };
 

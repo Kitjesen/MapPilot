@@ -348,8 +348,8 @@ namespace global_planner
             const auto cell=worldToGrid(point.x,point.y,point.z);
             const double offset=(cell.z+.5)*octree_->getResolution()-point.z;
             const auto [low,high]=supportDepthRange(support_depth_cells_,offset);
-            const auto z = artifact_->rust_graph
-                ? artifact_->rust_graph->below(cell.x, cell.y, cell.z)
+            const auto z = artifact_->rust_surface
+                ? artifact_->rust_surface->below(cell.x, cell.y, cell.z)
                 : artifact_->surface->below(cell.x, cell.y, cell.z);
             return z && *z>=cell.z-high && *z<=cell.z-low ? z : std::nullopt;
         };
@@ -473,16 +473,17 @@ namespace global_planner
                 std::vector<PointPose> surface_points;
                 surface_points.reserve(cells.size());
                 for (const auto &cell : cells) {
-                    const auto point = surfaceStance(cell.x, cell.y, cell.z);
-                    if (!point) {
-                        throw std::runtime_error("Rust surface route contains an unsupported cell");
-                    }
-                    if (!surface_points.empty() && surface_points.back().x == point->x &&
-                        surface_points.back().y == point->y &&
-                        surface_points.back().z == point->z) {
+                    const PointPose point{
+                        (cell.x + .5) * resolution,
+                        (cell.y + .5) * resolution,
+                        (cell.z + .5) * resolution + support_height_m_,
+                        std::nullopt};
+                    if (!surface_points.empty() && surface_points.back().x == point.x &&
+                        surface_points.back().y == point.y &&
+                        surface_points.back().z == point.z) {
                         continue;
                     }
-                    surface_points.push_back(*point);
+                    surface_points.push_back(point);
                 }
                 if (surface_points.empty()) {
                     throw std::runtime_error("Rust surface route has no stance cells");
@@ -513,8 +514,8 @@ namespace global_planner
                 auto checked = candidate;
                 auto smoothed = smoothRoute(candidate, valid,
                     [&](const PointPose &point) -> std::optional<double> {
-                        const auto ground = artifact_->rust_graph
-                            ? artifact_->rust_graph->height(
+                        const auto ground = artifact_->rust_surface
+                            ? artifact_->rust_surface->height(
                                 point.x, point.y, point.z - support_height_m_,
                                 support_height_tolerance_m_, octree_->getResolution())
                             : artifact_->surface->height(
@@ -552,8 +553,8 @@ namespace global_planner
             const auto graph_finished=std::chrono::steady_clock::now();
             if (!candidate.empty()) {
                 const auto height = [&](const PointPose &point) -> std::optional<double> {
-                    const auto ground = artifact_->rust_graph
-                        ? artifact_->rust_graph->height(
+                    const auto ground = artifact_->rust_surface
+                        ? artifact_->rust_surface->height(
                             point.x, point.y, point.z - support_height_m_,
                             support_height_tolerance_m_, octree_->getResolution())
                         : artifact_->surface->height(
@@ -1312,12 +1313,12 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
-        if (artifact_->rust_graph) {
-            if (!direct_support_only && artifact_->rust_graph->inferred(
+        if (artifact_->rust_surface) {
+            if (!direct_support_only && artifact_->rust_surface->inferred(
                     idx.x, idx.y, idx.z - maximum_depth, idx.z - minimum_depth)) {
                 return true;
             }
-            const auto floor = artifact_->rust_graph->below(idx.x, idx.y, idx.z);
+            const auto floor = artifact_->rust_surface->below(idx.x, idx.y, idx.z);
             if (!floor || *floor < idx.z - maximum_depth || *floor > idx.z - minimum_depth)
                 return false;
             return (*floor + 1 != idx.z || !isOccupiedCell(idx)) &&
@@ -1674,7 +1675,10 @@ namespace global_planner
     {
         if (!artifact_ || !artifact_->surface || !ground_support_ ||
             support_height_m_ <= 0.0 || lowest_traversable_only_) {
-            if (artifact_) artifact_->rust_graph.reset();
+            if (artifact_) {
+                artifact_->rust_surface.reset();
+                artifact_->rust_graph.reset();
+            }
             return;
         }
         const double r = octree_->getResolution();
@@ -1686,13 +1690,21 @@ namespace global_planner
         for (const auto &cell : artifact_->surface->inferredPoints()) {
             inferred_set.insert(cell);
         }
+        std::vector<mls::SurfaceCell> prepared_observed;
+        std::vector<mls::SurfaceCell> prepared_inferred;
         std::vector<mls::SurfaceCell> observed;
         std::vector<mls::SurfaceCell> inferred;
+        prepared_observed.reserve(cells.size());
+        prepared_inferred.reserve(inferred_set.size());
         observed.reserve(cells.size());
         inferred.reserve(inferred_set.size());
         for (const auto &cell : cells) {
             const mls::SurfaceCell converted{cell.x, cell.y, cell.z};
-            if (inferred_set.find(cell) != inferred_set.end()) inferred.push_back(converted);
+            const bool is_inferred = inferred_set.find(cell) != inferred_set.end();
+            if (is_inferred) prepared_inferred.push_back(converted);
+            else prepared_observed.push_back(converted);
+            if (!surfaceStance(cell.x, cell.y, cell.z)) continue;
+            if (is_inferred) inferred.push_back(converted);
             else observed.push_back(converted);
         }
         const int stride = std::max(1, static_cast<int>(std::ceil(search_resolution_m_ / r)));
@@ -1726,9 +1738,9 @@ namespace global_planner
             return result;
         };
         const auto raw_observed = normalized(raw_surface.observed);
-        const auto expected_observed = normalized(observed);
+        const auto expected_observed = normalized(prepared_observed);
         const auto raw_inferred = normalized(raw_surface.inferred);
-        const auto expected_inferred = normalized(inferred);
+        const auto expected_inferred = normalized(prepared_inferred);
         const bool raw_matches = raw_observed == expected_observed &&
             raw_inferred == expected_inferred;
         std::set<std::array<int, 3>> raw_only;
@@ -1739,15 +1751,14 @@ namespace global_planner
         std::set_difference(expected_observed.begin(), expected_observed.end(),
                             raw_observed.begin(), raw_observed.end(),
                             std::inserter(expected_only, expected_only.end()));
-        auto rust_handle = raw_matches
-            ? std::move(raw_handle)
-            : mls::PreparedArtifactHandle::createFromSurface(
-                observed, inferred, rust_config, 1);
+        artifact_->rust_surface = std::make_shared<mls::PreparedArtifactHandle>(
+            std::move(raw_handle));
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
-            std::move(rust_handle));
-        printf("OctoPlanner3D Rust surface provider: raw_match=%s observed=%zu inferred=%zu\n",
+            mls::PreparedArtifactHandle::createFromSurface(observed, inferred, rust_config, 1));
+        printf("OctoPlanner3D Rust surface provider: raw_match=%s observed=%zu inferred=%zu "
+               "graph_cells=%zu\n",
                raw_matches ? "true" : "false", raw_surface.observed.size(),
-               raw_surface.inferred.size());
+               raw_surface.inferred.size(), observed.size() + inferred.size());
         if (!raw_matches) {
             std::set<std::array<int, 3>> raw_inferred_only;
             std::set<std::array<int, 3>> expected_inferred_only;
@@ -1787,6 +1798,7 @@ namespace global_planner
     {
         if (!artifact_) artifact_ = std::make_shared<PlannerArtifact>();
         artifact_->graph.reset();
+        artifact_->rust_surface.reset();
         artifact_->rust_graph.reset();
         if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
         const auto started=std::chrono::steady_clock::now();

@@ -168,6 +168,11 @@ C++ `SurfaceGraph` 的输入也改为同一个准备净空。随后仍由
 `surfaceStance()` 和 body geometry 过滤可执行节点，这是执行约束产生的节点数量
 差异，不再是表面层选择差异。
 
+生产 artifact 现在分别持有两个 Rust handle。完整 raw surface 用于
+`below/inferred/height` 查询，经过 `surfaceStance()` 过滤的 surface subset 用于
+Rust graph 和 Dijkstra。这样 graph 的输入只做一次执行适配，查询阶段不再逐点把
+已经选出的 Rust route 当成 unsupported cell 重新拒绝。
+
 同图 A/B 结果：
 
 | 地图 | raw provider | observed / inferred | 图与 C++ SurfaceIndex | 几何复核 |
@@ -175,6 +180,11 @@ C++ `SurfaceGraph` 的输入也改为同一个准备净空。随后仍由
 | `arrival-box-20261027/occlusion-map-final` | `true` | 2240 / 0 | 36 / 43 / 9，一致 | 通过 |
 | `body-depth-20261025/baseline/align` | `true` | 3456 / 0 | 11 / 13 / 3，一致 | 通过 |
 | `body-depth-20261025/baseline/upper_floor` | `true` | 9600 / 0 | 28 / 48 / 2，一致 | 两边都没有可接入端点 |
+
+生产 planner 复测补充：arrival-box 和 body-depth align 都报告
+`used_rust_graph=true`，两条路线均通过 C++ body/support/step/slope/sweep 复核。
+upper_floor 的 raw surface 已对齐，但起终点无法接入，Rust 查询随后回退到 C++
+graph，最终仍然不生成路线。
 
 当 raw 集合不一致时，当前仍回退到已经验证过的 C++ SurfaceIndex 输出，避免把
 未对齐的表面直接用于生产路线。这个回退只发生在表面准备阶段，不增加查询重试，
