@@ -201,6 +201,14 @@ int32_t lt_mls_artifact_query_limited(
     int32_t max_snap_cells,
     LtMlsBuffer* route);
 
+int32_t lt_mls_artifact_query_budgeted(
+    const LtMlsArtifact* handle,
+    LtMlsCell start,
+    LtMlsCell goal,
+    int32_t max_snap_cells,
+    int32_t max_iterations,
+    LtMlsBuffer* route);
+
 int32_t lt_mls_artifact_update(
     LtMlsArtifact* handle,
     LtMlsRegion region,

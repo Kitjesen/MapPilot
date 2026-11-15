@@ -226,7 +226,9 @@ public:
 
   void setOctomap(std::shared_ptr<octomap::OcTree> map,
                  std::shared_ptr<const SurfaceIndex> surface = {},
-                 std::shared_ptr<SurfaceGraph> graph = {});
+                 std::shared_ptr<SurfaceGraph> graph = {},
+                 std::shared_ptr<mls::PreparedArtifactHandle> rust_surface = {},
+                 std::shared_ptr<mls::PreparedArtifactHandle> rust_graph = {});
   void writePrepared(lingtu::maps::BinaryWriter& out) const;
 
   void makePlan(const PointPose start,const PointPose goal);

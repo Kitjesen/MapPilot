@@ -150,7 +150,9 @@ namespace global_planner
     }
 
     void OctoPlanner3D::setOctomap(std::shared_ptr<octomap::OcTree> map,
-        std::shared_ptr<const SurfaceIndex> surface,std::shared_ptr<SurfaceGraph> graph)
+        std::shared_ptr<const SurfaceIndex> surface,std::shared_ptr<SurfaceGraph> graph,
+        std::shared_ptr<mls::PreparedArtifactHandle> rust_surface,
+        std::shared_ptr<mls::PreparedArtifactHandle> rust_graph)
     {
         if (!map)
         {
@@ -168,7 +170,12 @@ namespace global_planner
         clearMapQueryCaches();
         if(graph) {
             artifact_->graph=std::move(graph);
-            rebuildRustGraph();
+            if (rust_surface && rust_graph) {
+                artifact_->rust_surface = std::move(rust_surface);
+                artifact_->rust_graph = std::move(rust_graph);
+            } else {
+                rebuildRustGraph();
+            }
         } else rebuildSurfaceGraph();
         rebuildExternalPreblockedCells();
         rebuildDerivedLayers();
@@ -182,6 +189,12 @@ namespace global_planner
         artifact_->surface->write(out);
         out.value<std::uint8_t>(artifact_->graph ? 1 : 0);
         if(artifact_->graph)artifact_->graph->write(out);
+        const bool has_rust = artifact_->rust_surface && artifact_->rust_graph;
+        out.value<std::uint8_t>(has_rust ? 1 : 0);
+        if (has_rust) {
+            mls::writeSurfaceMap(out, artifact_->rust_surface->surfaces());
+            mls::writeSurfaceMap(out, artifact_->rust_graph->surfaces());
+        }
     }
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
@@ -469,7 +482,7 @@ namespace global_planner
                 const auto cells = artifact_->rust_graph->query(
                     mls::cellFromWorld(start_floor, resolution),
                     mls::cellFromWorld(goal_floor, resolution),
-                    snap_search_radius_cells_);
+                    snap_search_radius_cells_, max_iterations_);
                 std::vector<PointPose> surface_points;
                 surface_points.reserve(cells.size());
                 for (const auto &cell : cells) {
@@ -535,6 +548,12 @@ namespace global_planner
                            std::chrono::steady_clock::now() - graph_started).count());
                 return true;
             } catch (const std::exception &error) {
+                if (std::string(error.what()).find("exceeded iteration budget") !=
+                    std::string::npos) {
+                    search_info_.outcome = SearchInfo::Outcome::IterationLimit;
+                    search_info_.iterations = max_iterations_;
+                    return false;
+                }
                 printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
                        error.what());
             }

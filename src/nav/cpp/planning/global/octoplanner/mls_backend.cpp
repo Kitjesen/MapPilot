@@ -63,6 +63,32 @@ std::vector<SurfaceCell> copyCells(const LtMlsBuffer& buffer) {
 
 }  // namespace
 
+void writeSurfaceMap(lingtu::maps::BinaryWriter& out, const SurfaceMap& surface) {
+  for (const auto* cells : {&surface.observed, &surface.inferred}) {
+    out.value<std::uint64_t>(cells->size());
+    for (const auto& cell : *cells) {
+      out.value<std::int32_t>(cell.x);
+      out.value<std::int32_t>(cell.y);
+      out.value<std::int32_t>(cell.z);
+    }
+  }
+}
+
+SurfaceMap readSurfaceMap(lingtu::maps::BinaryReader& in) {
+  SurfaceMap surface;
+  auto read = [&](std::vector<SurfaceCell>& cells) {
+    const auto count = in.count(sizeof(std::int32_t) * 3);
+    cells.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      cells.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
+                       in.value<std::int32_t>()});
+    }
+  };
+  read(surface.observed);
+  read(surface.inferred);
+  return surface;
+}
+
 PreparedArtifactHandle::~PreparedArtifactHandle() {
   lt_mls_artifact_free(handle_);
 }
@@ -234,6 +260,25 @@ std::vector<SurfaceCell> PreparedArtifactHandle::query(
           handle_, {start.x, start.y, start.z}, {goal.x, goal.y, goal.z},
           max_snap_cells, &output) != 0) {
     throw std::runtime_error("Rust MLS limited graph query failed");
+  }
+  std::vector<SurfaceCell> result = copyCells(output);
+  lt_mls_free_buffer(&output);
+  return result;
+}
+
+std::vector<SurfaceCell> PreparedArtifactHandle::query(
+    SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
+    std::int32_t max_iterations) const {
+  if (handle_ == nullptr) throw std::runtime_error("empty Rust MLS artifact handle");
+  LtMlsBuffer output{};
+  const auto status = lt_mls_artifact_query_budgeted(
+      handle_, {start.x, start.y, start.z}, {goal.x, goal.y, goal.z},
+      max_snap_cells, max_iterations, &output);
+  if (status == -3) {
+    throw std::runtime_error("Rust MLS graph query exceeded iteration budget");
+  }
+  if (status != 0) {
+    throw std::runtime_error("Rust MLS budgeted graph query failed");
   }
   std::vector<SurfaceCell> result = copyCells(output);
   lt_mls_free_buffer(&output);

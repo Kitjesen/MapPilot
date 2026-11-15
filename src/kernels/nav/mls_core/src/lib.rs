@@ -827,7 +827,9 @@ fn graph_route(
     start: SurfaceCell,
     goal: SurfaceCell,
 ) -> Option<Vec<SurfaceCell>> {
-    graph_route_limited(graph, start, goal, None)
+    graph_route_limited(graph, start, goal, None, None)
+        .ok()
+        .flatten()
 }
 
 fn graph_route_limited(
@@ -835,9 +837,10 @@ fn graph_route_limited(
     start: SurfaceCell,
     goal: SurfaceCell,
     max_snap_cells: Option<i32>,
-) -> Option<Vec<SurfaceCell>> {
+    max_iterations: Option<usize>,
+) -> Result<Option<Vec<SurfaceCell>>, bool> {
     if graph.nodes.is_empty() {
-        return None;
+        return Ok(None);
     }
     let nearest_with_distance = |target: SurfaceCell| {
         graph
@@ -852,14 +855,18 @@ fn graph_route_limited(
             })
             .min_by_key(|&(distance, _)| distance)
     };
-    let (start_distance, start_index) = nearest_with_distance(start)?;
-    let (goal_distance, goal_index) = nearest_with_distance(goal)?;
+    let Some((start_distance, start_index)) = nearest_with_distance(start) else {
+        return Ok(None);
+    };
+    let Some((goal_distance, goal_index)) = nearest_with_distance(goal) else {
+        return Ok(None);
+    };
     if let Some(limit) = max_snap_cells {
         if limit < 0
             || start_distance > i64::from(limit) * i64::from(limit)
             || goal_distance > i64::from(limit) * i64::from(limit)
         {
-            return None;
+            return Ok(None);
         }
     }
     let indices: HashMap<u32, usize> = graph
@@ -882,7 +889,12 @@ fn graph_route_limited(
         std::collections::BinaryHeap::<std::cmp::Reverse<(corridor::OrderedF32, usize)>>::new();
     distances[start_index] = 0.0;
     queue.push(std::cmp::Reverse((corridor::OrderedF32(0.0), start_index)));
+    let mut iterations = 0usize;
     while let Some(std::cmp::Reverse((corridor::OrderedF32(cost), current))) = queue.pop() {
+        iterations += 1;
+        if max_iterations.is_some_and(|limit| iterations > limit) {
+            return Err(true);
+        }
         if cost > distances[current] + 1e-6 {
             continue;
         }
@@ -900,7 +912,7 @@ fn graph_route_limited(
         }
     }
     if !distances[goal_index].is_finite() {
-        return None;
+        return Ok(None);
     }
     let mut node_path = Vec::new();
     let mut current = goal_index;
@@ -908,7 +920,7 @@ fn graph_route_limited(
     while current != start_index {
         let (parent, _) = previous[current];
         if parent == usize::MAX {
-            return None;
+            return Ok(None);
         }
         current = parent;
         node_path.push(current);
@@ -935,7 +947,7 @@ fn graph_route_limited(
     if route.last() != Some(&goal) {
         route.push(goal);
     }
-    Some(route)
+    Ok(Some(route))
 }
 
 unsafe fn read_cells(ptr: *const LtMlsCell, len: u64) -> Result<Vec<SurfaceCell>, i32> {
@@ -1330,10 +1342,47 @@ pub unsafe extern "C" fn lt_mls_artifact_query_limited(
         SurfaceCell::new(start.x, start.y, start.z),
         SurfaceCell::new(goal.x, goal.y, goal.z),
         Some(max_snap_cells),
-    ) else {
+        None,
+    )
+    .ok()
+    .flatten() else {
         return -2;
     };
     put_buffer(path, route).map_or(-3, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle`, `route` and input cells must be valid pointers. The route is owned
+/// by the caller and must be released with `lt_mls_free_buffer`.
+pub unsafe extern "C" fn lt_mls_artifact_query_budgeted(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsCell,
+    goal: LtMlsCell,
+    max_snap_cells: i32,
+    max_iterations: i32,
+    route: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null() || route.is_null() || max_iterations < 1 {
+        return -1;
+    }
+    let handle = &*handle;
+    let route = &mut *route;
+    lt_mls_free_buffer(route);
+    let result = graph_route_limited(
+        &handle.state.artifact().graph,
+        SurfaceCell::new(start.x, start.y, start.z),
+        SurfaceCell::new(goal.x, goal.y, goal.z),
+        Some(max_snap_cells),
+        Some(max_iterations as usize),
+    );
+    match result {
+        Err(true) => -3,
+        Ok(Some(path)) => put_buffer(path, route).map_or(-4, |_| 0),
+        Ok(None) => -2,
+        Err(false) => -2,
+    }
 }
 
 #[no_mangle]

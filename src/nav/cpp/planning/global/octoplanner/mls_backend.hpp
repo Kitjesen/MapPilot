@@ -63,6 +63,9 @@ struct SurfaceMap {
   std::vector<SurfaceCell> inferred;
 };
 
+void writeSurfaceMap(lingtu::maps::BinaryWriter& out, const SurfaceMap& surface);
+SurfaceMap readSurfaceMap(lingtu::maps::BinaryReader& in);
+
 struct RustGraphSummary {
   std::uint64_t nodes{0};
   std::uint64_t edges{0};
@@ -135,6 +138,9 @@ public:
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal) const;
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
                                  std::int32_t max_snap_cells) const;
+  std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
+                                 std::int32_t max_snap_cells,
+                                 std::int32_t max_iterations) const;
   ArtifactUpdateReport update(
       LtMlsRegion region,
       const std::vector<SurfaceCell>& occupied,
