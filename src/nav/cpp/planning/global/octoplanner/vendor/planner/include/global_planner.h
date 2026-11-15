@@ -194,6 +194,8 @@ public:
     int iterations{0};
     bool used_surface_graph{false};
     bool used_rust_graph{false};
+    bool rust_fallback{false};
+    std::string rust_failure{};
   };
 
   struct RouteValidation

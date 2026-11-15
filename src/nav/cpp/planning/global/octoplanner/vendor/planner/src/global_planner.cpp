@@ -556,6 +556,8 @@ namespace global_planner
                     search_info_.iterations = max_iterations_;
                     return false;
                 }
+                search_info_.rust_fallback = true;
+                search_info_.rust_failure = error.what();
                 printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
                        error.what());
                 if (!artifact_->graph) rebuildSurfaceGraph();

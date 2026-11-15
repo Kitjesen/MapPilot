@@ -501,6 +501,8 @@ struct PlannerRoute {
   bool returned{false};
   bool used_surface_graph{false};
   bool used_rust_graph{false};
+  bool rust_fallback{false};
+  std::string rust_failure;
   std::size_t points{0};
   double length_m{0.0};
   std::vector<global_planner::PointPose> route;
@@ -530,6 +532,8 @@ PlannerRoute runCppPlanner(const std::shared_ptr<octomap::OcTree>& tree,
   result.returned = !path.empty();
   result.used_surface_graph = planner.searchInfo().used_surface_graph;
   result.used_rust_graph = planner.searchInfo().used_rust_graph;
+  result.rust_fallback = planner.searchInfo().rust_fallback;
+  result.rust_failure = planner.searchInfo().rust_failure;
   result.points = path.size();
   result.route = path;
   result.geometry = planner.validateRoute(path);
@@ -710,6 +714,8 @@ int main(int argc, char** argv) try {
             << (cpp_route.returned ? "true" : "false")
             << ",\"used_surface_graph\":" << (cpp_route.used_surface_graph ? "true" : "false")
             << ",\"used_rust_graph\":" << (cpp_route.used_rust_graph ? "true" : "false")
+            << ",\"rust_fallback\":" << (cpp_route.rust_fallback ? "true" : "false")
+            << ",\"rust_failure\":\"" << cpp_route.rust_failure << "\""
             << ",\"route_points\":" << cpp_route.points
             << ",\"route_length_m\":" << cpp_route.length_m
             << ",\"rust_geometry\":\"same_cpp_route_verifier\"},\"cpp_route_geometry\":{";
