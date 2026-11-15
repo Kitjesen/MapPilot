@@ -99,6 +99,20 @@ KERNEL_TARGETS: tuple[KernelTarget, ...] = (
         notes="Good Rust candidate after fixture coverage is frozen.",
     ),
     _target(
+        "mls_core",
+        "global planning preparation",
+        "Extract multi-level surfaces and build sparse corridor graphs for offline A/B comparison",
+        ("src/nav/cpp/planning/global/octoplanner/surface_graph.cpp",),
+        "src/kernels/nav/mls_core",
+        "c_abi",
+        "rust_candidate",
+        "contract_first",
+        notes=(
+            "Standalone Rust kernel. It is not the field planner default until endpoint "
+            "attachment and C++ body/support/sweep equivalence are complete."
+        ),
+    ),
+    _target(
         "camera_lidar_calibration_optimizer",
         "calibration tooling",
         "Estimate camera-LiDAR extrinsics with ICP/GICP and CT interpolation factors",

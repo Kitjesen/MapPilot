@@ -30,6 +30,7 @@ def test_rust_candidates_are_portable_dependency_reduction_targets():
 
     assert rust_targets == {
         "camera_lidar_calibration_optimizer",
+        "mls_core",
         "path_safety",
     }
 
