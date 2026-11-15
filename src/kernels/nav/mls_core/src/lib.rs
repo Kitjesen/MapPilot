@@ -1372,6 +1372,25 @@ mod tests {
     }
 
     #[test]
+    fn skips_empty_height_spans_without_changing_surface_output() {
+        let occupied = [
+            SurfaceCell::new(0, 0, 0),
+            SurfaceCell::new(1, 0, 0),
+            SurfaceCell::new(0, 0, 10_000),
+            SurfaceCell::new(1, 0, 10_000),
+        ];
+        let map = extract_surfaces(
+            &occupied,
+            SurfaceConfig {
+                closing_passes: 1,
+                max_hole_cells: 1,
+                ..SurfaceConfig::default()
+            },
+        );
+        assert!(map.inferred.is_empty());
+    }
+
+    #[test]
     fn builds_sparse_nodes_and_deduplicated_edges() {
         let cells = [
             SurfaceCell::new(0, 0, 0),

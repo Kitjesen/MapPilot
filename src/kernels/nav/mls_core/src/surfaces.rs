@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ops::Bound::Included;
 
 use crate::{SurfaceCell, SurfaceConfig, SurfaceMap};
@@ -67,7 +67,16 @@ fn close_holes(
     let mut inferred = HashSet::new();
     let min_z = *by_z.keys().min().unwrap();
     let max_z = *by_z.keys().max().unwrap();
-    for z in min_z..=max_z {
+    let mut candidate_z = BTreeSet::new();
+    for &layer_z in by_z.keys() {
+        for offset in -band..=band {
+            let z = layer_z.saturating_add(offset);
+            if z >= min_z && z <= max_z {
+                candidate_z.insert(z);
+            }
+        }
+    }
+    for z in candidate_z {
         let mut samples = HashMap::<(i32, i32), SurfaceCell>::new();
         for (_, layer) in by_z.range((Included(z - band), Included(z + band))) {
             for &cell in layer {
