@@ -50,7 +50,7 @@ def test_formal_engine_loads_world_relative_mesh_and_texture(tmp_path, monkeypat
     session = tmp_path / "session"
     session.mkdir()
     config = SimpleNamespace(world="physics/scene.xml", robot=SimpleNamespace(
-        package_root="robot", model="robot/mjcf/thunderv4.xml", policy="policy.bin"
+        package_root="robot", model="robot/mjcf/thunderv4.xml", policy="policy.bin", policy_profiles=()
     ))
     world, robot, _ = formal_feeder._Services.snapshot_artifacts(session, config)
     (assets / "part.obj").unlink()
@@ -125,7 +125,7 @@ def test_headless_snapshot_skips_unused_static_visual_assets_preserving_physics(
       <sensor><framepos name="visual_reference" objtype="geom" objname="referenced"/></sensor>
     </mujoco>''', encoding="utf-8")
     config = SimpleNamespace(world="physics/scene.xml", robot=SimpleNamespace(
-        package_root="robot", model="robot/robot.xml", policy="policy.bin",
+        package_root="robot", model="robot/robot.xml", policy="policy.bin", policy_profiles=(),
     ))
     monkeypatch.setattr(formal_feeder, "_REPOSITORY_ROOT", tmp_path)
     worlds = []

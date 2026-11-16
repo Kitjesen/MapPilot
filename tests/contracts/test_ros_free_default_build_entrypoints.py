@@ -179,7 +179,7 @@ def test_python_ci_installs_locked_extras_and_runs_the_synced_environment() -> N
     assert "uv.lock" in triggers["push"]["paths"]
     assert "docker/**" in triggers["push"]["paths"]
     for job_name, expected_extras in {
-        "test": {"dev", "sim-recording", "nlp"},
+        "test": {"dev", "sim-recording", "nlp", "agent", "llm"},
         "windows-toolchain": {"dev"},
     }.items():
         steps = workflow["jobs"][job_name]["steps"]

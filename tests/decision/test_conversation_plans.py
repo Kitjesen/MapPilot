@@ -29,7 +29,9 @@ def test_real_sdk_plan_finalizes_the_same_stream_message_and_remains_shareable(a
     answers = [row for row in snapshot["messages"] if row["role"] == "assistant"]
     assert turn["state"] == "completed" and turn["kind"] == "plan"
     assert len(answers) == 1 and answers[0]["kind"] == "plan"
-    assert answers[0]["metadata"] == {"status": "completed", "plan": plan}
+    assert answers[0]["metadata"]["status"] == "completed"
+    assert answers[0]["metadata"]["plan"] == plan
+    assert answers[0]["metadata"]["model_metrics"]["model_responses"] == 1
     assert answers[0]["id"] == events[0]["id"] == events[-1]["id"]
     assert events[0]["metadata"]["status"] == "streaming"
     assert events[-1]["metadata"]["plan"] == plan and events[-1]["revision"] > events[0]["revision"]

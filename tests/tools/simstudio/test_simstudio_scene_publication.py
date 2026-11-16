@@ -287,7 +287,7 @@ def test_published_world_is_immediately_composable_with_integrity_bound_projecti
     repo = _repository(tmp_path)
     for relative in (
         "sim/packages/robots/doso/thunder_v4",
-        "sim/packages/controllers/doso/thunder_v4/locomotion",
+        "sim/packages/controllers/doso/thunder_v4/cts_moe",
         "sim/packages/sensor_rigs/doso/thunder_v4/navigation",
         "sim/packages/sensors",
     ):

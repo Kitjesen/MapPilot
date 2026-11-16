@@ -477,8 +477,10 @@ def test_cpp_camera_service_uses_shm_as_default_image_data_plane():
     contract = Path("src/drivers/real/camera/native/shm_frame_ring.hpp").read_text(encoding="utf-8")
     service = Path("scripts/deploy/thunder/lt-camera.service").read_text(encoding="utf-8")
 
-    assert "publish_image_dds{false}" in source
-    assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=0" in service
+    assert "publish_image_dds{lingtu::settings::camera::camera::shm::publish_image_dds}" in source
+    import yaml
+    settings = yaml.safe_load(Path("config/system/settings/camera.yaml").read_text(encoding="utf-8"))
+    assert settings["camera"]["shm"]["publish_image_dds"] is False
     assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=1" not in service
     assert 'arg == "--publish-image-dds"' in source
     assert "FrameWriter color_shm" in source

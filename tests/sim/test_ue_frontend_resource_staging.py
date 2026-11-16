@@ -53,4 +53,5 @@ def test_build_rules_stage_each_front_end_png_explicitly_as_non_ufs() -> None:
         build_rules,
     )
     assert len(selection_staging) == 1
-    assert build_rules.count("StagedFileType.NonUFS") == len(EXPECTED_FRONT_END_PNGS) + 1
+    assert 'Path.Combine(PluginDirectory, "Resources", "Sensors", "*.png")' in build_rules
+    assert build_rules.count("StagedFileType.NonUFS") == len(EXPECTED_FRONT_END_PNGS) + 2

@@ -1,5 +1,7 @@
 # Decision layer
 
+Semantic planning is pure Python Module orchestration; native navigation owns motion execution.
+
 `src/decision/` is the Python semantic decision layer. It converts user intent
 and synchronized perception into typed task decisions, semantic targets,
 visual-servo requests, and status. It does not own sensors, SLAM, maps, global

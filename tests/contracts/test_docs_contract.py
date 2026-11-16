@@ -30,6 +30,7 @@ def test_documentation_ownership_keeps_first_party_checks(monkeypatch, tmp_path)
         "docs/assets/planning/README.md": "# Figures\n",
         "docs/assets/demo/README.md": "# Screenshots\n",
         "sim/packages/README.md": "# Owned models\n[Missing](missing.md)\n",
+        "docs/assets/demo/history.md": "# History\n[Archived run](../../../build/old-run/report.json)\n",
         "sim/.imports/external_robots/upstream/README.md": "Upstream title\n[Missing](missing.md)\n",
     }
     for relative, text in pages.items():
@@ -41,7 +42,7 @@ def test_documentation_ownership_keeps_first_party_checks(monkeypatch, tmp_path)
 
     violations, scanned = validate_docs.validate_repository(tmp_path)
 
-    assert scanned == 4
+    assert scanned == 5
     assert violations == [
         "binary snapshot belongs outside docs or in generated artifacts: docs/assets/planning/snapshot.docx",
         "binary snapshot belongs outside docs or in generated artifacts: docs/snapshot.pdf",

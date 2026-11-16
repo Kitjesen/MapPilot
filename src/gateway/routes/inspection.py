@@ -1417,6 +1417,9 @@ async def get_task(gw, task_id: str):
 
 
 def register_inspection_routes(app, gw) -> None:
+    if gw is None:
+        return
+
     @app.get(
         "/api/v1/inspection/evidence",
         summary="List recent verified inspection evidence",

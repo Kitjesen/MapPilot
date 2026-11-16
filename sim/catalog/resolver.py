@@ -517,7 +517,7 @@ class ResolvedSession:
         return bundle_dir
 
 
-def resolve_robot_default_policy(repo_root: Path, robot_ref: str = "thunderv4@1.0.3") -> dict[str, Path]:
+def resolve_robot_default_policy(repo_root: Path, robot_ref: str) -> dict[str, Path]:
     """Resolve development defaults; running Products consume their compiled plan."""
     root = Path(repo_root).resolve()
     packages = root / "sim" / "packages"

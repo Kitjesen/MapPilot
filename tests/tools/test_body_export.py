@@ -13,6 +13,29 @@ from tools.bench.body_export import DEFAULT_URDF, export_body
 from tools.bench.body_model import BodyModel
 
 
+def assert_body_equal(actual, expected):
+    lines = actual.read_text(encoding="utf-8").splitlines()
+    reference = expected.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == reference[0]
+    assert len(lines) == len(reference)
+    for row, saved in zip(lines[1:], reference[1:]):
+        row, saved = row.split(), saved.split()
+        assert (row[0], row[16], row[19:]) == (saved[0], saved[16], saved[19:])
+        assert list(map(float, row[1:16] + row[17:19])) == pytest.approx(
+            list(map(float, saved[1:16] + saved[17:19])), abs=1e-12, rel=0)
+
+
+def normalized_numbers(value):
+    # Preserve report structure while ignoring platform math differences below 1 pm.
+    if isinstance(value, float):
+        return round(value, 12)
+    if isinstance(value, list):
+        return [normalized_numbers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: normalized_numbers(item) for key, item in value.items()}
+    return value
+
+
 def primitive_points(geom):
     size, kind = geom["size"], geom["type"]
     if kind == "box":
@@ -177,8 +200,8 @@ def test_selected_go2_model_regenerates_from_raised_installation(tmp_path):
     generated = tmp_path / "go2.body2"
     report = export_go2(generated)
     selected = ROOT / GO2_BODY
-    assert generated.read_bytes() == selected.read_bytes()
-    assert report == json.loads(selected.with_suffix(".json").read_text(encoding="utf-8"))
+    assert_body_equal(generated, selected)
+    assert normalized_numbers(report) == normalized_numbers(json.loads(selected.with_suffix(".json").read_text(encoding="utf-8")))
     geometry = yaml.safe_load((selected.parent.parent / "robot.yaml").read_text(encoding="utf-8"))["geometry"]
     assert "navigation_body_file" not in geometry
     assert report["primitive_count"] == 17
@@ -210,8 +233,8 @@ def test_thunder_model_regenerates_identically_for_real_and_sim(tmp_path):
     generated, sim_generated = tmp_path / "thunder.body2", tmp_path / "sim" / "thunder.body2"
     report = export_thunder(generated, sim_generated)
     assert generated.read_bytes() == sim_generated.read_bytes()
-    assert generated.read_bytes() == (ROOT / THUNDER_BODY).read_bytes()
-    assert generated.read_bytes() == (ROOT / THUNDER_SIM_BODY).read_bytes()
+    assert_body_equal(generated, ROOT / THUNDER_BODY)
+    assert_body_equal(generated, ROOT / THUNDER_SIM_BODY)
     assert report == json.loads((ROOT / THUNDER_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     assert report == json.loads((ROOT / THUNDER_SIM_BODY).with_suffix(".json").read_text(encoding="utf-8"))
     geometry = yaml.safe_load((ROOT / THUNDER_BODY).parent.parent.joinpath("robot.yaml").read_text(encoding="utf-8"))["geometry"]

@@ -844,7 +844,7 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
     assert plan.host_config["enable_camera"] is (product in {"inspection", "tracking"})
 
 
-def test_inspection_truth_run_plan_reuses_nav_world_and_spawn() -> None:
+def test_inspection_truth_run_plan_reuses_nav_world_and_spawn(allow_unbuilt_process_artifacts) -> None:
     env_config = {"backend": "mujoco", "localization": "truth"}
     nav = compile_run_plan("nav", "sim", robot="doso/thunder_v4", env_config=env_config)
     inspection = compile_run_plan(
@@ -880,7 +880,9 @@ def test_scan_is_a_nav_local_planner_selection(
     assert plan.product == "nav"
     assert plan.product_variant == "standard"
     assert plan.native_nav["local_planner"] == "scan"
-    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert "cmu" in plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"].split(",")
+    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"].endswith("/thunder")
     assert target.product == "nav"
     assert target.manifest.name == "local_scan.json"
     assert restored == plan

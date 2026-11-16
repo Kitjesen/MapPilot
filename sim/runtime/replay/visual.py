@@ -228,7 +228,7 @@ def run_visual_replay(
         repo_root=config.repo_root,
     )
     capture_dir = allocation.log_dir / _CAPTURE_DIRECTORY
-    capture_started_at_ns = _prepare_capture_directory(capture_dir)
+    _prepare_capture_directory(capture_dir)
     visual_evidence = allocation.log_dir / _VISUAL_EVIDENCE_FILENAME
     screenshot = allocation.log_dir / _FIRST_FRAME_FILENAME
     runtime_manifest = allocation.run_dir / "session.runtime.json"
@@ -304,7 +304,6 @@ def run_visual_replay(
         captured_frames = _wait_for_frames(
             capture_dir,
             minimum=config.minimum_frames,
-            capture_started_at_ns=capture_started_at_ns,
             visual=visual,
             timeout_s=config.frame_timeout_s,
             monotonic=monotonic,
@@ -495,7 +494,6 @@ def _wait_for_frames(
     directory: Path,
     *,
     minimum: int,
-    capture_started_at_ns: int,
     visual: _VisualProcess,
     timeout_s: float,
     monotonic: Callable[[], float],
@@ -504,7 +502,7 @@ def _wait_for_frames(
     deadline = monotonic() + timeout_s
     while True:
         _fail_if_visual_exited(visual, "before replay frame capture completed")
-        frames = _valid_pngs(directory, capture_started_at_ns=capture_started_at_ns)
+        frames = _valid_pngs(directory)
         if len(frames) >= minimum:
             return frames
         if monotonic() >= deadline:
@@ -515,21 +513,19 @@ def _wait_for_frames(
         sleep(min(0.05, max(0.0, deadline - monotonic())))
 
 
-def _prepare_capture_directory(path: Path) -> int:
+def _prepare_capture_directory(path: Path) -> None:
     if path.exists():
         if not path.is_dir() or next(path.iterdir(), None) is not None:
             raise VisualReplayError(f"replay frame capture directory must be empty: {path}")
     else:
         path.mkdir()
-    return time.time_ns()
 
 
-def _valid_pngs(directory: Path, *, capture_started_at_ns: int) -> tuple[Path, ...]:
+def _valid_pngs(directory: Path) -> tuple[Path, ...]:
     frames: list[Path] = []
     for path in sorted(directory.glob("frame_*.png")):
         try:
-            metadata = path.stat()
-            if metadata.st_mtime_ns < capture_started_at_ns or _png_size(path) is None:
+            if _png_size(path) is None:
                 continue
         except OSError:
             continue

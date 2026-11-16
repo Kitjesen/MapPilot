@@ -1128,6 +1128,15 @@ def test_mujoco_native_dds_runtime_stage_profiler_keeps_ranked_slow_evidence():
     ]
 
 
+def _ltlio_profile(path):
+    import yaml
+
+    path = Path(path)
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    defaults = yaml.safe_load((path.parent / profile.pop("defaults")).read_text(encoding="utf-8"))["slam"]
+    return {**defaults, **profile}
+
+
 def test_mujoco_native_dds_odom_prior_contract_is_wired():
     from sim.scripts.mujoco import native_dds_sensors as bridge
     from sim.scripts.mujoco import native_sensor_records
@@ -1147,7 +1156,7 @@ def test_mujoco_native_dds_odom_prior_contract_is_wired():
     assert "publish_odom_prior" in sdk_source
     assert "drainOdomPrior" in runtime_source
     assert "tracking_with_odom_prior" in ltlio_source
-    assert "odom_prior_enabled: false" in config_source
+    assert _ltlio_profile("src/localization/ltlio/config/sim_mid360_slam.yaml")["odom_prior_enabled"] is False
     assert "kSlamOdomPrior" in topics_source
     assert "rt/slam/odom_prior" in topics_source
 
@@ -2595,7 +2604,7 @@ def test_mujoco_native_dds_ltlio_config_uses_sim_gravity_scale():
     import yaml
 
     cfg = Path("src/localization/ltlio/config/sim_mid360_slam.yaml")
-    config = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    config = _ltlio_profile(cfg)
 
     assert config["acc_scale"] == pytest.approx(9.80665)
     assert config["r_il"] == pytest.approx([
@@ -2721,7 +2730,7 @@ def test_semantic_namespace_wrappers_expose_runtime_import_paths():
 def test_ltlio_profiles_retain_geometry_and_resource_contracts(profile):
     import yaml
 
-    config = yaml.safe_load(Path(profile).read_text(encoding="utf-8"))
+    config = _ltlio_profile(profile)
     assert config["near_search_num"] == 5
     assert config["ieskf_max_iter"] == 5
     assert config["lidar_filter_num"] == 2
@@ -4137,7 +4146,7 @@ def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
     assert "`scripts/lingtu` only executes `python -m lingtu.control`" in scripts_index
     assert "scripts/ota/" not in scripts_index
     assert "scripts/deploy/package_native_release.sh" in release_guide
-    assert "python3 -m lingtu.control" in installer
+    assert '"${PYTHON_BIN}" -m lingtu.control' in installer
 
 def test_sim_boundary_indexes_document_stable_contracts():
     repo_root = Path(__file__).resolve().parents[2]

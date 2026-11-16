@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("agents")
+
 from decision.mcp.client import Connections, content_for_conversation
 from decision.mcp.config import load_servers
 

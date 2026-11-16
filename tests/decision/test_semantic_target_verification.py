@@ -85,7 +85,8 @@ def harness(monkeypatch):
 
     def status(value):
         statuses.append(value)
-        if value in {"COMPLETED", "TARGET_VERIFICATION_TIMEOUT", "TARGET_MISMATCH", "TARGET_UNCONFIRMED"}:
+        if value in {"COMPLETED", "TARGET_VERIFICATION_TIMEOUT", "TARGET_MISMATCH", "TARGET_UNCONFIRMED",
+                     "TARGET_VERIFICATION_UNAVAILABLE"}:
             completed.set()
 
     module.nav_command.subscribe(goal)

@@ -15,7 +15,7 @@ from dataclasses import asdict, replace
 from typing import Any
 from urllib.parse import quote
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from runtime.contracts.sensor_control import SensorControlResult
 from runtime.msgs.measurement import AcousticMeasurement, SemanticMeasurement, ThermalMeasurement

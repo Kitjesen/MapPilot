@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 

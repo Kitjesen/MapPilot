@@ -19,16 +19,17 @@ test('robot status normalizes negative zero before rendering telemetry', () => {
 test('robot status value slots reserve stable widths', () => {
   assert.match(sceneSource, /styles\.robotPositionValue/)
   assert.match(sceneSource, /styles\.robotYawValue/)
-  assert.match(sceneSource, /styles\.robotSpeedValue/)
+  assert.match(sceneSource, /styles\.commandTable/)
   assert.match(sceneStyles, /\.robotPositionValue[\s\S]*?inline-size:/)
   assert.match(sceneStyles, /\.robotYawValue[\s\S]*?inline-size:/)
-  assert.match(sceneStyles, /\.robotSpeedValue[\s\S]*?inline-size:/)
+  assert.match(sceneStyles, /\.commandTable[^}]*font-variant-numeric: tabular-nums/)
 })
 
 test('robot status presents session mileage as secondary telemetry', () => {
   assert.match(sceneSource, /session_distance_m/)
   assert.match(sceneSource, /displaySessionDistance/)
-  assert.match(sceneSource, />本次里程<\/span>/)
+  assert.match(sceneSource, /title="本次定位进程累计里程，不含全局位置修正"/)
+  assert.match(sceneSource, />里程<\/span><strong>\{displaySessionDistance\}/)
 })
 
 test('navigation details render all operator axes from navigation status', () => {
@@ -39,7 +40,7 @@ test('navigation details render all operator axes from navigation status', () =>
   assert.match(sceneSource, /navigationView\.control\.label/)
   assert.match(sceneSource, /navigationView\.motion\.permission\.label/)
   assert.match(sceneSource, /navigationView\.motion\.message/)
-  assert.match(sceneSource, /navigationView\.goalAdmission\.message/)
+  assert.match(sceneSource, /navigationView\.goalAdmission\.label/)
   assert.match(sceneSource, /navigationView\.motion\.stopConfirmation\.label/)
   assert.doesNotMatch(sceneSource, /navigationView\.summary/)
   assert.doesNotMatch(sceneSource, /missionStatus/)
@@ -106,10 +107,10 @@ test('scene retains operational controls while showing failures outside collapse
   assert.ok(alertStart < sceneSource.indexOf('<Scene3D', alertStart))
   assert.doesNotMatch(sceneSource, /styles\.canvasHeader|styles\.sceneFooter/)
   assert.doesNotMatch(sceneSource, /styles\.canvasIdentity/, 'map identity belongs to the compact global capsule')
-  assert.match(sceneSource, /aria-label="机器人状态"/)
+  assert.match(sceneSource, /aria-label="机器人诊断"/)
   assert.doesNotMatch(sceneSource, /styles\.sceneHeading/)
-  assert.match(sceneSource, /sseState\.connected && \(operatorAttention \|\| motionHeld\)/)
-  assert.match(sceneSource, /<summary>位姿与控制详情<\/summary>/)
+  assert.match(sceneSource, /robotStatusMessage && <div[^>]*role="status"/)
+  assert.match(sceneSource, /<summary>控制与定位详情<\/summary>/)
   assert.match(sceneSource, /<summary>雷达数据<\/summary>/)
 })
 
@@ -130,7 +131,8 @@ test('mapping opens on the cumulative map and keeps the local projection explici
 
 test('keyboard mode stays beside the scene and outside the inspector', () => {
   const mode = sceneSource.indexOf('<TeleopPanel');
-  assert.ok(mode < sceneSource.indexOf('<aside className={styles.sidePanel}'));
+  const inspector = sceneSource.indexOf('id="scene-inspector"');
+  assert.ok(mode >= 0 && inspector > mode);
   assert.match(sceneSource, /teleopMode && !drawerOpen/);
   assert.match(sceneSource, /aria-pressed=\{teleopMode\}/);
   assert.doesNotMatch(sceneSource, /teleopPanelOpen|<FloatingWidget/);

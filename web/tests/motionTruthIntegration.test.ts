@@ -87,9 +87,10 @@ test('scene preview is read-only and single-goal admission belongs to navigation
   assert.match(dispatch, /if \(!res\.ok\)/)
   const disabled = scene.match(/onClick=\{handleConfirmGoal\}\s+disabled=\{([^}]+)\}/)?.[1]
   assert.ok(disabled)
-  for (const gate of ['goalSendPending', 'goalHeadingEditing', 'goalYaw === undefined', 'goalPreviewPending', '!previewCurrent', '!plannedGoal', '!canSendGoal']) {
+  for (const gate of ['goalSendPending', 'goalHeadingEditing', 'goalPreviewPending', '!previewCurrent', '!plannedGoal', '!canSendGoal']) {
     assert.ok(disabled.includes(gate), `goal confirmation must retain ${gate}`)
   }
+  assert.ok(!disabled.includes('goalYaw === undefined'), 'an unspecified final heading must remain navigable')
   assert.match(scene, /hasGoal \? '切换到此目标' : '开始导航'/)
   assert.doesNotMatch(scene, />重新预览<|>预览路径</)
 })

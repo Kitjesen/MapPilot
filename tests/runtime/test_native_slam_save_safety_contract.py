@@ -10,11 +10,12 @@ DRIVER_UNIT = ROOT / "scripts" / "deploy" / "thunder" / "lt-driver.service"
 def test_ltlio_save_preserves_correction_and_raw_patch_evidence() -> None:
     source = LTLIO_SOURCE.read_text(encoding="utf-8")
 
-    assert "pcl::io::savePCDFileBinary(capture.pcd.string(), capture.cloud)" in source
+    assert "std::ofstream out(capture.pcd, std::ios::binary)" in source
+    assert "pcl::PCDWriter::generateHeader<PointType>" in source
     assert "writeTrajectory(capture.pcd.parent_path(), capture.trajectory)" in source
-    assert "sample.odom_body = slamPose(opt::compose_pose(correction, graphPose(sample.odom_body)))" in source
-    assert "patches[i].pose = slamPose(pose)" in source
-    assert "opt::rotate_vector(pose, point.x, point.y, point.z)" in source
+    assert "sample.odom_body = slamPose(map_optimization::compose_pose(correction, graphPose(sample.odom_body)))" in source
+    assert "capture.patches[i].pose = slamPose(map_optimization::compose_pose(" in source
+    assert "map_optimization::rotate_vector(pose, point.x, point.y, point.z)" in source
     admission = source.split("Status startSaveMapAsync(", 1)[1].split(
         "bool saveMapAsyncInFlight()", 1
     )[0]

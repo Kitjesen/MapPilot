@@ -2525,12 +2525,14 @@ dev = [
     { name = "fastapi" },
     { name = "grpcio" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pip" },
     { name = "protobuf" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
+    { name = "referencing" },
     { name = "ruff" },
     { name = "setuptools" },
     { name = "uvicorn" },
@@ -2561,6 +2563,7 @@ perception = [
     { name = "ultralytics" },
 ]
 sim-mujoco = [
+    { name = "jsonschema" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "mujoco-lidar" },
@@ -2569,6 +2572,7 @@ sim-mujoco = [
 ]
 sim-recording = [
     { name = "imageio" },
+    { name = "jsonschema" },
     { name = "mujoco", version = "3.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "mujoco", version = "4.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "mujoco-lidar" },
@@ -2596,6 +2600,8 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'gateway'" },
     { name = "imageio", marker = "extra == 'sim-recording'", specifier = ">=2.31" },
     { name = "jieba", marker = "extra == 'nlp'", specifier = ">=0.42" },
+    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "jsonschema", marker = "extra == 'sim-mujoco'", specifier = ">=4.0" },
     { name = "lingtu", extras = ["gateway"], marker = "extra == 'dev'" },
     { name = "lingtu", extras = ["gateway", "vision", "ml", "llm", "nlp", "agent", "perception", "vector"], marker = "extra == 'all'" },
     { name = "lingtu", extras = ["sim-mujoco", "vision"], marker = "extra == 'sim-recording'" },
@@ -2617,6 +2623,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0" },
+    { name = "referencing", marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.0" },
     { name = "scipy", specifier = ">=1.10" },

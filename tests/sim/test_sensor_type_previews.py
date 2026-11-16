@@ -88,8 +88,19 @@ def test_regeneration_matches_bundled_sources_and_manifest(tmp_path):
     assert {p.name for p in generated} == EXPECTED_FILES
     check_pack(tmp_path / "fresh")
     for path in generated:
-        if path.suffix != ".png":
-            assert path.read_bytes() == (ASSETS / path.name).read_bytes()
+        if path.suffix == ".svg":
+            actual, expected = list(ET.parse(path).iter()), list(ET.parse(ASSETS / path.name).iter())
+            assert len(actual) == len(expected)
+            for node, reference in zip(actual, expected):
+                assert (node.tag, node.text, node.attrib.keys()) == (reference.tag, reference.text, reference.attrib.keys())
+                for key, value in node.attrib.items():
+                    if key in {"cx", "cy"}:
+                        # Trigonometric centres differ by one ULP between Windows and Linux.
+                        assert float(value) == pytest.approx(float(reference.attrib[key]), abs=1e-12, rel=0)
+                    else:
+                        assert value == reference.attrib[key]
+        elif path.suffix != ".png":
+            assert path.read_text(encoding="utf-8") == (ASSETS / path.name).read_text(encoding="utf-8")
     rasters = []
     for key in MODALITIES:
         with image.open(tmp_path / "fresh" / f"{key}.png") as png:
