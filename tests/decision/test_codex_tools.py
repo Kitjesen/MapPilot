@@ -19,6 +19,15 @@ def tool_responses(peer):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning", ["default", "low", "medium", "high", "xhigh"])
+async def test_codex_reasoning_selection_reaches_native_turn(codex_server, reasoning):
+    result = await turn(None, selected_model="codex:gpt-6.1-sol", reasoning=reasoning)
+    assert result.kind == "reply"
+    request = next(item for item in codex_server.messages() if item.get("method") == "turn/start")
+    assert request["params"]["effort"] == ("medium" if reasoning == "default" else reasoning)
+
+
+@pytest.mark.asyncio
 async def test_codex_asks_with_options_and_interrupts_native_turn(codex_server):
     codex_server.scenario.update(tool="ask_user", arguments={
         "question": "选择目标？", "options": ["入口", "出口"]})

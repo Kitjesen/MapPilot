@@ -250,6 +250,7 @@ class CodexAppServer:
 
     def chat(self, messages: list[dict], *, model: str, cwd: str | None = None,
              permission_mode: str = "default",
+             reasoning: str = "default",
              on_event: Callable[[dict], None] | None = None,
              approval_handler: Callable[[dict], str] | None = None,
              tools: list[dict] | None = None, instructions: str = "",
@@ -280,6 +281,7 @@ class CodexAppServer:
             inputs, temporary = self._input(messages)
             self._write({"jsonrpc": "2.0", "id": request_id, "method": "turn/start", "params": {
                 "threadId": thread_id, "input": inputs, "approvalPolicy": approval_policy,
+                "effort": "medium" if reasoning == "default" else reasoning,
                 "sandbox": "workspace-write" if permission_mode != "read_only" else "read-only",
             }})
             started = False

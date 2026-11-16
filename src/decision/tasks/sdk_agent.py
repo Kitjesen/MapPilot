@@ -352,6 +352,7 @@ async def run_turn(
 
             codex_worker = asyncio.create_task(asyncio.to_thread(
                 app_server.chat, input_items, model=config.model, permission_mode=permission_mode,
+                reasoning=reasoning,
                 on_event=on_event, approval_handler=approval_handler, tools=definitions,
                 instructions=instructions, invoke_tool=bridge, stop=codex_stop))
             try:

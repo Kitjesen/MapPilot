@@ -23,10 +23,10 @@ function observationScene(
       producer_boot_id: 'mapd-a', reset_epoch: '2', generation: 4, observation_sequence: 8, live: true,
     },
     layers: [{
-      id: 'maps.surface_projection', type: 'grid', frame_id: 'map',
+      id: 'maps.occupancy', type: 'grid', frame_id: 'map',
       producer_boot_id: 'mapd-a', reset_epoch: '2', generation: 4, observation_sequence: 8, live: true,
       stamp_s: 100, rows: 2, cols: 3, resolution: 0.5, origin: [10, 20, 0.2], yaw: 0,
-      encoding: 'int8', value_semantics: 'ground_relative_surface_not_traversability', scope: 'rolling_window',
+      encoding: 'int8', value_semantics: 'height_band_occupancy_not_traversability', scope: 'rolling_window',
       downsample_factor: 1, grid_b64: Buffer.from(values).toString('base64'),
       unknown_count: values.filter(value => value === -1).length,
       free_count: values.filter(value => value === 0).length,
@@ -119,7 +119,7 @@ test('an explicit omitted grid clears prior data without reporting missing sourc
   assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'ready')
   const omitted = {
     ...scene,
-    layers: [{ id: 'maps.surface_projection', payload: 'omitted', retain_previous: false }],
+    layers: [{ id: 'maps.occupancy', payload: 'omitted', retain_previous: false }],
   }
   const state = resolveMappingObservation(omitted, { nowS: 101 })
   assert.deepEqual(state, { status: 'unavailable', message: '观测图暂不可用，等待新数据' })
@@ -155,7 +155,7 @@ test('malformed payloads, non-contract values, incorrect counts and invalid geom
 test('world lookup applies inverse yaw and never infers cells outside the rolling window', () => {
   const state = resolveMappingObservation(observationScene(undefined, { yaw: Math.PI / 2 }), { nowS: 101 })
   assert.deepEqual(mappingObservationPointAt(state, 9.75, 20.25), {
-    row: 0, col: 0, value: -1, label: '未确认 · 缺少地面依据',
+    row: 0, col: 0, value: -1, label: '未确认 · 高度范围内缺少观测',
   })
   assert.equal(mappingObservationPointAt(state, 9.75, 21.25)?.value, 100)
   assert.equal(mappingObservationPointAt(state, 9.25, 21.25)?.value, 0)
@@ -187,9 +187,15 @@ test('Three raster preserves each source cell without a subcell pattern and keep
 })
 
 
-test('raw height-band occupancy must never be displayed as ground-relative obstacles', () => {
-  const scene = observationScene(undefined, {
-    id: 'maps.occupancy', value_semantics: 'height_band_occupancy_not_traversability',
+test('production raw height-band occupancy remains visible with exact occupancy labels', () => {
+  const scene = observationScene()
+  const state = resolveMappingObservation(scene, { nowS: 101 })
+  assert.equal(state.status, 'ready')
+  assert.equal(mappingObservationPointAt(state, 10.75, 20.25)?.label, '空闲观测 · 当前高度范围')
+  assert.equal(mappingObservationPointAt(state, 11.25, 20.25)?.label, '占据观测 · 当前高度范围')
+  assert.doesNotMatch(state.message, /支撑|地面相对|通行/)
+  const surface = observationScene(undefined, {
+    id: 'maps.surface_projection', value_semantics: 'ground_relative_surface_not_traversability',
   })
-  assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'unavailable')
+  assert.equal(resolveMappingObservation(surface, { nowS: 101 }).status, 'unavailable')
 })

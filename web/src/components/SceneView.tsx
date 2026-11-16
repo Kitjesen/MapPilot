@@ -916,10 +916,7 @@ function SceneViewComponent({
     ? mappingProbe : null
   const mappingProbeCell = currentMappingProbe
     ? mappingObservationPointAt(mappingObservation, currentMappingProbe.x, currentMappingProbe.y) : null
-  const mappingProbeLabel = mappingProbeCell?.value === 100 ? '障碍回波 · 高于附近地面'
-    : mappingProbeCell?.value === 0 ? '支撑候选 · 已观测低表面'
-      : mappingProbeCell?.value === -1 ? '未确认 · 缺少地面依据'
-        : '当前窗口之外'
+  const mappingProbeLabel = mappingProbeCell?.label ?? '当前窗口之外'
   const initialMappingView = useRef<string | null>(null)
   useEffect(() => {
     const key = `${session?.product_session_id}:${poseEpoch}:${mappingView}`
@@ -2731,8 +2728,8 @@ function SceneViewComponent({
               </div>
               <p>{mappingObservation.status !== 'ready' ? '连接恢复并收到新观测后再检查。'
                 : mappingProbeCell?.value === -1 ? '这里缺少有效观测。请从另一位置或朝向补扫。'
-                : mappingProbeCell?.value === 100 ? '此处有高于附近地面的回波；切换空间点云可查看三维形态。'
-                : mappingProbeCell?.value === 0 ? '此处观测到与附近低表面相连的支撑候选；仍需三维路径检查。'
+                : mappingProbeCell?.value === 100 ? '当前高度范围内有占据观测；切换空间点云可查看三维形态。'
+                : mappingProbeCell?.value === 0 ? '当前高度范围内观测为空闲；这不代表地面有支撑或可以通行。'
                 : '这里不在当前滚动窗口内，不能判断是否已经建图。'}</p>
               <small>仅显示当前占据观测，不代表地面拟合或通行许可。</small>
               <small>仅检查地图，不发送运动目标</small>
@@ -3248,10 +3245,10 @@ function SceneViewComponent({
                     : '点云空白不代表可通行'}</p>}
                   {isMappingSession && <section aria-label="建图显示图例">
                   {showMappingObservation ? <>
-                    <p className={styles.mappingTruth}>地面相对高度 · 不代表可通行</p>
+                    <p className={styles.mappingTruth}>高度范围内占据 · 不代表可通行</p>
                     <div className={styles.mappingObservationLegend}>
-                      <span><i style={{ background: 'rgba(83, 133, 129, 0.49)' }} />支撑候选</span>
-                      <span><i style={{ background: 'rgba(201, 111, 99, 0.90)' }} />障碍回波</span>
+                      <span><i style={{ background: 'rgba(83, 133, 129, 0.49)' }} />空闲观测</span>
+                      <span><i style={{ background: 'rgba(201, 111, 99, 0.90)' }} />占据观测</span>
                       <span><i className={styles.unobservedSwatch} />未确认</span>
                     </div>
                     {mappingObservation.status !== 'ready' && <span>{!sseState.connected
@@ -3268,9 +3265,9 @@ function SceneViewComponent({
                       : '当前局部窗口 · 切换整图查看累计范围'}</span>
                   </>}
                   {sceneDebugTools && <details><summary>诊断说明</summary>
-                    <p>红格表示比附近支撑候选高 12–80 cm 的占据回波。地面回波保留在三维地图中，不再直接染红。</p>
+                    <p>红格表示当前高度范围内的占据观测，绿色表示已观测空闲；未知区域不推断为空闲。</p>
                     <p>二维投影不是地面高度，也不判断通行；导航使用三维地图。</p>
-                    <p>点击格子可查看局部表面拟合高度、残差和细 XY 支撑数；缺失时不作推断。</p>
+                    <p>点击格子可查看当前占据分类；此视图不提供地面拟合或支撑判断。</p>
                     {mappingObservation.status === 'ready' && <>
                       <p>当前窗口 {(mappingObservation.layer.cols * mappingObservation.layer.resolution).toFixed(1)} × {(mappingObservation.layer.rows * mappingObservation.layer.resolution).toFixed(1)} m</p>
                     </>}
