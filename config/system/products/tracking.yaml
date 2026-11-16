@@ -38,7 +38,8 @@ requires_map: true
 switch_policy: cold_restart
 online_hot_switch_supported: false
 host:
-  capabilities: [gateway, navigation_skills, goal_commands, semantic]
+  capabilities: [gateway, navigation_skills, goal_commands, semantic, conversation]
+  detector: yolo_trt
   llm: kimi
   default_classes: person
   run_startup_checks: true
@@ -46,8 +47,9 @@ includes: [control, lidar, slam, maps, limits, follower, global, local, teleop, 
 native_nav:
   local_planner: cmu
   local_planners: [cmu, scan]
-  # SCAN requires the native control loop to run at its supported cadence.
-  tick_hz: 100.0
+  tick_hz: 20.0
+  # CMU uses the generic control cadence. SCAN selection is promoted to its
+  # required 100 Hz cadence during Product resolution.
   follower:
     max_yaw_rate_rad_s: 1.0
   use_traversability_cost: true

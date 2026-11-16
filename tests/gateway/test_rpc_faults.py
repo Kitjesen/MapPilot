@@ -91,7 +91,7 @@ def test_ready_control_loop_fault_is_warning(snapshots):
     result = faults.read()
     assert result.health == pb.HEALTH_STATUS_WARNING
     assert result.faults[0].source == "navigation.control_loop"
-    assert result.faults[0].code == "deadline_miss_ratio_high"
+    assert result.faults[0].code == "21102"
     assert result.faults[0].severity == pb.FAULT_SEVERITY_WARNING
 
 

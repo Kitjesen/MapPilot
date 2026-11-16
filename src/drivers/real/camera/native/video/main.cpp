@@ -198,8 +198,13 @@ int run(const Options& options) {
             << ",\"submit_us\":" << submit_us << ",\"age_us\":" << (before_submit - frame.timestamp_ns) / 1000
             << ",\"skipped\":" << skipped_here << '}';
       emit(event.str());
-      // No catch-up bursts: the shared ring holds the next latest raw frame.
-      next_frame = submit_start + interval;
+      // Keep an absolute cadence. Scheduling from submit_start adds the SHM
+      // read time to every period (30 Hz becomes about 20 Hz on this board).
+      // If encoding falls behind, skip catch-up bursts and resume from now.
+      next_frame += interval;
+      if (next_frame < Clock::now()) {
+        next_frame = Clock::now();
+      }
     }
   } catch (const video::Cancelled&) {
     encoder.abort();

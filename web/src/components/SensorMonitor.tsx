@@ -63,6 +63,7 @@ function SensorPicker({ cards, anchor, opener, onOpen, onClose }: { cards: CardS
 
 export function SensorMonitorProvider({ children, onAnalyze, sseState, localNowS, locale = 'zh' }: { children: ReactNode; onAnalyze?: (id: string, start: number, end: number) => void; sseState?: SSEState; localNowS?: number; locale?: Locale }) {
   const [cards, setCards] = useState<CardState[]>([])
+  const [activeId, setActiveId] = useState<SensorId | null>(null)
   const [catalog, setCatalog] = useState<{ anchor: DOMRect | null; opener: HTMLElement | null } | null>(null)
   const [focus, setFocus] = useState<{ id: SensorId } | null>(null)
   const open = useCallback((view: SensorView, anchor?: HTMLElement) => {
@@ -70,6 +71,7 @@ export function SensorMonitorProvider({ children, onAnalyze, sseState, localNowS
     setCatalog(null)
     setCards(previous => previous.some(card => card.id === view) ? previous.map(card => card.id === view ? { ...card, collapsed: false } : card) : [...previous, { id: view, collapsed: false, expanded: false }])
     setFocus({ id: view })
+    setActiveId(view)
   }, [])
   const closeCatalog = useCallback(() => setCatalog(null), [])
   const showImu = useCallback(() => open('imu'), [open])
@@ -78,16 +80,25 @@ export function SensorMonitorProvider({ children, onAnalyze, sseState, localNowS
     const card = document.getElementById(`sensor-card-${focus.id}`)
     card?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); card?.focus({ preventScroll: true })
   }, [focus])
-  const close = (id: SensorId) => setCards(previous => previous.filter(card => card.id !== id))
+  const close = (id: SensorId) => {
+    const index = cards.findIndex(card => card.id === id)
+    const nextActive = activeId === id ? cards[index + 1]?.id ?? cards[index - 1]?.id ?? null : activeId
+    setCards(previous => previous.filter(card => card.id !== id))
+    if (activeId === id) setActiveId(nextActive)
+  }
   const toggle = (id: SensorId, field: 'collapsed' | 'expanded') => setCards(previous => previous.map(card => {
     if (card.id !== id) return card
     return field === 'expanded' ? { ...card, expanded: !card.expanded, collapsed: false } : { ...card, collapsed: !card.collapsed }
   }))
   return <SensorMonitorContext.Provider value={open}><ImuMonitorContext.Provider value={showImu}>
     {children}
-    {cards.length > 0 && <section className={styles.workspace} data-single={cards.length === 1 && !cards[0].expanded} aria-label="传感器工作区">
+    {cards.length > 0 && <section className={styles.workspace} data-single={cards.length === 1 && !cards[0].expanded} data-tabs={cards.length > 1} aria-label="传感器工作区">
       <header className={styles.workspaceHeader}><span>观测 <b>{cards.length}</b></span><button type="button" onClick={event => open('catalog', event.currentTarget)}><Plus size={14} />添加组件</button></header>
-      <div className={styles.cardGrid}>{cards.map(card => <SensorFrame key={card.id} id={card.id} collapsed={card.collapsed} expanded={card.expanded}
+      {cards.length > 1 && <nav className={styles.cardTabs} aria-label="切换传感器卡片" role="tablist">{cards.map(card => {
+        const item = sensorCards.find(sensor => sensor.id === card.id)!
+        return <button key={card.id} type="button" role="tab" aria-selected={activeId === card.id} onClick={() => { setActiveId(card.id); setFocus({ id: card.id }) }}><SensorMark sensor={card.id} size={16} style={{ color: item.color }} /><span>{item.name}</span></button>
+      })}</nav>}
+      <div className={styles.cardGrid} data-tabs={cards.length > 1}>{cards.map(card => <SensorFrame key={card.id} id={card.id} active={activeId === card.id} collapsed={card.collapsed} expanded={card.expanded}
         onCollapse={() => toggle(card.id, 'collapsed')} onExpand={() => toggle(card.id, 'expanded')} onClose={() => close(card.id)}>
             <Suspense fallback={<p className={styles.loading} role="status">正在连接组件…</p>}>
               {card.id === 'imu' && <ImuPanel onAnalyze={onAnalyze} />}

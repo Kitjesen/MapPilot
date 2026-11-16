@@ -6,7 +6,7 @@ export function readMapEditRecipe(result: Record<string, unknown>): { source: Ma
   if (!recipe || typeof recipe.map_id !== 'string' || !recipe.map_id
     || !Number.isSafeInteger(recipe.expected_source_content_epoch) || (recipe.expected_source_content_epoch as number) < 1
     || !Array.isArray(recipe.operations) || typeof result.frame_id !== 'string' || !result.frame_id) {
-    throw new Error('预览缺少地图版本或坐标系，请重新生成。')
+    throw new Error('预览缺少地图内容或坐标系，请重新生成。')
   }
   const operations: unknown[] = recipe.operations.map(value => {
     if (!value || typeof value !== 'object') return value

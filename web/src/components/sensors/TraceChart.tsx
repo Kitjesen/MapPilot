@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react'
 import { Check, ChevronDown, Layers2, Minus, Plus, Search, SlidersHorizontal, X } from 'lucide-react'
 import { traceAt, traceEnd, traceGroups, tracePath, traceSpan, traceTime, type TraceChannel, type TraceSample } from '../../services/sensorChart.ts'
 import styles from './TraceChart.module.css'
@@ -44,6 +44,7 @@ export function TraceChart({ rows, channels, selected, onSelect, seconds, onSeco
   const [folded, setFolded] = useState<string[]>([])
   const [hover, setHover] = useState<number | null>(null)
   const [pinned, setPinned] = useState(false)
+  const chartId = useId().replace(/:/g, '')
   const area = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; end: number; width: number; moved: boolean } | null>(null)
   const end = traceEnd(rows, requestedEnd), start = end - seconds
@@ -88,6 +89,7 @@ export function TraceChart({ rows, channels, selected, onSelect, seconds, onSeco
     if (!available) { low = 0; high = 1 }
     const margin = Math.max(.001, (high - low) * .1, Math.abs(high) * .01)
     const cursor = hover === null ? null : sample?.t ?? hover
+    const plotId = `${chartId}-${items.map(item => item.id).join('-').replace(/[^a-zA-Z0-9_-]/g, '') || 'trace'}`
     return <div className={styles.plotRow} key={items.map(item => item.id).join('|')}>
       <div className={styles.yAxis}><span>{available ? high.toFixed(Math.abs(high) >= 100 ? 0 : 2) : '—'}</span><span>{available ? low.toFixed(Math.abs(low) >= 100 ? 0 : 2) : '—'}</span></div>
       <svg viewBox="0 0 320 96" preserveAspectRatio="none" role="img" tabIndex={0} aria-label={`${items.map(item => item.label).join(' / ')} ${items[0].group}时间曲线`} aria-description="左右键平移时间窗口，Home 返回最新，鼠标悬停查看采样，单击固定读数"
@@ -103,7 +105,20 @@ export function TraceChart({ rows, channels, selected, onSelect, seconds, onSeco
         }} onPointerCancel={() => { drag.current = null }} onPointerLeave={() => { if (!pinned && !drag.current) setHover(null) }}>
         {[0,80,160,240,320].map(x => <line key={`x${x}`} x1={x} x2={x} y1="10" y2="86" className={styles.grid} />)}
         {[10,48,86].map(y => <line key={`y${y}`} x1="0" x2="320" y1={y} y2={y} className={styles.grid} />)}
-        {available && items.map(item => <path key={item.id} data-channel={item.id} style={{ stroke: item.color }} d={tracePath(rows, item.id, start, end, low - margin, high + margin)} />)}
+        {available && <defs>{items.map(item => <linearGradient key={item.id} id={`${plotId}-${item.id}-gradient`} x1="0" x2="1" y1="0" y2="0"><stop offset="0" stopColor={item.color} stopOpacity=".42" /><stop offset=".72" stopColor={item.color} stopOpacity=".82" /><stop offset="1" stopColor={item.color} /></linearGradient>)}</defs>}
+        {available && items.map(item => {
+          const path = tracePath(rows, item.id, start, end, low - margin, high + margin)
+          const latest = [...rows].reverse().find(row => row.t >= start && row.t <= end && typeof row.values[item.id] === 'number' && Number.isFinite(row.values[item.id]))
+          const latestValue = latest?.values[item.id]
+          const latestX = latest ? (latest.t - start) / Math.max(.001, seconds) * 320 : 0
+          const latestY = typeof latestValue === 'number' ? 86 - (latestValue - (low - margin)) / Math.max(.001, high - low + margin * 2) * 76 : 0
+          return <g key={item.id} className={styles.traceGroup}>
+            <path className={styles.traceGlow} d={path} style={{ stroke: item.color }} aria-hidden="true" />
+            <path className={styles.traceLine} data-channel={item.id} d={path} style={{ stroke: `url(#${plotId}-${item.id}-gradient)` }} />
+            <path className={styles.traceFlow} d={path} style={{ stroke: item.color }} aria-hidden="true" />
+            {latest && <><circle className={styles.traceEndpointPulse} cx={latestX} cy={latestY} r="4.5" style={{ stroke: item.color }} aria-hidden="true" /><circle className={styles.traceEndpoint} cx={latestX} cy={latestY} r="2.2" style={{ fill: item.color }} aria-hidden="true" /></>}
+          </g>
+        })}
         {cursor !== null && cursor >= start && cursor <= end && <line className={styles.cursor} x1={(cursor-start)/seconds*320} x2={(cursor-start)/seconds*320} y1="4" y2="92" />}
         {!available && <text x="160" y="52" textAnchor="middle">暂无采样</text>}
       </svg>

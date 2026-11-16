@@ -94,7 +94,7 @@ const options = { models: [
 test('provider tabs show only the selected connection panel', () => {
   const tree = render([{ connected: false }, null, false, '', '', '', 'claude'], {}, () => {}, undefined, [], options)
   const nodes = walk(tree)
-  assert.equal(nodes.filter(node => node.props.role === 'tab').length, 5)
+  assert.equal(nodes.filter(node => node.props.role === 'tab').length, 7)
   assert.equal(nodes.filter(node => node.props.role === 'tabpanel').length, 1)
   const panel = require('react-dom/server').renderToStaticMarkup(nodes.find(node => node.props.role === 'tabpanel'))
   assert.match(panel, /Claude API/)
@@ -112,7 +112,7 @@ test('switching the panel preserves pending authorization and supports arrow nav
   assert.deepEqual(updates.pop(), [6, 'claude'])
   assert.equal(cancelled, false)
   let focused = -1
-  const buttons = Array.from({ length: 5 }, (_, i) => ({ focus: () => { focused = i } }))
+  const buttons = Array.from({ length: 7 }, (_, i) => ({ focus: () => { focused = i } }))
   nodes.find(node => node.props.role === 'tablist')!.props.onKeyDown({ key: 'ArrowRight', preventDefault() {}, currentTarget: { querySelectorAll: () => buttons } })
   assert.deepEqual(updates.pop(), [6, 'moonshot'])
   assert.equal(focused, 1)

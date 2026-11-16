@@ -85,6 +85,7 @@ def _verify_path(
             "robot_radius": "--robot-radius",
             "body_clearance_below_m": "--body-clearance-below",
             "body_clearance_above_m": "--body-clearance-above",
+            "body_offset_m": "--body-offset",
             "direct_support_only": "--direct-support-only",
             "support_depth_cells": "--support-depth-cells",
             "support_height_m": "--support-height",

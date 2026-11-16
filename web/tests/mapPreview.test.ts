@@ -80,6 +80,6 @@ test('saved-map preview rejects zero and invalid native content versions', async
       'X-Lingtu-Content-Epoch': epoch,
       'X-Lingtu-Frame-Id': 'map',
     })
-    await assert.rejects(fetchMapPreview('office'), /无效的内容版本/)
+    await assert.rejects(fetchMapPreview('office'), /缺少有效的地图内容/)
   }
 })

@@ -261,6 +261,7 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
     config.robot_radius = options.robot_radius;
   }
+  config.body_offset_m = nonnegativeOrDefault(options.body_offset_m, 0.0);
   config.body_clearance_below_m =
     std::isfinite(options.body_clearance_below_m) && options.body_clearance_below_m > 0.0
     ? options.body_clearance_below_m
@@ -437,12 +438,18 @@ PlanResult runPreparedPlanner(
         const double below=explicit_body ? options.body_clearance_below_m : (body_center ? size : 0.0);
         const double above=explicit_body ? options.body_clearance_above_m : (body_center ? size : options.robot_radius);
         if (point.z+half<=start.z-below || point.z-half>=start.z+above) return false;
-        const double dx=std::max(0.0,std::abs(point.x-start.x)-half);
-        const double dy=std::max(0.0,std::abs(point.y-start.y)-half);
         const double dz=!explicit_body && !body_center ? std::max(0.0,point.z-half-start.z) : 0.0;
         // The actual start is already occupied by the robot; only saved cells
         // overlapping that initial envelope are exempt.
-        return dx*dx+dy*dy+dz*dz<=options.robot_radius*options.robot_radius;
+        const double yaw=start.yaw.value_or(0.0);
+        for(double sign:{-1.0,1.0}) {
+          const double x=start.x+sign*options.body_offset_m*std::cos(yaw);
+          const double y=start.y+sign*options.body_offset_m*std::sin(yaw);
+          const double dx=std::max(0.0,std::abs(point.x-x)-half);
+          const double dy=std::max(0.0,std::abs(point.y-y)-half);
+          if(dx*dx+dy*dy+dz*dz<=options.robot_radius*options.robot_radius)return true;
+        }
+        return false;
       });
   struct ClearRequestChecks {
     global_planner::OctoPlanner3D &planner;
@@ -583,11 +590,22 @@ struct PlannerSession::Impl {
       return;
     }
     auto loaded = loadOctomap(path.string());
+    bool updated = false;
+    if (planner && map_identity.map_id == identity.map_id &&
+        map_identity.frame_id == identity.frame_id) {
+      try {
+        updated = planner->updateOctomap(loaded);
+      } catch (...) {
+        planner.reset();
+        throw;
+      }
+    }
     map = std::move(loaded);
     map_identity = identity;
     map_path=path;
     cache_path=cache_directory.empty() ? path.parent_path()/".nav" : cache_directory;
-    planner.reset();
+    if (!updated) planner.reset();
+    else savePrepared(cache_path, map_path, map_identity, plannerConfig(options), *planner);
     ++map_load_count;
   }
 

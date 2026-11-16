@@ -24,6 +24,9 @@ class LLMConfig:
     max_retries: int = 2
     temperature: float = 0.2
     base_url: str = ""
+    command: str = ""
+    command_args: tuple[str, ...] = ()
+    cwd: str = ""
 
 
 class LLMClientBase(ABC):
@@ -34,7 +37,7 @@ class LLMClientBase(ABC):
     def __init__(self, config: LLMConfig):
         self.config = config
         self._api_key = os.environ.get(config.api_key_env, "")
-        if not self._api_key:
+        if not self._api_key and resolve_llm_backend(config.backend) != "acp":
             logger.warning(
                 "API key not found in env var '%s'. Set it before making LLM calls.",
                 config.api_key_env,
@@ -709,6 +712,9 @@ _BACKEND_ALIASES = {
     "mock": "mock",
     "offline": "mock",
     "test": "mock",
+    "acp": "acp",
+    "t3": "acp",
+    "t3code": "acp",
 }
 
 
@@ -745,6 +751,15 @@ class _MockLLMClientProvider:
     @staticmethod
     def create(config: LLMConfig) -> LLMClientBase:
         return MockLLMClient(config)
+
+
+@register("llm_client", "acp", description="Local Agent Client Protocol command")
+class _AcpClientProvider:
+    @staticmethod
+    def create(config: LLMConfig) -> LLMClientBase:
+        from decision.llm.acp import AcpClient
+
+        return AcpClient(config)
 
 
 def resolve_llm_backend(name: str) -> str:

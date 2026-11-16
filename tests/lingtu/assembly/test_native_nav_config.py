@@ -504,15 +504,13 @@ def test_global_profile_keeps_platform_support_and_slope(product: str, robot: st
         assert float(compiled.environment[env]) == pytest.approx(config["octoplanner3d_" + field])
 
 
-@pytest.mark.parametrize(("requested", "effective"), [(0.1, 0.25), (0.44, 0.44), (0.7, 0.7)])
-def test_scan_global_radius_override_cannot_shrink_the_corridor_width(
-    requested: float, effective: float
-) -> None:
+@pytest.mark.parametrize("requested", [0.1, 0.44, 0.7])
+def test_scan_uses_one_body_radius(requested: float) -> None:
     config = _compiled_product_config("nav")
     config["native_nav"]["octoplanner3d_robot_radius"] = requested
     compiled = compile_native_nav_config("nav", config)
 
-    assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(effective)
+    assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(0.25)
     assert compiled.parameters["collision_cylinder_radius_m"] == 0.25
     assert compiled.parameters["collision_cylinder_offset_m"] == 0.19
 

@@ -19,6 +19,7 @@ def video_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("LINGTU_ENV", "real")
     monkeypatch.setenv("LINGTU_WEBRTC_URL", "http://127.0.0.1:19090/whep/endpoint")
     monkeypatch.setenv("LINGTU_VIDEO_STATUS_FILE", str(tmp_path / "video.json"))
+    monkeypatch.setenv("LINGTU_CAMERA_STATUS_FILE", str(tmp_path / "camera.json"))
     monkeypatch.delenv("LINGTU_MEDIA_REQUIRE_TOKEN", raising=False)
     monkeypatch.delenv("LINGTU_MEDIA_VIEWER_TOKEN", raising=False)
     return tmp_path / "video.json"
@@ -84,6 +85,53 @@ def test_real_video_routes_use_configured_status_and_upstream(video_environment,
     assert client.post("/api/v1/webrtc/whep", content="offer").text == "answer"
     assert [request.method for request in requests] == ["OPTIONS", "POST"]
     assert all(str(request.url) == "http://127.0.0.1:19090/whep/endpoint" for request in requests)
+
+
+def test_probe_projects_file_backed_camera_status(video_environment, tmp_path):
+    camera_file = tmp_path / "camera.json"
+    camera_file.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "color_frames": 42,
+                "depth_frames": 41,
+                "info_frames": 2,
+                "last_error": "",
+            }
+        )
+    )
+    client = TestClient(create_app())
+    payload = client.get("/api/v1/camera/status").json()
+    assert payload["available"] is True
+    assert payload["status"] == "streaming"
+    assert payload["color"]["frames"] == 42
+    assert payload["depth"]["frames"] == 41
+
+
+def test_probe_reports_rate_after_two_status_samples(video_environment, tmp_path):
+    camera_file = tmp_path / "camera.json"
+    camera_file.write_text(json.dumps({"status": "running", "color_frames": 42, "depth_frames": 41}))
+    client = TestClient(create_app())
+    assert client.get("/api/v1/camera/status").json()["color"]["fps"] == 0.0
+    camera_file.write_text(json.dumps({"status": "running", "color_frames": 72, "depth_frames": 71}))
+    payload = client.get("/api/v1/camera/status").json()
+    assert payload["color"]["fps"] > 0.0
+    assert payload["depth"]["fps"] > 0.0
+
+
+def test_optional_camera_mcp_exposes_only_read_tools(video_environment, monkeypatch):
+    monkeypatch.setenv("LINGTU_CAMERA_MCP_ENABLED", "1")
+    client = TestClient(create_app())
+    tools = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()
+    assert [tool["name"] for tool in tools["result"]["tools"]] == ["get_camera_status", "capture_camera", "capture_depth"]
+    assert client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "set_mode", "arguments": {}}}).json()["error"]["code"] == -32602
+
+
+def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environment, tmp_path, monkeypatch):
+    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", str(tmp_path / "missing-depth"))
+    response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
+    assert response.status_code == 503
+    assert response.json()["sensor"] == "depth"
 
 
 def test_media_authorization_is_kept(video_environment, monkeypatch):

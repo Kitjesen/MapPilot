@@ -1107,6 +1107,18 @@
   object-fit: contain;
 }
 
+.cameraDecodeFps {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: rgb(12 18 24 / 72%);
+  color: #f7fafc;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+  pointer-events: none;
+}
+
 .cameraPipVideoPending {
   opacity: 0;
   pointer-events: none;

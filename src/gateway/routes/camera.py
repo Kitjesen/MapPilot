@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+from urllib.parse import urlencode
 from typing import Any
+
+import httpx
 
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
@@ -84,7 +87,24 @@ def _registered_snapshot_adapter_jpeg() -> bytes | None:
     frame = capture()
     if isinstance(frame, (bytes, bytearray)) and len(frame) > 0:
         return bytes(frame)
-    return None
+
+
+def _go2rtc_snapshot_jpeg(gw: Any | None) -> bytes | None:
+    """Read one fresh JPEG from the configured sidecar without owning the camera."""
+    upstream = str(getattr(gw, "_go2rtc_upstream", "") or "").rstrip("/")
+    if not upstream:
+        return None
+    url = f"{upstream}/api/frame.jpeg?{urlencode({'src': 'cam'})}"
+    try:
+        response = httpx.get(url, headers={"Accept": "image/jpeg", "Connection": "close"}, timeout=5.0)
+        if response.status_code != 200 or not str(response.headers.get("Content-Type", "")).lower().startswith("image/"):
+            return None
+        data = response.content
+        if len(data) > 8 * 1024 * 1024:
+            return None
+    except Exception:
+        return None
+    return data if 2 <= len(data) <= 8 * 1024 * 1024 and data[:2] == b"\xff\xd8" else None
 
 
 def snapshot_jpeg(gw: Any | None) -> Response:
@@ -98,6 +118,7 @@ def snapshot_jpeg(gw: Any | None) -> Response:
 
     try:
         data = _registered_snapshot_adapter_jpeg()
+        data = data or _go2rtc_snapshot_jpeg(gw)
         if data:
             return Response(content=data, media_type="image/jpeg")
         return _error_response(

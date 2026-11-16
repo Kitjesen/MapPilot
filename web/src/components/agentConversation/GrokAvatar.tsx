@@ -4,7 +4,7 @@ import type { BotState } from './Bot.tsx'
 
 const nativeStates: Record<BotState, string> = {
   idle: 'idle', processing: 'thinking', working: 'working', writing: 'streaming',
-  waiting: 'waiting', done: 'idle', error: 'failed', unavailable: 'sleeping',
+  waiting: 'waiting', done: 'finished', error: 'failed', unavailable: 'sleeping',
 }
 
 export interface GrokAvatarProps {
@@ -16,13 +16,14 @@ export interface GrokAvatarProps {
   animated: boolean
   look: { x: number; y: number }
   greeting: boolean
+  followPointer?: boolean
   className?: string
   expression?: string
   activity?: string
 }
 
 export function GrokAvatar({ shape, fill, eyes, state, size, animated, look,
-  greeting, className, expression, activity }: GrokAvatarProps) {
+  greeting, followPointer = true, className, expression, activity }: GrokAvatarProps) {
   const host = useRef<HTMLSpanElement>(null)
   const controller = useRef<AvatarController | null>(null)
   const previousFace = useRef<string | null>(null)
@@ -39,7 +40,7 @@ export function GrokAvatar({ shape, fill, eyes, state, size, animated, look,
     const options = {
       shape, id, body: bodyFor(shape), appearance: paintOf(fill, eyes),
       state: activity ?? nativeStates[state], size, fill: .8,
-      isFollowingPointer: playing, isPlaying: playing, isStatic: !playing,
+      isFollowingPointer: playing && followPointer, isPlaying: playing, isStatic: !playing,
       maxFrameRate: 30,
     }
     if (!playing) {
@@ -78,7 +79,7 @@ export function GrokAvatar({ shape, fill, eyes, state, size, animated, look,
 
   useEffect(() => {
     refresh()
-  }, [shape, fill, eyes, state, size, animated, look.x, look.y, greeting, expression, activity])
+  }, [shape, fill, eyes, state, size, animated, followPointer, look.x, look.y, greeting, expression, activity])
 
   return <span ref={host} className={className} style={{ display: 'inline-block', width: size, height: size }}
     data-state={state} data-size={size} data-animated={animated} data-family="grok" data-shape={shape}

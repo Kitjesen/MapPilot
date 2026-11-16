@@ -391,13 +391,13 @@ def test_tracking_product_builds_only_the_person_following_host(
         "PerceptionModule",
         "VisualServoModule",
         "GatewayModule",
+        "AgentPlannerModule",
         "host.bus",
         "nav.commands",
         "nav.goals",
     } <= names
     assert not {
         "SemanticPlannerModule",
-        "AgentPlannerModule",
         "SemanticMapperModule",
         "EpisodicMemoryModule",
         "TaggedLocationsModule",

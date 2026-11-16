@@ -68,8 +68,33 @@ ProductControl owns `switch`, `status`, and lifecycle `stop`. Web submits the
 same lifecycle requests; `systemctl` and `journalctl` are diagnostic tools,
 not an alternative startup sequence.
 
-现场生命周期入口统一为 **switch / status / stop**。Web、CLI 和诊断工具可按各自角色独立观测；当前 RunPlan 与 ProductControl 统一拥有 Product 选择、进程生命周期和回退结果。
+现场生命周期入口统一为 **switch / status / stop**。Web、CLI 和诊断工具可按各自角色独立观测；当前 RunPlan 与 ProductControl 统一拥有 Product 选择、进程生命周期和回退结果。不要通过单独启动或重启某个 systemd unit 绕过这条边界。
 
+### Navigation health issue codes
+
+`GET /api/v1/health` and `GET /api/v1/metrics` expose motion-affecting
+navigation issues with a stable `code`, `impact`, `severity`, and `reason`.
+Diagnostic-only observations are returned in `advisories`. The impact describes
+the runtime consequence and keeps diagnostic observations separate from motion
+gates.
+
+| Code | Situation | Impact | Runtime consequence |
+| --- | --- | --- | --- |
+| `21001` | `motion_update_over_period`：最近一次异步障碍处理超过当前控制周期 | `diagnostic_only` | 保留已有快照，检查控制循环 overrun 和输入新鲜度 |
+| `21002` | `motion_processing_failed`：障碍处理线程某帧失败 | `motion_degrading` | 旧快照继续使用，输入过期后由门禁保持零速度 |
+| `21101` | `consecutive_deadline_misses`：控制循环连续超时 | `motion_degrading` | 发布控制循环告警，不单独触发急停 |
+| `21102` | `deadline_miss_ratio_high`：滚动超时比例超限 | `motion_degrading` | 运动验收或恢复检查可能拒绝当前窗口 |
+| `21103` | `p95_utilization_high`：控制循环 P95 工作利用率超限 | `motion_degrading` | 排查控制线程工作量和 CPU 争用 |
+| `21104` | `control_loop_unhealthy`：控制循环异常但原因未知 | `motion_degrading` | 查看 native timing history 和原始 reason |
+| `21201` | `input_gate_not_ready`：导航输入缺失、过期或无效 | `motion_hold` | 最终输出保持零速度，等待输入恢复 |
+| `21301` | `resume_required`：接管或恢复确认尚未完成 | `motion_hold` | 完成既有恢复事务后才能继续 |
+| `21401` | `estop_latched`：软件急停已锁定 | `motion_blocking` | 完成急停释放事务前阻止新运动 |
+
+`motion_update_last` is a completed worker-job duration. It is not the current
+control-thread work duration and it does not directly set `overrun_ms`. A slow
+worker result becomes a motion concern when the resulting obstacle or collision
+input also becomes stale. The control loop health fields and the input gate are
+therefore reported as separate issues.
 Native release packaging uses `scripts/deploy/package_native_release.sh`.
 
 ## Build, save, and reload a map

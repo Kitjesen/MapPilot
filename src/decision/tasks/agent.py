@@ -178,12 +178,17 @@ _PLANNER_HANDLER_TOOLS.extend([
             "x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"},
             "yaw_deg": {"type": "number", "default": 0.0}}, "required": ["x", "y"]}}},
     {"type": "function", "function": {
-        "name": "find_object", "description": "Find and visually verify the described object.",
+        "name": "find_object", "description": (
+            "Find and visually verify the described object. The result is a JSON execution record. "
+            "Navigation admission, arrival, and visual confirmation are separate states."
+        ),
         "parameters": {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}}},
     {"type": "function", "function": {
         "name": "follow_person", "description": (
-            "Follow the described person through this Agent run's owned motion task and wait for its "
-            "real terminal result. Success requires verified domain feedback, not only task submission. "
+            "Start an Agent-owned continuous follow task for the described person. The conversation entry "
+            "returns a person-selection card after Follow admission. The Web operator must confirm the boxed person before movement; do not claim following has begun. Later control messages can stop it. The standalone Agent loop "
+            "will wait for its real terminal result. Success requires verified domain feedback, not only task submission. "
+            "The result includes accepted, state, terminal, reason, and task references when available. "
             "Use visible clothing or appearance from the user's description; me or him alone does not "
             "identify a person. Request clarification instead of guessing the speaker's appearance."
         ),
@@ -192,7 +197,8 @@ _PLANNER_HANDLER_TOOLS.extend([
     {"type": "function", "function": {
         "name": "stop_servo", "description": (
             "Request cancellation of only this Agent run's owned motion. The response confirms the "
-            "request, not that physical motion has stopped."
+            "request, not that physical motion has stopped. Read the returned stop confirmation and "
+            "native navigation state before reporting that motion has stopped."
         ),
         "parameters": {"type": "object", "properties": {}}}},
 ])

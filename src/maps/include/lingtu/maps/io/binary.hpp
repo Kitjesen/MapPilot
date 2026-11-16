@@ -19,7 +19,10 @@ class BinaryWriter {
     bytes(&value,sizeof(value));
   }
   template<class T> void vector(const std::vector<T>& values) {
-    static_assert(std::is_arithmetic_v<T>);
+    // Records must have the same padding-free layout as their field encoding.
+    static_assert(std::is_arithmetic_v<T> ||
+                  (std::is_trivially_copyable_v<T> &&
+                   std::has_unique_object_representations_v<T>));
     value<std::uint64_t>(values.size());
     if(!values.empty())bytes(values.data(),values.size()*sizeof(T));
   }
@@ -53,7 +56,9 @@ class BinaryReader {
     return static_cast<std::size_t>(count);
   }
   template<class T> std::vector<T> vector() {
-    static_assert(std::is_arithmetic_v<T>);
+    static_assert(std::is_arithmetic_v<T> ||
+                  (std::is_trivially_copyable_v<T> &&
+                   std::has_unique_object_representations_v<T>));
     std::vector<T> result(count(sizeof(T)));
     if(!result.empty())bytes(result.data(),result.size()*sizeof(T));
     return result;

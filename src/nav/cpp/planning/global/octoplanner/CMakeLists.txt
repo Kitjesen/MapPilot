@@ -101,6 +101,8 @@ add_custom_command(
   DEPENDS
     "${LINGTU_MLS_CORE_DIR}/Cargo.toml"
     "${LINGTU_MLS_CORE_DIR}/src/lib.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/query.rs"
+    "${LINGTU_MLS_CORE_DIR}/src/route_check.rs"
     "${LINGTU_MLS_CORE_DIR}/src/adjacency.rs"
     "${LINGTU_MLS_CORE_DIR}/src/corridor.rs"
     "${LINGTU_MLS_CORE_DIR}/src/edge_repair.rs"
@@ -129,10 +131,11 @@ add_dependencies(lingtu_mls_core lingtu_mls_core_build)
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
   mls_backend.cpp
+  map_update.cpp
   route_smoothing.cpp
 )
 # Raw occupancy stays in OctoMap. Rust MLS owns prepared surfaces and the sparse graph.
-# Geometry rejection can request one bounded Rust detour before the grid fallback.
+# Rust searches alternative corridors with query-local geometry admission.
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
     "${LINGTU_NAV_CPP_DIR}/../../maps/include"
@@ -261,6 +264,9 @@ set_target_properties(octoplanner3d_make_test_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 if(BUILD_TESTING)
+  add_executable(octoplanner3d_route_check_smoke route_check_smoke.cpp)
+  target_link_libraries(octoplanner3d_route_check_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_route_check_smoke COMMAND octoplanner3d_route_check_smoke)
   add_executable(octoplanner3d_start_evidence_smoke start_evidence_smoke.cpp)
   target_link_libraries(octoplanner3d_start_evidence_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_start_evidence_smoke COMMAND octoplanner3d_start_evidence_smoke)

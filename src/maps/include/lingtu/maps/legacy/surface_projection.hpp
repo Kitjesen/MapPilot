@@ -1,5 +1,8 @@
 #pragma once
 
+// LEGACY: display-only projection retained for mapd compatibility.
+// Do not add new navigation consumers; use occupancy and SurfaceIndex instead.
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>

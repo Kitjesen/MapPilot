@@ -113,11 +113,22 @@ def test_endpoint_loop_batches_dds_input_before_runtime_work() -> None:
 def test_sensor_batch_delegates_projection_to_input_projector() -> None:
     sensors = _sensor_drain_stage()
     _assert_in_order(sensors, [
-        "auto batch = dds.takeSensors(steadySeconds());",
-        "ctx.observe_stop_inputs(batch)",
-        "inputs.apply(std::move(batch), timing);",
+        "auto batch = sensor_mailbox.takeLatest();",
+        "if (!batch) return;",
+        "ctx.observe_stop_inputs(*batch)",
+        "inputs.apply(std::move(*batch), timing);",
     ])
     assert "dds.drain" not in sensors
+    assert "dds.takeSensors" not in sensors
+
+
+def test_sensor_ingress_keeps_dds_work_off_the_control_thread() -> None:
+    loop = _read(LOOP_PATH)
+    assert "class SensorMailbox" in loop
+    assert "if (!hasSensorData(batch))" in loop
+    assert "latest_ = std::move(batch)" in loop
+    assert "result.swap(latest_)" in loop
+    assert "sensor_mailbox.stop();" in loop
 
 
 def test_endpoint_loop_uses_projector_and_only_typed_motion_inputs() -> None:

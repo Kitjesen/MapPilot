@@ -99,6 +99,7 @@ struct PlannerConfig
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.20};
+  double body_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
   int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
@@ -126,9 +127,9 @@ struct PlannerConfig
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
 
-  std::array<double,21> preparation() const {
+  std::array<double,22> preparation() const {
     return {surface_closing_radius_m,
-      search_resolution_m,robot_radius,body_clearance_below_m,body_clearance_above_m,
+      search_resolution_m,robot_radius,body_offset_m,body_clearance_below_m,body_clearance_above_m,
       double(ground_support),double(direct_support_only),double(support_depth_cells),
       support_height_m,support_height_tolerance_m,double(support_patch_radius_cells),
       double(support_patch_min_samples),double(enable_preblocked_costmap),
@@ -226,6 +227,7 @@ public:
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
   void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
+  bool updateOctomap(std::shared_ptr<octomap::OcTree> map);
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
   void setPreparedRustGraph(std::shared_ptr<octomap::OcTree> map,
                             std::shared_ptr<mls::PreparedArtifactHandle> graph);
@@ -297,12 +299,22 @@ private:
   void anchorPlanningLattice(const PointPose & point, double resolution = 0.0);
   octomap::point3d planningPoint(const GridIndex & idx) const;
   TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
-                                   bool require_support, bool check_body = true) const;
+                                   bool require_support, bool check_body = true, double yaw = 0.0) const;
+  TraversabilityFailure queryCylinder(const octomap::point3d &point, double radius,
+                                      bool require_support, bool check_body, bool check_center = true) const;
+  TraversabilityFailure queryBase(const octomap::point3d &point, bool require_support) const;
+  bool sweptBodyFree(const octomap::point3d &from, const octomap::point3d &to,
+                     octomap::point3d *failed_point, double yaw = 0.0) const;
+  bool sweptCylinderFree(const octomap::point3d &from, const octomap::point3d &to,
+                         octomap::point3d *failed_point) const;
+  bool turnFree(const PointPose &point, double from_yaw, double to_yaw,
+                TraversabilityFailure *failure = nullptr) const;
   bool sweptRouteFree(
     const octomap::point3d &from, const octomap::point3d &to,
     TraversabilityFailure *failure = nullptr,
     octomap::point3d *failed_point = nullptr, bool check_body = true,
-    bool endpoints_validated = false, bool require_support = true) const;
+    bool endpoints_validated = false, bool require_support = true,
+    std::optional<double> yaw = std::nullopt) const;
   PointPose planning_offset_{};
   double planning_resolution_m_{0.0};
 
@@ -351,7 +363,7 @@ private:
     const octomap::point3d & from, const octomap::point3d & to,
     TraversabilityFailure *failure = nullptr) const;
 
-  void rebuildRustGraph();
+  void rebuildRustGraph(bool preserve_graph = false);
   void rebuildDerivedLayers();
 
   bool isCellTraversable(
@@ -415,6 +427,7 @@ private:
   double surface_closing_radius_m_ = PlannerConfig{}.surface_closing_radius_m;
   double search_resolution_m_ = PlannerConfig{}.search_resolution_m;
   double robot_radius_ = 0.20;
+  double body_offset_m_ = 0.0;
   double body_clearance_below_m_ = 0.0;
   double body_clearance_above_m_ = 0.0;
   int max_iterations_ = PlannerConfig{}.max_iterations;

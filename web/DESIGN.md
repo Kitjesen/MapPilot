@@ -750,3 +750,29 @@ reduced motion. Saved dimensions share the existing widget-layout store. Compact
 views retain status and selected readings; reduce secondary content before hiding
 plots. Keep recording stop actions and device errors available. Do not clear data
 or restart subscriptions when changing the display layout.
+
+
+### Sensor card tabs
+
+When more than one sensor card is open, the workspace shows a compact tab row.
+Selecting a tab reveals and focuses that card while the other cards remain mounted
+and continue receiving data or recording. Switching tabs therefore changes the
+view without resetting sensor state.
+
+
+### Icon library
+
+`components/icons/IconGlyph.tsx` is the local visual source for LingTu brand,
+sensor, and small status marks. Sensor icons use the sensor accent through
+`currentColor`; status marks use the same 32-unit viewBox and are intentionally
+separate from Lucide controls. `SensorMark` and `LingTuMark` remain compatibility
+wrappers, so adding a new mark does not require changing every card.
+
+
+### Bot appearance studio
+
+The Bot studio is appearance-only: a transparent live three-dimensional preview is first,
+followed by the shape library, name, vivid color palette, and save actions. Role and
+permission policy remain in the conversation runtime and are not repeated in the
+visual editor. The preview animates by default and keeps gaze and greeting interaction;
+manual motion selectors are intentionally omitted from this compact surface.

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from gateway.schemas import HealthResponse, LivenessResponse, ReadinessResponse
 from gateway.services.media_status import build_camera_status
 from gateway.services.native_status import read_json_snapshot, read_navigation_status
+from gateway.services.health_issues import navigation_health_advisories, navigation_health_issues
 from gateway.services.readiness import build_readiness_snapshot
 from gateway.services.traffic import snapshot as traffic_snapshot
 from runtime.contracts import CAMERA_ROLE, LIDAR_ROLE
@@ -351,6 +352,9 @@ async def build_health(gw: Any, details: bool = False) -> dict[str, Any]:
                 slam_sensor[key] = localization_status[key]
 
     brainstem_info = await _brainstem_health(gw, force_live=details)
+    navigation_status = read_navigation_status() or {}
+    issues = navigation_health_issues(navigation_status)
+    advisories = navigation_health_advisories(navigation_status)
 
     return {
         "status": "ok" if modules_fail == 0 else "degraded",
@@ -375,6 +379,8 @@ async def build_health(gw: Any, details: bool = False) -> dict[str, Any]:
         "has_odom": has_odom,
         "modules": module_summary,
         "brainstem": brainstem_info,
+        "issues": issues,
+        "advisories": advisories,
     }
 
 
@@ -406,6 +412,8 @@ def register_health_routes(app, gw) -> None:
         camera = build_camera_status(gw)
         map_points = gw._cloud_viewer.cache_point_count()
         nav_endpoint = read_navigation_status() or {}
+        health_issues = navigation_health_issues(nav_endpoint)
+        health_advisories = navigation_health_advisories(nav_endpoint)
         control_loop_health = nav_endpoint.get("control_loop_health")
         if not isinstance(control_loop_health, Mapping):
             control_loop_health = {}
@@ -439,6 +447,8 @@ def register_health_routes(app, gw) -> None:
             "navigation": {
                 "tick_hz": _positive_float(nav_endpoint.get("tick_hz")),
                 "control_loop_health": dict(control_loop_health),
+                "issues": health_issues,
+                "advisories": health_advisories,
             },
             "map": {
                 "points": map_points,

@@ -622,13 +622,13 @@ class CatalogResolver:
                     ("collision_cylinder_radius_m", "collision_cylinder_offset_m",
                      "collision_clearance_below_m", "collision_clearance_above_m",
                      "support_height_m", "support_height_tolerance_m"),
-                    (),
+                    ("max_slope",),
                     f"{context}.navigation_geometry",
                 )
                 for name, value in geometry.items():
                     if (isinstance(value, bool) or not isinstance(value, (int, float))
                             or not math.isfinite(value) or value < 0
-                            or (value == 0 and name != "collision_cylinder_offset_m")):
+                            or (value == 0 and name not in {"collision_cylinder_offset_m", "max_slope"})):
                         raise CatalogError(f"{context}.navigation_geometry.{name} must be positive and finite")
             physics = _mapping(data["physics"], f"{context}.physics")
             _keys(
@@ -761,7 +761,9 @@ class CatalogResolver:
             )
             if compatibility["runtime_abi"] != "lingtu.sim.payload.v1":
                 raise CatalogError(f"{context}.compatibility.runtime_abi is unsupported")
-            _string(compatibility["mujoco"], f"{context}.compatibility.mujoco")
+            self._mujoco_compatibility_patterns(
+                compatibility["mujoco"], f"{context}.compatibility.mujoco"
+            )
 
             mount = _mapping(data["mount"], f"{context}.mount")
             _keys(
@@ -2421,6 +2423,16 @@ class CatalogResolver:
     def _remember_package(self, target: dict[tuple[str, str, str], PackageRecord], record: PackageRecord) -> None:
         target[(record.kind, record.id, record.version)] = record
 
+    @staticmethod
+    def _mujoco_compatibility_patterns(value: Any, context: str) -> list[str]:
+        if isinstance(value, str) and value:
+            return [value]
+        if isinstance(value, list) and value and all(
+            isinstance(item, str) and bool(item) for item in value
+        ):
+            return list(value)
+        raise CatalogError(f"{context} must be a non-empty version pattern or list")
+
     def _validate_mujoco_compatibility(self, record: PackageRecord, requested_version: str) -> None:
         compatibility = record.data.get("compatibility")
         if compatibility is None:
@@ -2429,11 +2441,16 @@ class CatalogResolver:
         expected = compatibility_data.get("mujoco")
         if expected is None:
             return
-        expected_text = _string(expected, f"{record.manifest_path}.compatibility.mujoco")
-        pattern = "^" + re.escape(expected_text).replace(r"\.x", r"\.\d+") + "$"
-        if re.match(pattern, requested_version) is None:
+        patterns = self._mujoco_compatibility_patterns(
+            expected, f"{record.manifest_path}.compatibility.mujoco"
+        )
+        if not any(
+            re.match("^" + re.escape(pattern).replace(r"\.x", r"\.\d+") + "$", requested_version)
+            for pattern in patterns
+        ):
             raise CatalogError(
-                f"{record.kind} {record.ref} requires MuJoCo {expected_text}, but session requests {requested_version}"
+                f"{record.kind} {record.ref} requires MuJoCo {' or '.join(patterns)}, "
+                f"but session requests {requested_version}"
             )
 
     def _package_ref(self, record: PackageRecord | None) -> dict[str, str] | None:

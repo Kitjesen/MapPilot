@@ -1860,7 +1860,7 @@ TEST(ScanBackend, FailedInitializationReportsBlockedAndRecoversAfterMapChange) {
     if (plan.status() == nav_kernel::LocalPlanStatus::Blocked) break;
   }
   ASSERT_EQ(plan.status(), nav_kernel::LocalPlanStatus::Blocked);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_initialization_failed");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_init_failed");
   EXPECT_EQ(backend.checkCollision(fixture.request).status(), nav_kernel::LocalPlanStatus::Blocked);
   fixture.bitmap = CollisionBitmap({-5.0, -5.0, -1.0}, {5.0, 5.0, 2.0}, 0.05);
   fixture.refreshCollision(3);
@@ -1887,7 +1887,7 @@ TEST(ScanBackend, BlockedForwardTargetsDoNotRemainPendingAndRecoverWhenClear) {
     plan = backend.tick(fixture.request);
   }
   EXPECT_EQ(plan.status(), nav_kernel::LocalPlanStatus::Blocked);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_local_target_blocked");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_goal_blocked");
   EXPECT_FALSE(plan.ready());
   fixture.bitmap.clear();
   fixture.refreshCollision(3);
@@ -2198,13 +2198,13 @@ TEST(ScanBackend, ThousandBlockedRoundsStopAndWaitForNewReference) {
   for (int i = 0; i < 5 && plan.status() != LocalPlanStatus::Blocked; ++i)
     plan = tick();
   ASSERT_EQ(plan.status(), LocalPlanStatus::Blocked);
-  ASSERT_EQ(backend.debugSnapshot().searchReason, "scan_local_target_blocked");
+  ASSERT_EQ(backend.debugSnapshot().searchReason, "aegis_goal_blocked");
   for (int round = 2; round < 1000; ++round)
     ASSERT_EQ(tick().status(), LocalPlanStatus::Blocked) << round;
   EXPECT_EQ(tick().status(), LocalPlanStatus::NearFieldStop);
   EXPECT_EQ(tick().status(), LocalPlanStatus::NearFieldStop);
   EXPECT_EQ(tick().status(), LocalPlanStatus::NoPath);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_replan_failed");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_replan_failed");
 
   fixture.bitmap.clear();
   fixture.refreshCollision(3);
@@ -2426,7 +2426,7 @@ TEST(ScanBackend, MotionIntentDoesNotDetourOutsideAllowedDirection) {
     plan = backend.tick(fixture.request);
   }
   EXPECT_EQ(plan.status(), nav_kernel::LocalPlanStatus::Blocked);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_local_target_blocked");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_goal_blocked");
 }
 
 TEST(ScanReplanFsm, FailedMotionIntentDetourAdvancesOnNextTimerCallback) {
@@ -2588,7 +2588,7 @@ TEST(ScanBackend, MotionIntentRejectsFreeSideEndpointsBehindAnEnclosure) {
     plan = backend.tick(fixture.request);
   }
   EXPECT_EQ(plan.status(), nav_kernel::LocalPlanStatus::Blocked);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_local_target_blocked");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_goal_blocked");
 }
 
 TEST(ScanBackend, FinalApproachBelowTwentyCentimetresProducesMotionTrajectory) {
@@ -2893,7 +2893,7 @@ TEST(ScanTrajectoryValidation, EmergencyStopIsNotReportedAsReadyAndRecoversWhenC
   ASSERT_EQ(plan.status(), nav_kernel::LocalPlanStatus::NearFieldStop);
   ASSERT_FALSE(plan.ready());
   EXPECT_TRUE(plan.previewPath().empty());
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_emergency_stop");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_estop");
   fixture.request.robot.kinematics.valid = true;
   fixture.request.robot.kinematics.linearVelocity = {0.0, 0.0, 0.12};
   for (int tick = 0; tick < 3; ++tick) {
@@ -4628,7 +4628,7 @@ TEST(ScanBackend, BlockedSpeedBridgeStopsInsteadOfPublishingUncheckedOrOldGeomet
   fixture.refreshCollision(2);
   plan=backend.tick(fixture.request);
   EXPECT_EQ(plan.status(),nav_kernel::LocalPlanStatus::NearFieldStop);
-  EXPECT_EQ(backend.debugSnapshot().searchReason,"scan_speed_transition_blocked");
+  EXPECT_EQ(backend.debugSnapshot().searchReason,"aegis_speed_blocked");
   const auto replacement = backend.tick(fixture.request);
   if (replacement.ready()) {
     const auto target = std::get<SplineTarget>(replacement.target());
@@ -5261,9 +5261,9 @@ TEST(ScanBackend, HeldMotionIntentRetainsShortSideTargetUntilMeasuredArrival) {
       const auto collisionDebug = backend.debugSnapshot();
       EXPECT_TRUE(collisionDebug.scanAttempt.attemptId > priorAttemptId ||
                   (plan.status() == nav_kernel::LocalPlanStatus::NearFieldStop &&
-                   collisionDebug.searchReason == "scan_emergency_stop") ||
+                   collisionDebug.searchReason == "aegis_estop") ||
                   (plan.status() == nav_kernel::LocalPlanStatus::Blocked &&
-                   collisionDebug.searchReason == "scan_local_target_blocked"))
+                   collisionDebug.searchReason == "aegis_goal_blocked"))
           << collisionDebug.searchReason;
       if (plan.ready()) {
         ASSERT_NE(std::get<SplineTarget>(plan.target()).trajectoryId, first.trajectoryId);
@@ -5491,7 +5491,7 @@ TEST(ScanBackend, BlockedReferenceDoesNotReplaceFsmTimerCallbacks) {
       initial.startTimeS + nav_kernel::SplineView(initial).duration() + 0.3;
   plan = backend.tick(fixture.request);
   EXPECT_EQ(plan.status(), nav_kernel::LocalPlanStatus::Blocked);
-  EXPECT_EQ(backend.debugSnapshot().searchReason, "scan_local_target_blocked");
+  EXPECT_EQ(backend.debugSnapshot().searchReason, "aegis_goal_blocked");
 
   fixture.bitmap.clear();
   fixture.refreshCollision(3);

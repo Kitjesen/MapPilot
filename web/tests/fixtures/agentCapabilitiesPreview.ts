@@ -32,6 +32,8 @@ export function createAgentPreviewFetch(): typeof fetch {
           { id: 'claude-demo', label: 'Claude', provider: 'claude', reasoning, image_input: true, configured: false, key_env: 'ANTHROPIC_API_KEY' },
           { id: 'openai-demo', label: 'OpenAI API', provider: 'openai', reasoning, image_input: true, configured: false, key_env: 'OPENAI_API_KEY' },
           { id: 'qwen-demo', label: 'Qwen', provider: 'qwen', reasoning, image_input: false, configured: false, key_env: 'DASHSCOPE_API_KEY' },
+          { id: 'grok-4.7', label: 'Grok 4.7 · xAI', provider: 'grok', reasoning, image_input: false, configured: false, key_env: 'XAI_API_KEY' },
+          { id: 'acp:grok', label: 'Grok Build · ACP', provider: 'acp', reasoning: [{ id: 'default', label: '默认' }], image_input: false, configured: false },
         ], attachments: { accept: '.txt,.png', max_files: 4, max_file_bytes: 1000000 } }
       return json(options)
     }

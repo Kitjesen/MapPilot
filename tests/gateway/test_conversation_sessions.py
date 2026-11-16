@@ -31,7 +31,7 @@ def test_http_lists_renames_archives_restores_and_freezes_shares(gateway, monkey
     public_path = f"/api/v1/agent/shares/{receipt['token']}"
     frozen = client.get(public_path).json()
     assert frozen["title"] == "Customer session" and len(frozen["messages"]) == 2
-    assert set(frozen) == {"title", "created_at", "messages"}
+    assert set(frozen) == {"title", "bot_id", "created_at", "messages"}
     assert client.get(path).json()["share"] == receipt
     assert client.post(f"{path}/share").json() == receipt
     second = client.post(f"{path}/messages", json={"message_id": "second", "text": "Later question"})
@@ -51,6 +51,19 @@ def test_http_lists_renames_archives_restores_and_freezes_shares(gateway, monkey
     assert newer["token"] != receipt["token"] and newer["message_count"] == 4
     assert client.patch("/api/v1/agent/conversations/missing", json={"title": "New"}).status_code == 404
     assert gateway.agent._active_run is None
+
+
+def test_http_bot_id_scopes_create_list_and_search(gateway):
+    client = gateway.client
+    field = client.post("/api/v1/agent/conversations", params={"bot_id": "field-scout"}).json()
+    nav = client.post("/api/v1/agent/conversations", params={"bot_id": "map-navigator"}).json()
+    assert field["bot_id"] == "field-scout" and nav["bot_id"] == "map-navigator"
+    field_path = f"/api/v1/agent/conversations/{field['conversation_id']}"
+    nav_path = f"/api/v1/agent/conversations/{nav['conversation_id']}"
+    assert client.get("/api/v1/agent/conversations", params={"bot_id": "field-scout"}).json()["conversations"] == [
+        client.get(field_path).json()["metadata"]]
+    assert client.get("/api/v1/agent/conversations", params={"bot_id": "map-navigator"}).json()["conversations"] == [
+        client.get(nav_path).json()["metadata"]]
 
 
 def test_http_archive_rejects_running_turn_without_changing_owner(gateway):

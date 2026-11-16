@@ -87,7 +87,7 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
         assert {"scene"} <= set(list_plugins("perception"))
         assert {"clip", "mobileclip"} <= set(list_plugins("encoder"))
         assert {"default", "dataset_recorder", "keyframe_exporter"} <= set(list_plugins("reconstruction"))
-        assert {"yoloe", "yolo_world", "bpu", "sim_scene"} <= set(list_plugins("detector"))
+        assert {"yoloe", "yolo_world", "yolo_trt", "bpu", "sim_scene"} <= set(list_plugins("detector"))
         assert {"clip", "mobileclip"} <= set(list_plugins("encoder"))
         assert {"default"} <= set(list_plugins("semantic_planner"))
         assert {"default"} <= set(list_plugins("visual_servo"))

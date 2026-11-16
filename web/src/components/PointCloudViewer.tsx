@@ -680,7 +680,7 @@ export function PointCloudViewer({
                     <div><dt>水平范围</dt><dd>{info.width.toFixed(1)} × {info.depth.toFixed(1)} m</dd></div>
                     <div><dt>当前显示</dt><dd>{info.visibleCount.toLocaleString('zh-CN')} / {info.count.toLocaleString('zh-CN')} 点</dd></div>
                     <div><dt>原始点数</dt><dd>{info.originalCount?.toLocaleString('zh-CN') ?? '未知'}</dd></div>
-                    <div><dt>地图版本</dt><dd>v{info.contentEpoch} · {info.frameId}</dd></div>
+                    <div><dt>地图坐标系</dt><dd>{info.frameId}</dd></div>
                     <div><dt>网格间距</dt><dd>{Number(info.gridStep.toPrecision(2))} m</dd></div>
                   </dl>
                   <p>网格位于点云最低高度，仅作坐标参考。</p>

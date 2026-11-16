@@ -28,16 +28,27 @@
 .workspaceHeader { display: flex; justify-content: space-between; align-items: center; padding: 0 3px 10px; pointer-events: auto; }
 .workspaceHeader > span { font-size: 11px; letter-spacing: .06em; color: var(--text-dim); }
 .workspaceHeader b { display: inline-grid; place-items: center; min-width: 18px; height: 18px; margin-left: 5px; background: var(--bg-layer-2); border-radius: 6px; font-size: 10px; font-weight: 500; }
+.cardTabs { display: flex; gap: 4px; overflow-x: auto; padding: 0 3px 9px; scrollbar-width: none; pointer-events: auto; }
+.cardTabs::-webkit-scrollbar { display: none; }
+.cardTabs button { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; min-height: 30px; padding: 5px 9px; border: 1px solid transparent; border-radius: 999px; color: var(--text-dim); background: var(--bg-layer-1); box-shadow: 0 1px 4px #00000008; transition: color 140ms var(--ease-out), background 140ms var(--ease-out), border-color 140ms var(--ease-out), transform 140ms var(--ease-out); }
+.cardTabs button:hover { color: var(--text); background: var(--bg-layer-2); }
+.cardTabs button[aria-selected='true'] { color: var(--text); background: var(--control-bg); border-color: color-mix(in srgb, var(--text) 14%, var(--border)); box-shadow: 0 3px 10px #0000000b; }
+.cardTabs button:active { transform: scale(.97); }
 .workspace :where(button), .picker button { color: var(--text-dim); background: transparent; border: 0; font: inherit; cursor: pointer; border-radius: 7px; }
 .workspaceHeader button { display: inline-flex; gap: 5px; align-items: center; padding: 5px 8px; background: var(--bg-layer-1); box-shadow: 0 1px 4px #00000008; }
 .workspace button:hover, .picker button:hover { color: var(--text); background: var(--bg-layer-2); }
 .workspace button:disabled { cursor: default; opacity: .4; }
 .workspace :is(button,input,select,a,summary):focus-visible, .picker :is(button,input):focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .cardGrid { --card-default-width: calc((100% - 14px) / 2); display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; align-content: flex-start; overflow: auto; overflow-anchor: none; padding: 3px 3px 20px; scrollbar-width: thin; pointer-events: none; }
+.cardGrid[data-tabs='true'] { display: block; }
+.cardGrid[data-tabs='true'] .card:not([data-active='true']) { display: none; }
+.workspace[data-tabs='true'] .cardGrid { --card-default-width: 100%; }
+.cardGrid[data-tabs='true'] .card[data-active='true'] { animation: card-switch 180ms var(--ease-out) both; }
 .workspace[data-single='true'] .cardGrid { --card-default-width: 100%; }
 .card { position: relative; box-sizing: border-box; flex: 0 0 auto; display: flex; flex-direction: column; width: var(--card-width); height: var(--card-height); max-width: 100%; min-width: min(220px, 100%); container: sensor-card / size; background: var(--bg-layer-1); border: 1px solid color-mix(in srgb, var(--border) 65%, transparent); border-radius: 18px; box-shadow: 0 10px 30px #00000007, 0 2px 6px #00000004; pointer-events: auto; overflow: hidden; animation: card-arrive 180ms ease-out both; }
 .card:focus { outline: none; }
 .card:focus-visible { outline: 2px solid color-mix(in srgb, var(--sensor-color) 65%, transparent); outline-offset: 1px; }
+.card[data-active='true'] { border-color: color-mix(in srgb, var(--sensor-color) 42%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--sensor-color) 14%, transparent), 0 12px 32px #0000000a; }
 .card[data-expanded='true'] { width: 100%; height: max(var(--card-height), min(720px, calc(100dvh - 110px))); }
 .card[data-collapsed='true'] { height: 62px; }
 .card[data-resizing='true'] { width: var(--card-width); height: var(--card-height); animation: none; transition: none; user-select: none; }
@@ -93,6 +104,7 @@
 .picker footer { padding: 11px 9px 4px; font-size: 10px; color: var(--text-dim); }
 .emptySearch { padding: 20px 10px; text-align: center; color: var(--text-dim); }
 @keyframes card-arrive { from { opacity: 0; transform: translateY(7px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes card-switch { from { opacity: .35; transform: translateX(8px); } to { opacity: 1; transform: none; } }
 @media (min-width: 1100px) {
   :global(body):has(.workspace) :global([data-chat-slot='global']) { left: calc((100vw - var(--sensor-space) - 32px) / 2); max-width: calc(100vw - var(--sensor-space) - 64px); }
   :global(body):has(.workspace) :global([data-chat-container='scene']) { left: calc((100% - var(--sensor-space) - 32px) / 2); width: min(520px, calc(100vw - var(--sensor-space) - 64px)); }

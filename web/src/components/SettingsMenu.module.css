@@ -53,6 +53,8 @@
 .moduleList { list-style: none; margin: 0; padding: 0; }
 .moduleList li { display: flex; align-items: center; justify-content: space-between; gap: 15px; min-height: 40px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .moduleName { min-width: 0; overflow-wrap: anywhere; }
+.moduleName code { display: block; font-size: 11px; color: var(--text); }
+.moduleName small { display: block; margin-top: 3px; color: var(--text-dim); font-size: 11px; line-height: 1.35; }
 .moduleOk, .moduleIssue { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .moduleOk { color: var(--text-dim); }
 .moduleIssue, .content .error { color: var(--red); }

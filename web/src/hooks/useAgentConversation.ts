@@ -26,6 +26,12 @@ interface StoredConversation {
   includeSelection: boolean
 }
 
+function conversationStorageKey(botId: string): string {
+  return botId === 'lingtu-default'
+    ? `lingtu.agent.conversation:${location.origin}`
+    : `lingtu.agent.conversation:${location.origin}:${botId}`
+}
+
 function readStoredConversation(key = `lingtu.agent.conversation:${location.origin}`): StoredConversation {
   try {
     const stored = JSON.parse(localStorage.getItem(key) ?? 'null')
@@ -54,10 +60,11 @@ function readStoredConversation(key = `lingtu.agent.conversation:${location.orig
   return { conversation_id: '', draft: '', replyTo: '', replyQuote: '', pending: null, model: '', reasoning: '', permissionMode: 'default', attachments: [], includeMapContext: true, includeSelection: true }
 }
 
-export function useAgentConversation(onRunObserved?: (runId: string, instruction: string) => void, enabled = true, liveMessage?: AgentMessageEvent | null) {
+export function useAgentConversation(onRunObserved?: (runId: string, instruction: string) => void, enabled = true, liveMessage?: AgentMessageEvent | null, botId = 'lingtu-default') {
   const mapSettings = useMapSettings()
   const mapContext = useRef<ConversationSubmission['map_context']>(null)
-  const [stored, setStored] = useState(readStoredConversation)
+  const [stored, setStored] = useState(() => readStoredConversation(conversationStorageKey(botId)))
+  const botIdRef = useRef(botId)
   const map = mapSettings?.map
   const selection = mapSettings?.selection
   const context = useMemo<ConversationMapContext | null>(() => map ? { map_id: map.name, content_epoch: map.contentEpoch,
@@ -121,11 +128,26 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
     if (mounted.current) setStored(next)
     try {
       const serialized = JSON.stringify(next)
-      localStorage.setItem(`lingtu.agent.conversation:${location.origin}`, serialized)
+      localStorage.setItem(conversationStorageKey(botIdRef.current), serialized)
       if (next.conversation_id) localStorage.setItem(`lingtu.agent.draft:${location.origin}:${next.conversation_id}`, serialized)
     }
     catch { if (mounted.current) setNotice('浏览器无法保存会话，刷新后可能无法自动恢复。') }
   }, [])
+
+  useEffect(() => {
+    if (botIdRef.current === botId) return
+    botIdRef.current = botId
+    sessionEpoch.current++
+    refreshRef.current = null
+    snapshotRef.current = null
+    setSnapshot(null)
+    setConversations([])
+    setSearchResults([])
+    setSearchTarget(null)
+    const next = readStoredConversation(conversationStorageKey(botId))
+    storedRef.current = next
+    setStored(next)
+  }, [botId])
 
   const loadOptions = useCallback(async () => {
     if (optionsRequest.current) return optionsRequest.current
@@ -166,7 +188,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
       try {
         let id = storedRef.current.conversation_id
         if (!id) {
-          id = await createConversation()
+          id = await createConversation(botIdRef.current)
           if (!mounted.current || epoch !== sessionEpoch.current) return
           save({ ...storedRef.current, conversation_id: id })
         }
@@ -175,7 +197,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
         catch (failure) {
           if (!mounted.current || epoch !== sessionEpoch.current) return
           if (!(failure instanceof ConversationError) || failure.status !== 404) throw failure
-          id = await createConversation()
+          id = await createConversation(botIdRef.current)
           if (!mounted.current || epoch !== sessionEpoch.current) return
           save({ ...storedRef.current, conversation_id: id, pending: null, attachments: [], replyTo: '', replyQuote: '' })
           snapshotRef.current = null
@@ -276,8 +298,9 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
     const requestId = ++sessionsRequest.current
     setSessionsLoading(true)
     try {
-      const items = await listConversations(archived)
-      if (mounted.current && requestId === sessionsRequest.current) setConversations(items)
+      const items = await listConversations(archived, botIdRef.current)
+      const scoped = items.filter(item => (item.bot_id ?? 'lingtu-default') === botIdRef.current)
+      if (mounted.current && requestId === sessionsRequest.current) setConversations(scoped)
     } catch (failure) {
       if (mounted.current && requestId === sessionsRequest.current) setError(failure instanceof Error ? failure.message : String(failure))
     } finally { if (mounted.current && requestId === sessionsRequest.current) setSessionsLoading(false) }
@@ -294,7 +317,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
     if (!enabled || !options || !sessionListOpen || !query) return
     const timer = setTimeout(async () => {
       try {
-        const results = await searchConversations(query, archivedView)
+        const results = await searchConversations(query, archivedView, botIdRef.current)
         if (!disposed) setSearchResults(results)
       } catch (failure) {
         if (!disposed) setSearchError(failure instanceof Error ? failure.message : String(failure))
@@ -384,7 +407,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
   const createNewConversation = useCallback(async () => {
     await withSessionAction('create', async () => {
       if (refreshRef.current) await refreshRef.current
-      const id = await createConversation()
+      const id = await createConversation(botIdRef.current)
       await selectSession(id, true)
       setSessionListOpen(false)
       await loadSessions()
@@ -612,7 +635,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
       if (!storedRef.current.conversation_id) await refresh()
       const current = storedRef.current
       if (!current.conversation_id) return
-      const persona = botPersona(readBotProfile())
+      const persona = botPersona(readBotProfile(botIdRef.current))
       const replyId = regenerateMessageId ?? reply?.messageId ?? current.replyTo
       // Regeneration is a new read-only turn; retrying its receipt keeps the same request ID.
       const pending = current.pending ?? { enqueue: true, message_id: makeRequestId('message'), text: regenerateMessageId
@@ -648,7 +671,7 @@ export function useAgentConversation(onRunObserved?: (runId: string, instruction
     if (optionsRef.current) await refresh()
   }, [loadOptions, refresh])
 
-  return { open, setOpen, draft: stored.draft, setDraft, replyTo: stored.replyTo, replyQuote: stored.replyQuote, setReplyTo, pending: stored.pending, editable: !stored.pending || Boolean(stored.editable), snapshot,
+  return { botId, open, setOpen, draft: stored.draft, setDraft, replyTo: stored.replyTo, replyQuote: stored.replyQuote, setReplyTo, pending: stored.pending, editable: !stored.pending || Boolean(stored.editable), snapshot,
     sessionListOpen, setSessionListOpen, conversations, archivedView, setArchivedView, sessionsLoading, sessionBusy,
     searchQuery, setSearchQuery, searchResults, searchBusy, searchError, openSearchResult, searchTarget,
     context, includeMapContext: stored.includeMapContext, includeSelection: stored.includeSelection, setIncludeMapContext, setIncludeSelection,

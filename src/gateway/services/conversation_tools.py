@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import uuid
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -15,13 +17,15 @@ from gateway.maps.routes import (
     set_no_go_request,
 )
 from gateway.maps.transport import mapd_request
-from gateway.schemas import LocationUpsertRequest, NoGoRequest
+from gateway.routes.inspection import list_routes, start_task
+from gateway.schemas import InspectionTaskStartRequest, LocationUpsertRequest, NoGoRequest
 from gateway.services import robot_tools
+from gateway.services.control_commands import ControlCommandService
 from gateway.services.telemetry_normalizers import build_locations_response
 from runtime.utils.python_analysis import run as run_python
 
 
-def workbench_tools(gw):
+def workbench_tools(gw, *, client_id: str = "web"):
     tools = []
     observations = {}
 
@@ -51,8 +55,12 @@ def workbench_tools(gw):
     tool("list_saved_maps", "List saved maps and actual processing/readiness status.", {})
     tool("inspect_saved_map", "Read map metadata and existing navigation regions; no motion.", {"map_id": map_id}, ["map_id"])
     tool("view_saved_map", "Show an interactive 3D saved-map card in the conversation. Use when the operator asks to see, open or rotate a map. Obtain the exact map ID from context or list_saved_maps. Read-only: does not activate, edit or navigate. Geometry is loaded by the viewer, not returned to the model.", {"map_id": map_id}, ["map_id"])
+    tool("list_inspection_routes", "List stored complete inspection routes on the current active map. Read-only; use the returned route ID before starting a route.", {})
     tool("find_inspection_points", "Find named inspection points by name, region name or tag within a map.",
          {"map_id": map_id, "query": {"type": "string"}}, ["map_id"])
+    tool("start_inspection_route", "Start one stored complete inspection route. The route must already exist; this submits the native task and starts its evidence recording. The result confirms submission only, not arrival or inspection completion.",
+         {"route_id": {"type": "string", "minLength": 1},
+          "revision": {"type": "integer", "minimum": 0, "default": 0}}, ["route_id"], writes=True)
     tool("preview_map_edits", "Compute a point-cloud edit preview. Does not save or activate a map.", edits, edits)
     tool("save_map_copy", "Save a reviewed edit as a NEW map; preserves the original. Report actual build state; never activate or move.",
          {**edits, "name": {"type": "string"}}, [*edits, "name"], writes=True)
@@ -97,6 +105,30 @@ def workbench_tools(gw):
                 if args["sensor"] not in monitors:
                     raise ValueError("Unknown sensor monitor")
                 return {"success": True, "monitor": args["sensor"]}
+            if name == "list_inspection_routes":
+                result = await list_routes(gw, None)
+                if isinstance(result, JSONResponse):
+                    return json.loads(result.body)
+                return result
+            if name == "start_inspection_route":
+                request_id = f"agent-inspection-{uuid.uuid4().hex}"
+                body = InspectionTaskStartRequest(
+                    route_id=args["route_id"],
+                    revision=args.get("revision", 0),
+                    request_id=request_id,
+                )
+                safety_body = SimpleNamespace(client_id=client_id, request_id=request_id)
+                rejection = ControlCommandService(gw).motion_safety_rejection(
+                    "start_inspection_task", safety_body
+                )
+                if rejection is not None:
+                    return json.loads(rejection.body)
+                result = await start_task(gw, body)
+                if isinstance(result, JSONResponse):
+                    return json.loads(result.body)
+                if hasattr(result, "model_dump"):
+                    return result.model_dump(mode="json")
+                return result
             if name in {"start_imu_recording", "stop_imu_recording", "list_imu_records", "read_imu_record"}:
                 monitor = gw._imu_monitor
                 if name == "start_imu_recording":
@@ -124,6 +156,19 @@ def workbench_tools(gw):
                     raise ValueError(error)
             if name == "list_saved_maps":
                 result = await list_maps(gw)
+                if isinstance(result, dict) and isinstance(result.get("maps"), list):
+                    result = {
+                        **result,
+                        "maps": [
+                            {
+                                key: value
+                                for key, value in map_record.items()
+                                if key != "content_epoch"
+                            }
+                            for map_record in result["maps"]
+                            if isinstance(map_record, dict)
+                        ],
+                    }
             elif name == "view_saved_map":
                 response = await asyncio.to_thread(mapd_request, gw, {"action": "get_record", "map_id": args["map_id"]})
                 if response.get("success") is not True:
@@ -131,10 +176,7 @@ def workbench_tools(gw):
                 record = response.get("record") or {}
                 if not isinstance(record, dict):
                     raise ValueError("Invalid saved map record")
-                epoch = record.get("content_epoch")
-                if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 1:
-                    raise ValueError("Map has no valid content version; refresh the saved map list")
-                return {"success": True, "map_view": {"map_id": args["map_id"], "content_epoch": epoch},
+                return {"success": True, "map_view": {"map_id": args["map_id"]},
                         "state": record.get("state"), "read_only": True}
             elif name == "inspect_saved_map":
                 record = await asyncio.to_thread(mapd_request, gw, {"action": "get_record", "map_id": args["map_id"]})

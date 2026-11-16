@@ -945,6 +945,33 @@ export async function cancelFollowTask(
   )
 }
 
+export interface FollowSelection {
+  found: boolean
+  confirmation_required?: boolean
+  confirmed_target_id?: string
+  terminal?: boolean
+  reason?: string | null
+  observation_sequence?: number
+  source_ts?: number
+  width?: number
+  height?: number
+  image?: string
+  suggested_target_id?: string
+  review_state?: 'reviewing' | 'ready' | 'unavailable'
+  candidates?: Array<{ target_id: string; bbox: [number, number, number, number]; kind?: 'person' | 'non_person' | 'unknown'; reason?: string }>
+}
+
+export function getFollowSelection(task: FollowTaskRef, refresh = false): Promise<FollowSelection> {
+  const query = new URLSearchParams({ product_session_id: task.product_session_id, refresh: String(refresh) })
+  return fetchJson(`/api/v1/follow/${encodeURIComponent(task.follow_task_id)}/selection?${query}`)
+}
+
+export function confirmFollowTarget(task: FollowTaskRef, targetId: string, observationSequence: number): Promise<FollowTaskCommandResponse> {
+  return postJson(`/api/v1/follow/${encodeURIComponent(task.follow_task_id)}/confirm`, commandBody('follow_confirm', {
+    ...task, target_id: targetId, observation_sequence: observationSequence,
+  }))
+}
+
 export async function updateLease(action: LeaseAction, ttl = 30): Promise<LeaseResponse> {
   return postJson<LeaseResponse>(
     apiPath('lease', '/api/v1/lease'),

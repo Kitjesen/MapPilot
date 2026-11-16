@@ -5,7 +5,7 @@
  *   1. Rolling voxel grid around robot
  *   2. Stack incoming scans into voxels
  *   3. Downsample + time decay
- *   4. Robust local ground-surface estimation (or explicit legacy min Z)
+ *   4. Local ground estimate from observed points
  *   5. Dynamic obstacle filtering (optional)
  *   6. Terrain map generation (obstacle height above ground)
  *
@@ -14,6 +14,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -22,8 +23,6 @@
 #include <queue>
 #include <unordered_map>
 #include <vector>
-
-#include "lingtu/maps/legacy/ground_surface.hpp"
 
 #if defined(_OPENMP)
 #include <omp.h>
@@ -51,8 +50,6 @@ struct TerrainParams {
   double clearingDis = 8.0;
 
   // Ground estimation
-  bool useSorting = true;
-  lingtu::maps::layers::GroundSurfaceConfig groundSurface;
   bool considerDrop = false;
 
   // Reachable-ground extraction. A height surface is usable only when it is
@@ -146,6 +143,8 @@ public:
     planarVoxelOutOfFov_.resize(planarVoxelNum_, 0);
     planarVoxelConn_.resize(planarVoxelNum_, 0);
     planarPointElev_.resize(planarVoxelNum_);
+    planarCellElev_.resize(planarVoxelNum_);
+    planarCellPoints_.resize(planarVoxelNum_);
   }
 
   /// Update vehicle pose (call before process)
@@ -341,6 +340,8 @@ private:
   std::vector<int> planarVoxelOutOfFov_;
   std::vector<std::int8_t> planarVoxelConn_;
   std::vector<std::vector<float>> planarPointElev_;
+  std::vector<std::vector<float>> planarCellElev_;
+  std::vector<std::vector<std::array<double, 3>>> planarCellPoints_;
 
   // Vehicle state
   double vx_ = 0, vy_ = 0, vz_ = 0;
@@ -361,8 +362,72 @@ private:
   // Scratch buffers
   std::vector<Point4> cropped_;
   std::vector<Point4> merged_;
-  std::vector<float> groundXyz_;
 
+  struct GroundPoint {
+    double x{0.0};
+    double y{0.0};
+    double z{0.0};
+  };
+
+  struct GroundPlane {
+    double x{0.0};
+    double y{0.0};
+    double z{0.0};
+    bool valid{false};
+
+    double At(double px, double py) const { return x * px + y * py + z; }
+  };
+
+  static float median(std::vector<float> values) {
+    if (values.empty()) return std::numeric_limits<float>::quiet_NaN();
+    const auto middle = values.begin() + static_cast<std::ptrdiff_t>(values.size() / 2U);
+    std::nth_element(values.begin(), middle, values.end());
+    if (values.size() % 2U != 0U) return *middle;
+    const auto lower = std::max_element(values.begin(), middle);
+    return 0.5F * (*lower + *middle);
+  }
+
+  static GroundPlane fitGroundPlane(const std::vector<GroundPoint>& points) {
+    GroundPlane plane;
+    if (points.size() < 3U) return plane;
+
+    double mx = 0.0;
+    double my = 0.0;
+    double mz = 0.0;
+    for (const auto& point : points) {
+      mx += point.x;
+      my += point.y;
+      mz += point.z;
+    }
+    const double count = static_cast<double>(points.size());
+    mx /= count;
+    my /= count;
+    mz /= count;
+
+    double xx = 0.0;
+    double yy = 0.0;
+    double xy = 0.0;
+    double xz = 0.0;
+    double yz = 0.0;
+    for (const auto& point : points) {
+      const double x = point.x - mx;
+      const double y = point.y - my;
+      const double z = point.z - mz;
+      xx += x * x;
+      yy += y * y;
+      xy += x * y;
+      xz += x * z;
+      yz += y * z;
+    }
+    const double determinant = xx * yy - xy * xy;
+    if (determinant < 1e-9) return plane;
+    plane.x = (xz * yy - yz * xy) / determinant;
+    plane.y = (yz * xx - xz * xy) / determinant;
+    plane.z = mz - plane.x * mx - plane.y * my;
+    plane.valid = std::isfinite(plane.x) && std::isfinite(plane.y) &&
+                  std::isfinite(plane.z);
+    return plane;
+  }
   void shiftGrid() {
     float cenX = static_cast<float>(p_.terrainVoxelSize * terrainVoxelShiftX_);
     float cenY = static_cast<float>(p_.terrainVoxelSize * terrainVoxelShiftY_);
@@ -579,10 +644,8 @@ private:
 
   void estimateGround() {
     int pw = planarVoxelWidth_;
-    groundXyz_.clear();
     for (int i = 0; i < planarVoxelNum_; i++) {
-      planarVoxelElev_[i] = p_.useSorting
-          ? std::numeric_limits<float>::quiet_NaN() : 0.0f;
+      planarVoxelElev_[i] = std::numeric_limits<float>::quiet_NaN();
       planarGradientX_[i] = 0.0f;
       planarGradientY_[i] = 0.0f;
       planarObserved_[i] = false;
@@ -591,25 +654,26 @@ private:
       planarVoxelOutOfFov_[i] = 0;
       planarVoxelConn_[i] = 0;
       planarPointElev_[i].clear();
+      planarCellElev_[i].clear();
+      planarCellPoints_[i].clear();
     }
 
     for (auto& pt : merged_) {
       float relz = pt.z - (float)vz_;
       if (relz <= p_.minRelZ || relz >= p_.maxRelZ) continue;
-      if (p_.useSorting) {
-        groundXyz_.insert(groundXyz_.end(), {pt.x, pt.y, pt.z});
-      }
-
       int ix = (int)((pt.x - vx_ + p_.planarVoxelSize / 2) / p_.planarVoxelSize) + p_.planarVoxelHalfWidth;
       int iy = (int)((pt.y - vy_ + p_.planarVoxelSize / 2) / p_.planarVoxelSize) + p_.planarVoxelHalfWidth;
       if (pt.x - vx_ + p_.planarVoxelSize / 2 < 0) ix--;
       if (pt.y - vy_ + p_.planarVoxelSize / 2 < 0) iy--;
       if (ix >= 0 && ix < pw && iy >= 0 && iy < pw) {
-        planarObserved_[pw * ix + iy] = true;
+        const int index = pw * ix + iy;
+        planarObserved_[index] = true;
+        planarCellElev_[index].push_back(pt.z);
+        planarCellPoints_[index].push_back({pt.x, pt.y, pt.z});
       }
 
-      // Keep the established neighborhood density and no-data evidence. The
-      // robust surface estimator uses actual XY samples, not these Z copies.
+      // Keep neighborhood density for obstacle evidence, but only direct cell
+      // observations can establish support.
       for (int dx = -1; dx <= 1; dx++) {
         for (int dy = -1; dy <= 1; dy++) {
           int nx = ix + dx, ny = iy + dy;
@@ -645,52 +709,58 @@ private:
       }
     }
 
-    if (p_.useSorting) {
-      using namespace lingtu::maps::layers;
-      // Plane support needs several 5 cm evidence columns even when the
-      // requested navigation grid is finer than the modeling grid.
-      const double model_resolution = std::max(0.20, p_.planarVoxelSize);
-      const int model_half_width = static_cast<int>(std::ceil(
-          p_.planarVoxelHalfWidth * p_.planarVoxelSize / model_resolution));
-      const int model_width = 2 * model_half_width + 1;
-      const double half_extent = (model_half_width + 0.5) * model_resolution;
-      const Grid2D geometry = makeGrid2D(
-          model_width, model_width, model_resolution, vx_ - half_extent, vy_ - half_extent);
-      const auto surface = EstimateGroundSurface(groundXyz_, geometry, p_.groundSurface);
-      for (int x = 0; x < pw; ++x) {
-        for (int y = 0; y < pw; ++y) {
-          const int index = pw * x + y;
-          if (!planarObserved_[index]) continue;
-          const double center_x = vx_ + (x - p_.planarVoxelHalfWidth) * p_.planarVoxelSize;
-          const double center_y = vy_ + (y - p_.planarVoxelHalfWidth) * p_.planarVoxelSize;
-          const int col = static_cast<int>(std::floor((center_x - geometry.originX) / model_resolution));
-          const int row = static_cast<int>(std::floor((center_y - geometry.originY) / model_resolution));
-          const int source = geometry.index(row, col);
-          if (!std::isfinite(surface.height.data[source])) continue;
-          planarGradientX_[index] = surface.gradient_x.data[source];
-          planarGradientY_[index] = surface.gradient_y.data[source];
-          planarVoxelElev_[index] = surface.height.data[source] +
-              planarGradientX_[index] * static_cast<float>(
-                  center_x - (geometry.originX + (col + 0.5) * model_resolution)) +
-              planarGradientY_[index] * static_cast<float>(
-                  center_y - (geometry.originY + (row + 0.5) * model_resolution));
+    for (int i = 0; i < planarVoxelNum_; ++i) {
+      if (planarObserved_[i]) {
+        planarVoxelElev_[i] = median(planarCellElev_[i]);
+      }
+    }
+
+    // Estimate only the support height and its local direction. The planner
+    // does not expose a second surface result or residual map.
+    const int radius = 1;
+    for (int index = 0; index < planarVoxelNum_; ++index) {
+      if (!planarObserved_[index] || !std::isfinite(planarVoxelElev_[index])) continue;
+      const int cell_x = index / pw;
+      const int cell_y = index % pw;
+      const double center_x = vx_ + (cell_x - p_.planarVoxelHalfWidth) * p_.planarVoxelSize;
+      const double center_y = vy_ + (cell_y - p_.planarVoxelHalfWidth) * p_.planarVoxelSize;
+      std::vector<GroundPoint> points;
+      for (const auto& point : planarCellPoints_[index]) {
+        // Reuse the existing obstacle threshold instead of adding a second
+        // surface-cluster parameter.
+        if (std::abs(point[2] - planarVoxelElev_[index]) > p_.obstacleHeightThre) continue;
+        points.push_back({point[0] - center_x, point[1] - center_y, point[2]});
+      }
+      for (int dx = -radius; dx <= radius; ++dx) {
+        for (int dy = -radius; dy <= radius; ++dy) {
+          if (dx == 0 && dy == 0) continue;
+          const int x = cell_x + dx;
+          const int y = cell_y + dy;
+          if (x < 0 || x >= pw || y < 0 || y >= pw) continue;
+          const int neighbor = pw * x + y;
+          if (!planarObserved_[neighbor] || !std::isfinite(planarVoxelElev_[neighbor])) continue;
+          points.push_back({
+              static_cast<double>(dx) * p_.planarVoxelSize,
+              static_cast<double>(dy) * p_.planarVoxelSize,
+              planarVoxelElev_[neighbor]});
         }
       }
-    } else {
-      const int workerThreads = std::clamp(p_.workerThreads, 1, 4);
-      #pragma omp parallel for schedule(static, 64) num_threads(workerThreads) if(planarVoxelNum_ >= 256 && workerThreads > 1)
-      for (int i = 0; i < planarVoxelNum_; i++) {
-        auto& elev = planarPointElev_[i];
-        if (!elev.empty())
-          planarVoxelElev_[i] = *std::min_element(elev.begin(), elev.end());
+      const GroundPlane plane = fitGroundPlane(points);
+      if (plane.valid) {
+        // Keep the cell's observed median as the height anchor. The fit only
+        // supplies the local direction, so one sparse return cannot pull the
+        // whole support surface down or up.
+        planarGradientX_[index] = static_cast<float>(plane.x);
+        planarGradientY_[index] = static_cast<float>(plane.y);
+      } else {
+        planarVoxelElev_[index] = std::numeric_limits<float>::quiet_NaN();
       }
     }
     computeTerrainConnectivity();
   }
 
   bool hasGroundSupport(int index) const {
-    return p_.useSorting ? std::isfinite(planarVoxelElev_[index])
-                         : !planarPointElev_[index].empty();
+    return planarObserved_[index] && std::isfinite(planarVoxelElev_[index]);
   }
 
   void computeTerrainConnectivity() {
@@ -706,7 +776,6 @@ private:
 
     const int width = planarVoxelWidth_;
     const int half = p_.planarVoxelHalfWidth;
-    const int center = width * half + half;
     const float expected_ground =
         static_cast<float>(vz_ + p_.terrainUnderVehicle);
     const int seed_radius = std::max(0, p_.groundSeedSearchRadiusCells);
@@ -736,9 +805,7 @@ private:
     if (seed < 0) {
       // An expected body height is a reference for unknown obstacles, not an
       // observation from which modeled support connectivity can originate.
-      if (p_.useSorting) return;
-      seed = center;
-      planarVoxelElev_[seed] = expected_ground;
+      return;
     }
 
     const int radius = std::max(1, p_.terrainConnectivityRadiusCells);
@@ -847,7 +914,7 @@ private:
 
       if (ix >= 0 && ix < pw && iy >= 0 && iy < pw) {
         int vidx = pw * ix + iy;
-        const bool unsupported = p_.useSorting && !hasGroundSupport(vidx);
+        const bool unsupported = !hasGroundSupport(vidx);
         if (!unsupported && p_.checkTerrainConnectivity && planarVoxelConn_[vidx] != 1) {
           continue;
         }
@@ -869,8 +936,7 @@ private:
               planarGradientX_[vidx] * static_cast<float>(pt.x - center_x) +
               planarGradientY_[vidx] * static_cast<float>(pt.y - center_y);
           disZ = pt.z - ground_z;
-          if (p_.useSorting && disZ < 0.0f &&
-              disZ >= -p_.groundSurface.max_residual_m) disZ = 0.0f;
+          if (disZ < 0.0F && disZ >= -0.04F) disZ = 0.0F;
           if (p_.considerDrop) disZ = std::fabs(disZ);
         }
 

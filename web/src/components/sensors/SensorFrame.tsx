@@ -9,8 +9,8 @@ const heights: Record<SensorId, number> = { imu: 640, joints: 560, motors: 560, 
 type Size = { width?: number; height: number }
 type Edge = 'right' | 'bottom' | 'corner'
 
-export function SensorFrame({ id, collapsed, expanded, onCollapse, onExpand, onClose, children }: {
-  id: SensorId; collapsed: boolean; expanded: boolean; onCollapse: () => void; onExpand: () => void; onClose: () => void; children: ReactNode
+export function SensorFrame({ id, collapsed, expanded, active = false, onCollapse, onExpand, onClose, children }: {
+  id: SensorId; collapsed: boolean; expanded: boolean; active?: boolean; onCollapse: () => void; onExpand: () => void; onClose: () => void; children: ReactNode
 }) {
   const minHeight = id === 'imu' ? 240 : 180
   const [size, setSize] = useState<Size>(() => {
@@ -56,7 +56,7 @@ export function SensorFrame({ id, collapsed, expanded, onCollapse, onExpand, onC
     delete frame.current.dataset.resizing
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
-  return <aside ref={frame} id={`sensor-card-${id}`} className={styles.card} data-sensor={id} data-expanded={expanded} data-collapsed={collapsed}
+  return <aside ref={frame} id={`sensor-card-${id}`} className={styles.card} data-sensor={id} data-active={active} data-expanded={expanded} data-collapsed={collapsed}
     style={{ '--sensor-color': item.color, '--card-width': size.width === undefined ? 'var(--card-default-width)' : `${size.width}px`, '--card-height': `${size.height}px` } as CSSProperties}
     aria-label={id === 'imu' ? 'IMU 实时监测' : `${item.name}监测`} tabIndex={-1}
     onKeyDown={event => { if (event.key === 'Escape' && event.target === event.currentTarget) { event.stopPropagation(); onClose() } }}>

@@ -83,7 +83,7 @@ export const StairEditor = forwardRef<StairEditorHandle, Props>(function StairEd
     const current = annotation?.content_epoch === epoch
     setDraft(annotation && current ? { bounds: annotation.bounds, lower: annotation.lower, upper: annotation.upper } : {})
     setTool(annotation && current ? null : 'bounds')
-    setNotice(annotation && !current ? '地图已变化，请重新框选范围和两个入口。' : '')
+    setNotice(annotation && !current ? '地图内容已变化，请重新框选范围和两个入口。' : '')
     setError('')
     setDeleteConfirm(false)
   }
@@ -133,7 +133,7 @@ export const StairEditor = forwardRef<StairEditorHandle, Props>(function StairEd
       {loading ? <p>正在加载标注…</p> : annotations.length === 0 ? <p className={styles.hint}>框选一段楼梯，再点选上下平台入口。</p>
         : <ul className={styles.list}>{annotations.map(a => <li key={a.id}>
           <button onClick={() => start(a)}><ArrowUpRight size={18} /><span>{a.name}
-            <small>{a.content_epoch !== epoch ? '地图已变化 · 需要重新对齐' : `${a.lower.z.toFixed(2)} → ${a.upper.z.toFixed(2)} m · ${a.geometry?.recognized ? '梯级已识别' : '待确认几何'}`}</small></span></button>
+            <small>{a.content_epoch !== epoch ? '地图内容已变化 · 需要重新对齐' : `${a.lower.z.toFixed(2)} → ${a.upper.z.toFixed(2)} m · ${a.geometry?.recognized ? '梯级已识别' : '待确认几何'}`}</small></span></button>
         </li>)}</ul>}
       <p className={styles.hint}>保存时根据原始点云识别梯级与平台。几何识别通过后，还需验证机器人的楼梯通行能力。</p>
     </> : <>

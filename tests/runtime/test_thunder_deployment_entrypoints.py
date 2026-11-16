@@ -530,7 +530,6 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_DECAY_S=2.0" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_MIN_BLOCK_POINTS=10" in text
-    assert "LINGTU_TRAVERSABILITY_SURFACE_RESIDUAL_M=0.04" in text
     assert "LINGTU_TRAVERSABILITY_RADIUS=6" in text
     assert "LINGTU_TRAVERSABILITY_MAX_POINTS=5000" in text
     assert "LINGTU_TRAVERSABILITY_TERRAIN_CACHE_MAX_POINTS=20000" in text
@@ -579,8 +578,6 @@ def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     assert "--max-points" in text
     assert "--terrain-decay-s" in text
     assert "--terrain-min-block-points" in text
-    assert "--terrain-surface-residual-m" in text
-    assert "--terrain-surface-min-columns" in text
     assert "--terrain-cache-max-points" in text
     assert "--terrain-clear-dy-obs" in text
     assert "--terrain-min-dy-obs-dis" in text

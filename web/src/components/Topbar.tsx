@@ -5,6 +5,7 @@ import type { SSEState, Tab, ToastKind } from '../types'
 import { isObservationMode } from '../services/observationMode.ts'
 import { mapLocalizationLabel, mapLocalizationState, shortMapLabel } from '../services/mapLabel.ts'
 import { SettingsMenu } from './SettingsMenu'
+import { LingTuMark } from './LingTuMark'
 import { GeographicPlannerButton } from './GeographicPlanner'
 import { useMapSettings } from '../hooks/useMapSettings.ts'
 import { loadLayouts, saveLayouts } from './floatingWidgetLayout'
@@ -213,7 +214,7 @@ export function Topbar(props: TopbarProps) {
           }
           setCollapsed(false)
         }}>
-        <Navigation className={styles.compactMark} size={22} strokeWidth={1.9} aria-hidden="true" />
+        <LingTuMark className={styles.compactMark} size={24} />
         <span className={styles.compactIdentity}>
           <span className={styles.compactMapName} aria-hidden="true">{text(locale, currentPage.en, currentPage.zh)}{activeMap ? ` · ${mapLabel}` : ''}</span>
           {connectionNotice && <span id="operator-connection-notice" className={styles.compactConnection} role="status">{connectionNotice}</span>}
@@ -227,7 +228,7 @@ export function Topbar(props: TopbarProps) {
         <button className={styles.logo} onClick={() => setCollapsed(value => !value)}
           aria-label={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, 'Collapse controls', '收起操作坞')}
           title={collapsed ? text(locale, 'Expand controls', '展开操作坞') : text(locale, 'Collapse controls', '收起操作坞')}>
-          <Navigation size={24} strokeWidth={1.8} aria-hidden="true" />
+          <LingTuMark size={25} />
         </button>
         <nav className={styles.workspace} aria-label={text(locale, 'Workspace', '工作区')}>
         {observe ? <span className={styles.viewLabel}>{text(locale, 'Observation', '只读监控')}</span> : (<>
@@ -290,7 +291,7 @@ export function Topbar(props: TopbarProps) {
           </summary>
           <section className={styles.mapContext} aria-label={text(locale, 'Current map', '当前地图')}>
             <div className={styles.contextHeading}>
-              <span className={styles.contextBrand}>{'LingTu'}</span>
+              <span className={styles.contextBrand}><LingTuMark size={17} />{'LingTu'}</span>
               <span className={styles.contextLabel}>{text(locale, 'Current map', '当前地图')}</span>
               <button className={styles.iconButton} aria-label={text(locale, 'Close map info', '关闭地图信息')}
                 onClick={() => {

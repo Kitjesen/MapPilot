@@ -28,6 +28,9 @@ BUILDING_SCENE_XML = ROOT / "sim" / "packages" / "worlds" / "building" / "physic
 INDUSTRIAL_PARK_SCENE_XML = (
     ROOT / "sim" / "packages" / "worlds" / "industrial_park" / "physics" / "industrial_park_scene.xml"
 )
+NAV_3D_COURSE_SCENE_XML = (
+    ROOT / "sim" / "packages" / "worlds" / "nav_3d_course" / "physics" / "nav_3d_course.xml"
+)
 CORRIDOR_DEFAULT_START = [0.0, 0.0, 0.0]
 CORRIDOR_DEFAULT_GOAL = [2.4, 0.0, 0.0]
 BUILDING_DEFAULT_START = [2.0, 3.0, 0.5]
@@ -57,6 +60,9 @@ MULTILEVEL_SCENE_PRESETS = (
     "rough_terrain_traversability",
 )
 SCENE_PRESETS = ("corridor", "building", "industrial_park", *MULTILEVEL_SCENE_PRESETS)
+SCENE_PRESETS = (*SCENE_PRESETS, "nav_3d_course")
+NAV_3D_COURSE_DEFAULT_START = [2.0, 5.65, 0.465]
+NAV_3D_COURSE_DEFAULT_GOAL = [27.0, 11.0, 0.655]
 STAIR_SCENE_PROFILES: dict[str, dict[str, Any]] = {
     "stairs3d": {
         "label": "legacy_stairs3d_limit",
@@ -341,6 +347,9 @@ def generate_scene_xml(
         return
     if scene_preset == "industrial_park":
         shutil.copyfile(INDUSTRIAL_PARK_SCENE_XML, path)
+        return
+    if scene_preset == "nav_3d_course":
+        shutil.copyfile(NAV_3D_COURSE_SCENE_XML, path)
         return
     if scene_preset in MULTILEVEL_SCENE_PRESETS:
         path.write_text(_stairs3d_scene_xml(scene_preset), encoding="utf-8")
@@ -1274,6 +1283,41 @@ def _industrial_park_map_geoms() -> list[dict[str, Any]]:
     return geoms
 
 
+def _nav_3d_course_map_geoms() -> list[dict[str, Any]]:
+    root = ET.parse(NAV_3D_COURSE_SCENE_XML).getroot()
+    geoms: list[dict[str, Any]] = []
+    for geom in root.findall("./worldbody/geom"):
+        if geom.attrib.get("contype", "1").strip() == "0":
+            continue
+        name = geom.attrib.get("name", "")
+        if name.endswith("_marker"):
+            continue
+        geom_type = geom.attrib.get("type", "box").strip().lower()
+        if geom_type not in {"box", "cylinder"}:
+            continue
+        pos = _parse_vec(geom.attrib.get("pos"), 3)
+        size = _parse_vec(geom.attrib.get("size"), 2 if geom_type == "cylinder" else 3)
+        if not pos or not size:
+            continue
+        euler = _parse_vec(geom.attrib.get("euler"), 3)
+        geoms.append({"name": name, "type": geom_type, "pos": pos, "size": size,
+                      "yaw": float(euler[2]) if euler else 0.0})
+    return geoms
+
+
+def generate_nav_3d_course_points(*, spacing: float, hits_per_cell: int = 4) -> list[tuple[float, float, float]]:
+    points: list[tuple[float, float, float]] = []
+    offsets = _hit_offsets(spacing, max(1, int(hits_per_cell)))
+    for geom in _nav_3d_course_map_geoms():
+        if geom["type"] == "box":
+            _sample_box_surfaces(points, pos=geom["pos"], size=geom["size"], spacing=spacing,
+                                  offsets=offsets, yaw=float(geom.get("yaw") or 0.0))
+        else:
+            _sample_cylinder_surfaces(points, pos=geom["pos"], size=geom["size"], spacing=spacing,
+                                      offsets=offsets)
+    return points
+
+
 def generate_industrial_park_points(
     *,
     spacing: float,
@@ -2049,6 +2093,24 @@ def planner_constraint_overrides(args: argparse.Namespace) -> dict[str, Any]:
         overrides["body_clearance_below_m"] = 0.18
         overrides["body_clearance_above_m"] = 0.30
         overrides["lowest_traversable_only"] = False
+    elif getattr(args, "scene_preset", "") == "nav_3d_course":
+        # The course has a ramp and a raised landing. Keep it on the surface
+        # graph so the gate does not silently fall back to XYZ A*.
+        overrides["ground_support"] = True
+        overrides["direct_support_only"] = True
+        overrides["support_height_m"] = 0.45
+        overrides["support_height_tolerance_m"] = 0.11
+        overrides["support_depth_cells"] = max(
+            1,
+            int(
+                math.ceil(
+                    0.45 / max(1e-6, float(getattr(args, "resolution", 0.2)))
+                )
+            ),
+        )
+        overrides["max_step_height"] = 0.25
+        overrides["max_slope"] = 0.65
+        overrides["lowest_traversable_only"] = False
     return overrides
 
 
@@ -2091,6 +2153,11 @@ def effective_start_goal(args: argparse.Namespace) -> tuple[list[float], list[fl
             start = list(INDUSTRIAL_PARK_DEFAULT_START)
         if _same_triplet(goal, CORRIDOR_DEFAULT_GOAL):
             goal = list(INDUSTRIAL_PARK_DEFAULT_GOAL)
+    elif scene_preset == "nav_3d_course":
+        if _same_triplet(start, CORRIDOR_DEFAULT_START):
+            start = list(NAV_3D_COURSE_DEFAULT_START)
+        if _same_triplet(goal, CORRIDOR_DEFAULT_GOAL):
+            goal = list(NAV_3D_COURSE_DEFAULT_GOAL)
     elif scene_preset in MULTILEVEL_SCENE_PRESETS:
         if _same_triplet(start, CORRIDOR_DEFAULT_START):
             start = stair_scene_default_start_goal(scene_preset)[0]
@@ -2155,6 +2222,11 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         )
     elif scene_preset == "industrial_park":
         points = generate_industrial_park_points(
+            spacing=args.spacing,
+            hits_per_cell=args.hits_per_cell,
+        )
+    elif scene_preset == "nav_3d_course":
+        points = generate_nav_3d_course_points(
             spacing=args.spacing,
             hits_per_cell=args.hits_per_cell,
         )

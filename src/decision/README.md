@@ -147,6 +147,24 @@ task/session query. Agent's internal `follow_person` waits for its owned domain
 result. Shared discovery does not make those two operations equivalent or expose
 the blocked raw motion tools to the Agent.
 
+### Bot control contract
+
+Bot control crosses five owners, and each layer keeps a different reference.
+
+| Layer | Owner | Contract |
+| --- | --- | --- |
+| Model tool list | `decision/tasks/agent.py` | Describes the motion tools the Agent may call and tells it to wait for execution evidence. |
+| Agent execution | `decision/modules/agent_planner.py` | Owns `run_id`, motion admission, pause/resume/cancel, and the Agent-owned wait. |
+| Follow domain | `decision/modules/visual_servo.py` | Owns `follow_task_id`, `product_session_id`, target selection, follow state, and native child goals. |
+| Follow records | `decision/vision/follow_tasks.py` | Retains task records, replay keys, snapshots, cancellation terminal state, and child history. |
+| External control | `gateway/mcp_server.py` and `gateway/routes/commands.py` | Exposes structured MCP and HTTP results. Admission is separate from terminal execution. |
+
+The Agent uses `run_id` for its owned task. Direct Follow control uses the pair
+`follow_task_id` and `product_session_id`. `available_operations` in visual
+status tells the Bot whether it can start, query, cancel, or stop. A result with
+`accepted=true` is a submission result until `terminal=true` and domain feedback
+confirms the requested outcome.
+
 | Capability | Current entry point | Current boundary |
 | --- | --- | --- |
 | Intent input | `POST /api/v1/instruction`, `MCPServerModule.send_instruction` | Prefers Agent and returns `run_id`; falls back to the semantic stream only when Agent is absent. Admission is not completion. |

@@ -2791,10 +2791,10 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     assert "if _should_restamp_native_records(args):" in publisher_start
     assert 'publisher_args.append("--restamp-stdin-records")' in publisher_start
     drain_sensors = endpoint_loop.split("auto drain_sensors", 1)[1].split("CommandBatch", 1)[0]
-    assert "auto batch = dds.takeSensors(steadySeconds());" in drain_sensors
-    assert "inputs.apply(std::move(batch), timing);" in drain_sensors
-    assert drain_sensors.index("takeSensors(steadySeconds())") < drain_sensors.index(
-        "inputs.apply(std::move(batch), timing)"
+    assert "auto batch = sensor_mailbox.takeLatest();" in drain_sensors
+    assert "inputs.apply(std::move(*batch), timing);" in drain_sensors
+    assert drain_sensors.index("sensor_mailbox.takeLatest()") < drain_sensors.index(
+        "inputs.apply(std::move(*batch), timing)"
     )
     assert "projectTf(sample, batch.receive_steady_s);" in pose_input
     assert "projectOdometry(sample, batch.receive_steady_s);" in pose_input
@@ -3733,6 +3733,20 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
         "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S": "1",
     }
     assert manifest["driver_runtime"]["apply_timeout_ms"] == 1500
+
+
+def test_nav_3d_course_uses_surface_graph_constraints():
+    manifest = acceptance._load_manifest(
+        ROOT / "config" / "acceptance" / "mujoco" / "nav_3d_course.json"
+    )
+
+    constraints = manifest["planner_constraints"]
+    assert constraints["ground_support"] is True
+    assert constraints["support_height_m"] == 0.45
+    assert constraints["support_height_tolerance_m"] == 0.11
+    assert constraints["max_step_height_m"] == 0.25
+    assert constraints["max_slope"] == 0.65
+    assert constraints["lowest_traversable_only"] is False
 
 
 def test_industrial_park_navigation_matches_global_and_local_clearance_contracts():

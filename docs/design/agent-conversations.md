@@ -2,7 +2,7 @@
 
 本轮目标：让现有 Web 可以持续对话、补充任务信息、查看工具进展，并复用机器人任务的准入、执行和停止确认。采用 OpenAI Agents SDK 0.24.0；不采用 LangGraph。
 
-2026-11-12：已从 Hermes v0.23.1 迁入 Codex 设备码登录与令牌刷新功能，入口在对话栏“管理模型连接”。订阅模型标识 `codex:gpt-6.1-sol`，独立于 API Key 模型；推理直接走 Codex Responses，沿用本页的单一工具循环。详见 [迁移与登录接口](hermes-core-migration.md)。不再启动或依赖 Hermes Gateway，尚未进行真实账号授权与推理验收。
+2026-11-13：Codex 主路径改为官方 `codex app-server --stdio`。账号、CODEX_HOME、thread、turn 和增量事件由 Codex CLI/App Server 管理；Hermes 设备码实现保留为历史回退。其他供应商继续使用本页的 Agents SDK 单轮工具循环。详见 [Codex App Server 接入](codex-app-server-integration.md)。
 
 ## 分工与调用关系
 
@@ -14,7 +14,7 @@ flowchart TD
     Owner --> SDK[Agents SDK 单轮推理]
     SDK --> Tools[已有工具处理器]
     Tools --> Guard[现有运动准入与任务所有权]
-    Guard --> Planner[SemanticPlanner / 原生任务执行]
+    Guard --> Planner[SemanticPlanner / VisualServo Follow]
     Planner --> Driver[原生导航仲裁 / driver / Brainstem]
     Planner --> Evidence[任务回执与停止确认]
     Evidence --> Owner
@@ -28,9 +28,15 @@ flowchart TD
 
 新会话入口只有一个 SDK Runner；不会再在它的工具里面调用另一套完整 AgentLoop。旧 instruction API 仍兼容其现有调用者。
 
-当前对话可调用已有的坐标/对象/方向导航、对象查找、检测、记忆查询和任务状态；任务控制沿用现有查询/取消逻辑。建图、地图保存和巡检编排尚未开放为对话工具，不应在界面承诺这些能力。
+当前对话可调用已有的坐标/对象/方向导航、对象查找、检测、记忆查询、任务状态和人员跟随；具体可用能力取决于当前 Product。`tracking` 加载聊天服务、感知和 VisualServo，不加载 SemanticPlanner。聊天中的 `follow_person` 直接调用 `VisualServo.start_follow`，在 Follow 受理后返回；受理不代表选人或运动已经成功。
 
-持续跟随暂不暴露到新会话：旧 Follow 在等待期间不受有限推理时限限制，而本次 SDK turn 有总超时。直接挂上它会把持续跟随错误地截断。原 `/api/v1/instruction` 与 Follow API 保留；后续应先将长期任务等待与对话轮次解耦，再接入新入口，不能用普通导航冒充持续跟随。
+AgentRun 保存原始 `follow_task_id` 与 `product_session_id`；`get_agent_status` 在 `navigation` 中返回同一任务的阶段、原因及导航子任务。普通聊天不会重启跟随。发送“跟随状态”“停止跟随”可直接查询和取消；其他自然语言可由模型调用 `get_agent_status` 和 `cancel_agent_task(run_id)`。停止后等待所有已派发的原生导航子任务结束，才确认任务取消；这不等于独立测量机身已停稳。记录丢失或会话不匹配时显示未知，不认作完成。
+
+启动仍经过 Web 权限与 Gateway 运动准入。模型工具取消使用现有权限流程；明确的停止短句沿用直接取消通道。人员跟随不开放新 HTTP 路由，复用现有会话 API、任务轮询与任务条。后端已有其他工作台工具按注册情况提供，不从聊天文本推断已执行。
+
+上述模型工具执行适用于 Kimi 等 Agents SDK 路径。当前 Codex App Server 与 ACP 分支没有转发 LingTu 的工具定义和调用处理器，因此不能据其聊天回复认定它们可以启动跟随；明确的状态/停止短句在模型调用前处理，不依赖供应商。NX 部署和现场运动仍需单独验收。
+
+跟随必须提供可识别的衣着或外观描述。系统不会把“我”或“他”自动绑定到某个人。跟随任务的完成、丢失、重新识别和取消均以 VisualServo 的任务状态为准。
 
 ## 身份与事实来源
 
@@ -43,6 +49,28 @@ flowchart TD
 | `task_id` | 原生执行子任务，终态和停止证据由执行端提供 |
 
 “消息已接收”“推理已结束”“机器人已完成任务”是三个不同事实。聊天回复不会替代任务状态；取消回执也不等于停止确认。已有运动未结束时，新对话不会偷偷替换它。
+
+## Unified activity projection
+
+Conversation messages now carry a small display projection in `metadata`:
+
+```text
+activity_type   model | tool | navigation | tracking | inspection | other
+activity_state  started | running | awaiting | completed | failed | cancelled
+run_id          the owning Agent run when the message belongs to a task
+```
+
+The projection is display state only. Native navigation, Visual Servo and
+inspection services remain the authorities for motion and task completion. A
+motion tool can therefore be `completed` as a tool call while its returned
+native task is still running. The conversation must query the native status
+before claiming arrival or inspection completion.
+
+When a task is incomplete, the Agent first reads its current native status.
+It may continue an explicitly resumable native task through the existing
+control path. It does not submit a replacement goal or repeat a motion/write
+tool without a new request and its normal approval. A failed read-only
+observation can be retried once.
 
 ## 接口
 
@@ -153,8 +181,12 @@ SDK 以可选 `agent` extra 安装，不要求普通地图/导航 Host 加载它
 - [x] 接入只读／执行前确认／Full access，后端逐工具执行，确认后重查运动准入。
 - [x] 接入多会话列表、新建、切换、独立草稿、重命名、归档与恢复。
 - [x] 接入可撤销的只读分享快照，分享页与控制页面独立挂载。
+- [x] 统一模型、工具、导航、跟踪和巡检消息的活动类型与状态投影。
+- [x] 工具循环在 provider 用量缺失时使用明确的字符回退预算，并在有用量时优先使用真实输入 token。
 - [x] 使用 Kimi K2.6 与 K3.1 Pro Highspeed 完成真实问答、附件读取及只读工具调用；不代表所有运动工具均已实测。
-- [ ] 为持续跟随建立独立长期任务等待，再接入建图与巡检的已有工具能力。
+- [ ] 将原生导航和巡检的后续事件持续补到同一 Agent run 的实时活动流。
+- [ ] 后台预压缩已完成的历史轮次；当前仍在下一轮输入边界执行压缩。
+- [x] `tracking` 中对话直连 Follow，跨轮查询与按引用取消；本地覆盖真实 Follow/导航任务账本，NX 实机验收待完成。
 - [ ] 在目标主机完成无运动检查，再做现场监督的动作/取消验收。
 
 本机 4326 工作区已加载正式 `AgentPlannerModule` 与会话 API，使用 Kimi 官方服务。它没有机器人 Product 或导航模块，只放行地图编辑与会话写请求；对话可用不代表 Agent 已在机器人上线。原 `Only saved-map editing is available here` 来自该工作区的旧写请求限制，现已为会话入口接通，其他写请求限制保留。

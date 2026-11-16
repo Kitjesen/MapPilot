@@ -15,6 +15,32 @@ Readiness honestly reports `no_modules_loaded`, `ready=false` and
 `motion_ready=false`; robot online state remains unknown. Existing camera
 readiness in a full Product must not be inferred from this endpoint.
 
+When `LINGTU_CAMERA_STATUS_FILE` is set, the probe also publishes a read-only
+`/api/v1/camera/status` projection from the native camera status file. This is
+for an edge video-only deployment where the full Product Host is not running; it
+does not load a camera device, start a motion owner, or provide JPEG frames. The
+selected media backend can be Go2RTC (`LINGTU_GO2RTC_URL`) or a native WHEP
+endpoint (`LINGTU_WEBRTC_URL`).
+
+For Go2RTC, camera diagnostics mark the receiver path ready only when the
+sidecar endpoint is reachable and the file-backed camera projection has fresh
+color frames. A reachable HTTP endpoint with a stopped or disconnected camera
+stays `camera_source_not_ready`.
+
+Set `LINGTU_CAMERA_MCP_ENABLED=1` only on an authorized edge host to expose a
+read-only `/mcp` endpoint with `get_camera_status`, `capture_camera` and
+`capture_depth`. The camera tool returns an MCP image content block from the
+configured Go2RTC snapshot; the depth tool reads the configured depth SHM and
+returns a bounded Turbo false-color preview plus the measured range. Neither
+tool starts a Product Host or sends motion commands. Keep this flag off on an
+untrusted network.
+
+The read-only HTTP depth preview is `GET /api/v1/camera/depth/snapshot`. The
+default depth source is `/lingtu_camera_depth` (`LINGTU_CAMERA_DEPTH_SHM` can
+override it). The preview uses the valid-frame 2nd and 98th percentiles for
+contrast, keeps invalid depth black, and reports the selected range in response
+headers `X-Depth-Near-M` and `X-Depth-Far-M`.
+
 Run the camera publisher and native video pipeline separately with unique
 SHM names and a bounded lifetime. Set these values to that actual test's
 configuration, in an environment without `LINGTU_PRODUCT`,

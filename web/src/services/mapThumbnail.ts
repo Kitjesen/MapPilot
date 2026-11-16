@@ -17,7 +17,7 @@ export async function fetchMapThumbnail(name: string, epoch?: number | null, sig
   if (!response.ok) throw new Error(`地图预览读取失败（HTTP ${response.status}）`)
   const result = await response.json() as MapThumbnailData
   if (result.name !== name || !Number.isSafeInteger(result.content_epoch) || result.content_epoch <= 0
-    || (epoch != null && result.content_epoch !== epoch)) throw new Error('地图版本已变化，请刷新地图库')
+    || (epoch != null && result.content_epoch !== epoch)) throw new Error('地图内容已变化，请刷新地图库')
   if (!Array.isArray(result.points) || result.points.some(point => !Array.isArray(point)
     || point.length !== 3 || !point.every(Number.isFinite))) throw new Error('地图预览点格式无效')
   if (result.points.length > 24000 || !Number.isSafeInteger(result.count) || result.count !== result.points.length

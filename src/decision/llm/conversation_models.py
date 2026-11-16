@@ -3,6 +3,7 @@
 import os
 from dataclasses import replace
 
+from decision.llm.acp import ACP_AGENTS
 from decision.llm.client import LLMConfig
 
 PROVIDERS = {
@@ -19,15 +20,23 @@ PROVIDERS = {
         "claude-opus-5-5": "Claude Opus 5.5",
         "claude-haiku-5-5": "Claude Haiku 5.5",
     }),
+    "grok": ("https://api.x.ai/v1", "XAI_API_KEY", {
+        "grok-4.7": "Grok 4.7 · xAI",
+    }),
 }
+
+ACP_MODELS = {model: spec["label"] for model, spec in ACP_AGENTS.items()}
 
 
 def conversation_config(default: LLMConfig, model: str | None) -> LLMConfig:
+    from decision.llm.acp import acp_agent_config
     from decision.llm.codex import BASE_URL, MODELS
 
     if model in MODELS:
         return replace(default, backend="codex", model=model.removeprefix("codex:"), base_url=BASE_URL,
                        api_key_env="", timeout_sec=120, max_retries=0)
+    if model in ACP_AGENTS:
+        return acp_agent_config(default, model)
     if not model or model == default.model:
         return default
     for backend, (url, key, models) in PROVIDERS.items():
@@ -42,8 +51,14 @@ def provider_choices(default: LLMConfig):
         for model, label in models.items():
             config = conversation_config(default, model)
             yield config, model, label, bool(os.environ.get(config.api_key_env))
-    from decision.llm.codex import MODELS, account
+    from decision.llm.acp import acp_agent_choices
+    from decision.llm.codex import MODELS
+    from decision.llm.codex_app_server import app_server
 
-    connected = account.status()["connected"]
+    try:
+        connected = app_server.status()["connected"]
+    except Exception:
+        connected = False
     for model, label in MODELS.items():
         yield conversation_config(default, model), model, label, connected
+    yield from acp_agent_choices(default)

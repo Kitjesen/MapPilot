@@ -244,6 +244,11 @@ class PersonTracker:
             self._dino_encoder = encoder
         self._dino_event = "ready"
 
+    def set_description(self, description: str) -> None:
+        """Set the current follow description used by target selection."""
+        with self._lock:
+            self._description = str(description)
+
     def set_clip_encoder(self, clip_encoder) -> None:
         """Inject CLIP encoder for secondary appearance feature extraction."""
         with self._encoder_lock:
@@ -258,6 +263,12 @@ class PersonTracker:
                 and callable(getattr(self._clip_encoder, "encode_text", None))
                 and callable(getattr(self._clip_encoder, "encode_image", None))
             )
+
+    @property
+    def has_dino_encoder(self) -> bool:
+        """Return whether DINO appearance matching is configured."""
+        with self._encoder_lock:
+            return self._dino_encoder is not None
 
     def set_osnet_encoder(self, encoder) -> None:
         """Inject a pre-constructed OSNetReIDEncoder (primary Re-ID signal).
@@ -1542,6 +1553,15 @@ class PersonTracker:
         with self._lock:
             if self._person is None:
                 return None
+            if self._dino_encoder is not None:
+                appearance_backend = "dino"
+            else:
+                encoders = [
+                    name
+                    for name, encoder in (("clip", self._clip_encoder), ("osnet", self._osnet_encoder))
+                    if encoder is not None
+                ]
+                appearance_backend = "_".join(encoders) or "none"
             return {
                 "id": self._person.obj_id,
                 "native_track_id": self._person.obj_id,
@@ -1561,7 +1581,7 @@ class PersonTracker:
                     if self._observation_context_valid
                     else None
                 ),
-                "appearance_backend": "dino" if self._dino_encoder is not None else "clip_osnet",
+                "appearance_backend": appearance_backend,
                 "dino_similarity": self._dino_similarity,
                 "dino_event": self._dino_event,
                 "identity_retry_until": dict(self._identity_retry_until),

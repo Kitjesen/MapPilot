@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import math
 import os
 import threading
 import time
 import uuid
-from collections import OrderedDict
-from copy import deepcopy
 from typing import Any
 
+from decision.vision.follow_tasks import FollowTaskLedger
+from decision.vision.candidates import review_person_candidates
 from decision.vision.person import PersonTracker, verify_candidate
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
@@ -42,6 +43,7 @@ _FOLLOW_RECEIPT_SCHEMA = {
         "follow_task_id": {"type": "string", "description": "Present when a retained task is referenced."},
         "state": {"type": "string"},
         "terminal": {"type": "boolean"},
+        "confirmation_required": {"type": "boolean"},
     },
     "required": ["accepted", "request_id", "reason", "product_session_id", "execution_confirmed"],
 }
@@ -63,6 +65,27 @@ _FOLLOW_TASK_SCHEMA = {
         "details": {"type": "object"},
     },
     "required": ["found", "reason"],
+}
+
+_SERVO_STATUS_SCHEMA = {
+    "type": "object",
+    "description": "Current visual-servo state. A submitted goal is not physical completion.",
+    "properties": {
+        "mode": {"type": "string"},
+        "state": {"type": "string"},
+        "reason": {"type": "string"},
+        "follow_task_id": {"type": ["string", "null"]},
+        "product_session_id": {"type": "string"},
+        "task_state": {"type": ["string", "null"]},
+        "task_terminal": {"type": ["boolean", "null"]},
+        "target": {"type": "string"},
+        "target_id": {"type": ["string", "null"]},
+        "target_visible": {"type": "boolean"},
+        "navigation_state": {"type": "string"},
+        "navigation_task_id": {"type": ["string", "null"]},
+        "navigation_reason": {"type": "string"},
+        "available_operations": {"type": "array", "items": {"type": "string"}},
+    },
 }
 
 
@@ -157,7 +180,9 @@ class VisualServoModule(Module, layer=4):
             product_session_id or os.environ.get("LINGTU_PRODUCT_SESSION_ID", "")
         ).strip()
         self._follow_task_id = ""
-        self._follow_tasks: OrderedDict[str, dict] = OrderedDict()
+        self._follow_tasks = FollowTaskLedger()
+        self._follow_selection: dict | None = None
+        self._follow_selection_future = None
         self._goals = None
 
         # Person-following target selection (description-based "person in red")
@@ -166,6 +191,7 @@ class VisualServoModule(Module, layer=4):
         self._latest_bgr_ts = 0.0
         self._follow_select_pending = False  # need to (re)select target
         self._follow_select_running = False  # VLM selection in flight
+        self._follow_select_future = None
         self._follow_verify_running = False  # identity verification in flight
         self._follow_verify_key: tuple[int, str, float | None] | None = None
         self._follow_verify_future = None
@@ -318,6 +344,7 @@ class VisualServoModule(Module, layer=4):
                 ):
                     continue
                 self._intent_generation += 1
+                self._clear_target_selection()
                 self._clear_identity_verification()
                 self._target_visible = False
                 self._cancel_navigation_goal("visual_servo_perception_stale")
@@ -330,9 +357,8 @@ class VisualServoModule(Module, layer=4):
                         self._person_tracker.invalidate_reacquisition()
                     else:
                         self._person_tracker.reset()
-                        self._person_tracker._description = self._target_label
+                        self._person_tracker.set_description(self._target_label)
                         self._follow_select_pending = True
-                        self._follow_select_running = False
                         self._follow_select_method = ""
                 self._last_perception_time = 0.0
                 self._publish_status(force=True)
@@ -357,6 +383,7 @@ class VisualServoModule(Module, layer=4):
             return
         if previous is not None:
             self._intent_generation += 1
+            self._clear_target_selection()
             self._clear_identity_verification()
             self._cancel_navigation_goal(reason or "visual_observation_context_changed")
             self._target_visible = False
@@ -371,8 +398,6 @@ class VisualServoModule(Module, layer=4):
                         )
                     self._reset_tracking_state()
                     self._finish_follow_cancel()
-                else:
-                    self._follow_select_running = False
         self._observation_boundary = boundary
         self._latest_observation_source_ts = 0.0
         self._latest_detections = []
@@ -406,6 +431,7 @@ class VisualServoModule(Module, layer=4):
             # preserving hard failure/invalid-input stops below.
             if status not in {"positive", "negative", "degraded"}:
                 self._intent_generation += 1
+                self._clear_target_selection()
                 self._clear_identity_verification()
                 self._target_visible = False
                 self._motion_observation_ready = False
@@ -553,6 +579,7 @@ class VisualServoModule(Module, layer=4):
             "target_id": "Identity from current person tracking; empty when selecting by description.",
             "request_id": "Optional caller request ID; replay matching requires both request_id and client_id.",
             "client_id": "Caller identity paired with request_id; reusing the pair with another target is rejected.",
+            "require_confirmation": "Hold navigation until the operator confirms a person in the Web selection card.",
         },
         output_schema=_FOLLOW_RECEIPT_SCHEMA,
         read_only=False,
@@ -560,6 +587,7 @@ class VisualServoModule(Module, layer=4):
     def start_follow(
         self, description: str = "", target_id: str = "",
         request_id: str = "", client_id: str = "",
+        require_confirmation: bool = False,
     ) -> dict:
         """Start one Follow execution; retain the returned task and session IDs."""
         with self._state_lock:
@@ -567,11 +595,13 @@ class VisualServoModule(Module, layer=4):
             request_id = str(request_id or "")
             client_id = str(client_id or "")
             if request_id and client_id:
-                for task in self._follow_tasks.values():
-                    if (task["request_id"], task["client_id"]) == (request_id, client_id):
-                        if (task["target"], task["target_id"]) != (description, target_id):
-                            return self._follow_receipt(False, request_id, "request_id_conflict")
-                        return self._follow_receipt(True, request_id, "replayed", task)
+                task = self._follow_tasks.find_request(request_id, client_id)
+                if task is not None:
+                    if (task["target"], task["target_id"], task.get("require_confirmation", False)) != (
+                        description, target_id, require_confirmation,
+                    ):
+                        return self._follow_receipt(False, request_id, "request_id_conflict")
+                    return self._follow_receipt(True, request_id, "replayed", task)
             if not description and not target_id:
                 return self._follow_receipt(False, request_id, "follow_target_required")
             reference = description.casefold().strip(" \t\r\n.,!?;:，。！？；：")
@@ -591,22 +621,18 @@ class VisualServoModule(Module, layer=4):
             self._navigation_task_id = None
             self._navigation_state, self._navigation_reason = "idle", ""
             self._follow_task_id = uuid.uuid4().hex
-            task = {
-                "follow_task_id": self._follow_task_id,
-                "product_session_id": self._product_session_id,
-                "request_id": request_id or uuid.uuid4().hex,
-                "client_id": client_id,
-                "target": description, "target_id": target_id,
-                "state": "running", "terminal": False,
-                "result": None, "reason": "", "children": {},
-                "created_at": time.time(),
-            }
-            self._follow_tasks[self._follow_task_id] = task
-            while len(self._follow_tasks) > 64:
-                self._follow_tasks.popitem(last=False)
+            task = self._follow_tasks.create(
+                follow_task_id=self._follow_task_id,
+                product_session_id=self._product_session_id,
+                request_id=request_id or uuid.uuid4().hex,
+                client_id=client_id,
+                target=description,
+                target_id=target_id,
+            )
+            task.update(require_confirmation=require_confirmation, confirmation_required=require_confirmation)
             self._mode = MODE_FOLLOW
             self._target_label, self._target_id = description, target_id or None
-            self._person_tracker._description = description
+            self._person_tracker.set_description(description)
             self._follow_select_pending = True
             self._publish_status(force=True)
             receipt = self._follow_receipt(True, task["request_id"], "accepted", task)
@@ -626,8 +652,126 @@ class VisualServoModule(Module, layer=4):
             result.update(
                 follow_task_id=task["follow_task_id"],
                 state=task["state"], terminal=task["terminal"],
+                confirmation_required=task.get("confirmation_required", False),
             )
         return result
+
+    def get_follow_selection(self, follow_task_id: str, product_session_id: str, refresh: bool = False) -> dict:
+        """Return boxes and pixels from one observation, retained until explicit refresh."""
+        with self._state_lock:
+            task = self.get_follow_task(follow_task_id, product_session_id)
+            if not task.get("found") or task.get("terminal") or not task.get("confirmation_required"):
+                return {key: task[key] for key in (
+                    "found", "reason", "state", "terminal", "confirmation_required", "confirmed_target_id",
+                ) if key in task}
+            if (not self._selection_image_matches() or self._last_perception_time <= 0
+                    or time.monotonic() - self._last_perception_time > self._lost_timeout):
+                return {"found": True, "confirmation_required": True, "reason": "waiting_selection_image"}
+            if refresh or (self._follow_selection is not None
+                           and self._follow_selection["generation"] != self._intent_generation):
+                if self._follow_selection_future is not None:
+                    self._follow_selection_future.cancel()
+                    self._follow_selection_future = None
+                self._follow_selection = None
+            if self._follow_selection is None:
+                import cv2
+
+                height, width = self._latest_bgr.shape[:2]
+                candidates = []
+                for obj in self._scene_objects_from_detections(self._latest_detections):
+                    if obj["label"].lower() not in self._PERSON_LABELS or not obj["id"]:
+                        continue
+                    x1, y1, x2, y2 = obj["bbox"]
+                    if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
+                        continue
+                    box = [max(0, min(width, x1)), max(0, min(height, y1)),
+                           max(0, min(width, x2)), max(0, min(height, y2))]
+                    if box[2] <= box[0] or box[3] <= box[1]:
+                        continue
+                    candidates.append({"target_id": str(obj["id"]), "bbox": box})
+                if not candidates:
+                    return {"found": True, "confirmation_required": True, "reason": "target_not_visible"}
+                ok, encoded = cv2.imencode(".jpg", self._latest_bgr, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                if not ok:
+                    return {"found": True, "confirmation_required": True, "reason": "selection_image_unavailable"}
+                person = self._person_tracker.status() or {}
+                self._follow_selection = {
+                    "generation": self._intent_generation,
+                    "observation_sequence": self._latest_observation_sequence,
+                    "source_ts": self._latest_bgr_ts, "width": width, "height": height,
+                    "image": "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii"),
+                    "candidates": candidates, "suggested_target_id": str(person.get("id") or ""),
+                    "review_state": "unavailable",
+                }
+                loop = getattr(self._llm_module, "_loop", None)
+                if self._vision_client is not None and loop is not None and loop.is_running():
+                    self._follow_selection["review_state"] = "reviewing"
+                    self._follow_selection_future = asyncio.run_coroutine_threadsafe(
+                        asyncio.wait_for(review_person_candidates(
+                            self._follow_selection["image"], candidates, self._vlm_chat,
+                        ), timeout=self._llm_module._timeout_sec), loop,
+                    )
+            future = self._follow_selection_future
+            if future is not None and future.done():
+                self._follow_selection_future = None
+                try:
+                    reviewed = future.result()
+                    for candidate in self._follow_selection["candidates"]:
+                        candidate.update(reviewed[candidate["target_id"]])
+                    self._follow_selection["review_state"] = "ready"
+                except Exception as exc:
+                    logger.warning("Follow candidate review failed: %s", exc)
+                    self._follow_selection["review_state"] = "unavailable"
+            return {"found": True, "confirmation_required": True, **self._follow_selection}
+
+    def confirm_follow_target(
+        self, follow_task_id: str, product_session_id: str, target_id: str,
+        observation_sequence: int, request_id: str = "",
+    ) -> dict:
+        """Accept an operator's selection; this is intentionally not an Agent skill."""
+        with self._state_lock:
+            task = self.get_follow_task(follow_task_id, product_session_id)
+            reason = ""
+            preview = self._follow_selection
+            if not task.get("found"):
+                reason = task.get("reason", "follow_task_not_found")
+            elif task["terminal"] or follow_task_id != self._follow_task_id:
+                reason = "follow_task_not_active"
+            elif not task.get("confirmation_required"):
+                same = task.get("confirmed_target_id") == target_id
+                return self._follow_receipt(same, request_id, "already_confirmed" if same else "target_already_confirmed",
+                                            self._follow_tasks[follow_task_id])
+            elif (preview is None or preview["observation_sequence"] != observation_sequence
+                  or preview["generation"] != self._intent_generation):
+                reason = "selection_stale"
+            elif target_id not in {item["target_id"] for item in preview["candidates"]}:
+                reason = "selection_target_invalid"
+            elif (preview["review_state"] != "ready" or not any(
+                item["target_id"] == target_id and item.get("kind") == "person" for item in preview["candidates"]
+            )):
+                reason = "person_not_verified"
+            elif (self._last_perception_time <= 0
+                  or time.monotonic() - self._last_perception_time > self._lost_timeout
+                  or not self._selection_image_matches()):
+                reason = "waiting_selection_image"
+            elif not any(str(obj.id) == target_id and (obj.label or "").lower() in self._PERSON_LABELS
+                         for obj in self._latest_detections):
+                reason = "target_not_visible"
+            if reason:
+                return self._follow_receipt(False, request_id, reason)
+            # Discard any in-flight model choice before binding the operator's person.
+            self._intent_generation += 1
+            self._clear_target_selection()
+            self._clear_identity_verification()
+            self._person_tracker.reset()
+            self._person_tracker.set_description(self._target_label)
+            self._target_id = target_id
+            self._follow_select_pending = True
+            self._follow_select_method = ""
+            self._follow_tasks[follow_task_id].update(confirmation_required=False, confirmed_target_id=target_id)
+            self._follow_selection = None
+        self._process_follow_frame()
+        return self._follow_receipt(True, request_id, "target_confirmed", self._follow_tasks[follow_task_id])
 
     @skill(
         description=(
@@ -650,17 +794,19 @@ class VisualServoModule(Module, layer=4):
             task = self._follow_tasks.get(follow_task_id)
             if task is None:
                 return {"found": False, "reason": "follow_task_not_found"}
-            view = deepcopy(task)
-            view.pop("client_id", None)
-            view["found"] = True
-            view["kind"] = "follow"
-            view["available_operations"] = [] if task["terminal"] else ["cancel"]
-            view["retention"] = "host_last_64_executions"
-            if follow_task_id == self._follow_task_id and not task["terminal"]:
-                view["details"] = self._status()
-                view["phase"] = self._runtime_state()
-                if task["state"] != "cancelling":
-                    view["reason"] = self._navigation_reason or self._tracking_reason(self._person_tracker.status())
+            current = follow_task_id == self._follow_task_id and not task["terminal"]
+            view = self._follow_tasks.snapshot(
+                follow_task_id,
+                current=current,
+                details=self._status() if current else None,
+                phase=self._runtime_state() if current else "",
+                reason=(
+                    self._navigation_reason
+                    or self._tracking_reason(self._person_tracker.status())
+                ) if current else "",
+            )
+            if view is None:
+                return {"found": False, "reason": "follow_task_not_found"}
             return view
 
     @skill(
@@ -710,15 +856,7 @@ class VisualServoModule(Module, layer=4):
         task = self._follow_tasks.get(self._follow_task_id)
         if task is None or task["state"] != "cancelling" or self._navigation_tasks:
             return
-        task.update(state="cancelled", terminal=True, result="cancelled", finished_at=time.time())
-        task["phase"] = "cancelled"
-        task["details"] = self._status()
-
-    @staticmethod
-    def _trim_child_history(task: dict) -> None:
-        completed = [key for key, child in task["children"].items() if child.get("terminal")]
-        for key in completed[:-128]:
-            del task["children"][key]
+        self._follow_tasks.finish_cancel(self._follow_task_id, self._status())
 
     def _on_goal_status(self, status: dict) -> None:
         """Consume admission ACKs; native lifecycle comes through the typed input."""
@@ -759,7 +897,7 @@ class VisualServoModule(Module, layer=4):
                 self._navigation_tasks.discard(task_id)
                 self._goal_requests.pop(task_id, None)
                 if task is not None:
-                    self._trim_child_history(task)
+                    self._follow_tasks.trim_child_history(task)
             if task_id == self._navigation_task_id:
                 self._navigation_state, self._navigation_reason = state, reason
                 if not accepted:
@@ -800,7 +938,7 @@ class VisualServoModule(Module, layer=4):
                 self._navigation_tasks.discard(task_id)
                 self._goal_requests.pop(task_id, None)
                 if task is not None:
-                    self._trim_child_history(task)
+                    self._follow_tasks.trim_child_history(task)
             self._finish_follow_cancel()
             self._publish_status(force=True)
 
@@ -960,7 +1098,7 @@ class VisualServoModule(Module, layer=4):
             crop = None
             if matched_bgr is not None:
                 crop = PersonTracker._crop_person(matched_bgr, exact_objects[0])
-            if self._person_tracker._dino_encoder is not None and crop is None:
+            if self._person_tracker.has_dino_encoder and crop is None:
                 self._target_visible = False
                 self._publish_status()
                 return
@@ -973,7 +1111,7 @@ class VisualServoModule(Module, layer=4):
             self._cancel_navigation_goal("visual_servo_target_lost")
             if not self._person_tracker.has_identity_reference:
                 self._person_tracker.reset()
-                self._person_tracker._description = self._target_label
+                self._person_tracker.set_description(self._target_label)
                 self._follow_select_pending = True
                 self._follow_select_method = ""
 
@@ -990,7 +1128,7 @@ class VisualServoModule(Module, layer=4):
             logger.info("VisualServo: follow target lost - re-selecting '%s'", self._target_label)
             self._cancel_navigation_goal("visual_servo_target_lost")
             self._person_tracker.reset()
-            self._person_tracker._description = self._target_label
+            self._person_tracker.set_description(self._target_label)
             self._follow_select_pending = True
             self._follow_select_method = ""
 
@@ -1005,7 +1143,7 @@ class VisualServoModule(Module, layer=4):
                 and self._is_generic_person_target()
                 and self._vision_client is None
                 and not self._person_tracker.has_image_selector
-                and self._person_tracker._dino_encoder is None
+                and not self._person_tracker.has_dino_encoder
             )
             if matched_bgr is None and not can_lock_single_without_image:
                 self._target_visible = False
@@ -1239,6 +1377,11 @@ class VisualServoModule(Module, layer=4):
                 ),
                 loop,
             )
+            with self._state_lock:
+                if generation != self._intent_generation:
+                    future.cancel()
+                else:
+                    self._follow_select_future = future
             idx, verdict = future.result()
             selected = None
             if idx >= 0 and verdict == "MATCH":
@@ -1268,15 +1411,24 @@ class VisualServoModule(Module, layer=4):
                 verdict,
             )
         except Exception:
-            logger.exception("VisualServo: VLM follow selection failed")
             with self._state_lock:
-                if generation == self._intent_generation:
-                    self._follow_select_method = "unavailable"
+                if generation != self._intent_generation:
+                    return
+                self._follow_select_method = "unavailable"
+            logger.exception("VisualServo: VLM follow selection failed")
         finally:
             with self._state_lock:
                 if generation == self._intent_generation:
+                    self._follow_select_future = None
                     self._follow_select_running = False
                     self._follow_select_pending = False
+
+    def _clear_target_selection(self) -> None:
+        future = self._follow_select_future
+        self._follow_select_future = None
+        self._follow_select_running = False
+        if future is not None and not future.done():
+            future.cancel()
 
     def _clear_identity_verification(self) -> None:
         future = self._follow_verify_future
@@ -1406,11 +1558,15 @@ class VisualServoModule(Module, layer=4):
     def _reset_tracking_state(self) -> None:
         """Reset local target selection."""
         self._person_tracker.reset()
+        if self._follow_selection_future is not None:
+            self._follow_selection_future.cancel()
+            self._follow_selection_future = None
+        self._follow_selection = None
         self._mode = MODE_IDLE
         self._target_label = ""
         self._target_id = None
         self._follow_select_pending = False
-        self._follow_select_running = False
+        self._clear_target_selection()
         self._clear_identity_verification()
         self._follow_select_method = ""
         self._follow_reference_crop = None
@@ -1467,6 +1623,9 @@ class VisualServoModule(Module, layer=4):
         yaw: float | None = None,
     ) -> bool:
         """Publish a changed map goal at the bounded visual-follow update rate."""
+        task = self._follow_tasks.get(self._follow_task_id)
+        if task is not None and not task["terminal"] and task.get("confirmation_required"):
+            return False
         if self._navigation_tasks and self._navigation_state in {"unknown", "cancel_requested"}:
             return False
         position = (float(pos_3d[0]), float(pos_3d[1]), float(pos_3d[2]))
@@ -1555,14 +1714,22 @@ class VisualServoModule(Module, layer=4):
                     float(position[0]) - robot_position[0],
                     float(position[1]) - robot_position[1],
                 )
+        active_task = task is not None and not task["terminal"]
+        if active_task:
+            available_operations = ["query", "cancel"]
+        elif self._mode == MODE_IDLE and not self._navigation_tasks:
+            available_operations = ["find", "follow"]
+        else:
+            available_operations = ["query", "stop"]
         return {
             "follow_task_id": self._follow_task_id or None,
             "product_session_id": self._product_session_id,
             "task_state": task["state"] if task else None,
             "task_terminal": task["terminal"] if task else None,
+            "available_operations": available_operations,
             "follow_capabilities": {
                 "supported_operations": ["start", "query", "cancel"],
-                "retention": "host_last_64_executions",
+                "retention": self._follow_tasks.retention_label,
                 "resume_after_restart": False,
             },
             "ts": time.time() if now is None else now,
@@ -1618,7 +1785,7 @@ class VisualServoModule(Module, layer=4):
             if not people:
                 return "target_not_visible"
             if not self._selection_image_matches() and (
-                self._person_tracker._dino_encoder is not None
+                self._person_tracker.has_dino_encoder
                 or self._person_tracker.has_image_selector
                 or self._vision_client is not None
                 or (self._target_id is None and len(people) > 1)
@@ -1646,6 +1813,9 @@ class VisualServoModule(Module, layer=4):
             return "failed"
         if self._mode == MODE_FIND:
             return "approaching" if self._target_visible else "searching"
+        task = self._follow_tasks.get(self._follow_task_id)
+        if task is not None and task.get("confirmation_required") and self._selection_image_matches():
+            return "awaiting_confirmation"
         if (
             self._follow_select_pending
             or self._follow_select_running
@@ -1666,18 +1836,48 @@ class VisualServoModule(Module, layer=4):
         info["navigation_state"] = self._navigation_state
         return info
 
-    @skill
+    @skill(
+        description=(
+            "Find and approach a visual target. This returns a command result, not proof that the target was reached. "
+            "Use get_servo_status for the current state."
+        ),
+        parameters={"target": "Object or visual target description."},
+        read_only=False,
+    )
     def find_object(self, target: str) -> str:
         """Trigger visual find mode for a target object."""
         self._on_servo_target(f"find:{target}")
         return f"Visual servo: finding '{target}'"
 
-    @skill
+    @skill(
+        description=(
+            "Start an Agent-owned continuous follow task. accepted=true means the task was admitted. "
+            "Use the returned task reference and get_follow_task to inspect execution."
+        ),
+        parameters={
+            "description": "Visible clothing or appearance description of the person to follow.",
+            "request_id": "Optional idempotency key from the caller.",
+            "client_id": "Caller identity paired with request_id.",
+        },
+        output_schema=_FOLLOW_RECEIPT_SCHEMA,
+        read_only=False,
+    )
     def follow_person(self, description: str, request_id: str = "", client_id: str = "") -> dict:
         """Trigger person following mode."""
         return self.start_follow(description=description, request_id=request_id, client_id=client_id)
 
-    @skill
+    @skill(
+        description=(
+            "Request cancellation of a visual task. The response confirms the cancellation request. "
+            "Query the task or servo status until the terminal state is reported."
+        ),
+        parameters={
+            "follow_task_id": "Exact Follow task ID returned by follow_person or start_follow.",
+            "product_session_id": "Product session ID returned with the Follow task.",
+        },
+        output_schema=_FOLLOW_RECEIPT_SCHEMA,
+        read_only=False,
+    )
     def stop_servo(self, follow_task_id: str = "", product_session_id: str = "") -> dict:
         """Cancel Follow by reference, or stop the current object approach."""
         with self._state_lock:
@@ -1688,7 +1888,11 @@ class VisualServoModule(Module, layer=4):
             self._cancel_tracking()
             return {"accepted": True, "reason": "stop_requested", "execution_confirmed": False}
 
-    @skill
+    @skill(
+        description="Read the current visual task, target, navigation state, and machine-readable reason.",
+        output_schema=_SERVO_STATUS_SCHEMA,
+        read_only=True,
+    )
     def get_servo_status(self) -> dict:
         """Return current servo state."""
         with self._state_lock:

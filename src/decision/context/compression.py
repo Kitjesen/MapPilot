@@ -5,6 +5,7 @@ import json
 import time
 
 from decision.context.transcript import serialize
+from decision.tasks.activity import normalize_activity_state
 
 # Character budgets, not provider token counts or claims about model context windows.
 TRIGGER_CHARACTERS = 48000
@@ -77,7 +78,8 @@ async def prepare_context(store, conversation_id, turn_id, *, config, selected_m
                 pages.append(chunk)
     summary = checkpoint["summary"]
     started = time.monotonic()
-    on_event({"status": "running", "started_at": time.time(), "source_turns": len(sources),
+    on_event({"status": "running", "activity_state": normalize_activity_state("running"),
+              "started_at": time.time(), "source_turns": len(sources),
               "pages": len(pages), "before_characters": before})
 
     async def no_tools(*_args):
@@ -108,7 +110,8 @@ async def prepare_context(store, conversation_id, turn_id, *, config, selected_m
             summary = serialize(value)
             if len(summary) > SUMMARY_CHARACTERS:
                 raise ValueError("context_summary_too_long")
-            on_event({"status": "running", "page": index + 1, "pages": len(pages), "before_characters": before})
+            on_event({"status": "running", "activity_state": normalize_activity_state("running"),
+                      "page": index + 1, "pages": len(pages), "before_characters": before})
         tail = store.history(conversation_id, exclude_turn_id=turn_id, model=selected_model, after_ordinal=through)
         candidate = [summary_message({"summary": summary}), *tail]
         after = len(serialize(candidate))
@@ -116,13 +119,16 @@ async def prepare_context(store, conversation_id, turn_id, *, config, selected_m
             raise ValueError("context_summary_did_not_reduce_input")
         if not store.save_context(conversation_id, turn_id, checkpoint["through_ordinal"], through, summary, selected_model):
             raise ValueError("context_changed_before_commit")
-        on_event({"status": "completed", "source_turns": len(sources), "before_characters": before,
+        on_event({"status": "completed", "activity_state": normalize_activity_state("completed"),
+                  "source_turns": len(sources), "before_characters": before,
                   "after_characters": after, "duration_ms": round((time.monotonic() - started) * 1000)})
         return candidate
     except asyncio.CancelledError:
-        on_event({"status": "cancelled", "history_preserved": True})
+        on_event({"status": "cancelled", "activity_state": normalize_activity_state("cancelled"),
+                  "history_preserved": True})
         raise
     except Exception as exc:
-        on_event({"status": "failed", "reason": str(exc), "history_preserved": True,
+        on_event({"status": "failed", "activity_state": normalize_activity_state("failed"),
+                  "reason": str(exc), "history_preserved": True,
                   "duration_ms": round((time.monotonic() - started) * 1000)})
         return original

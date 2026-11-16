@@ -68,6 +68,7 @@ test('Follow phases report the domain state even when its generic state is runni
     ['following', '正在持续跟随'],
     ['reacquiring', '正在重新识别跟随目标'],
     ['lost', '跟随目标暂时丢失'],
+    ['cancelling', '正在取消跟随'],
   ] as const
 
   for (const [phase, label] of phases) {
@@ -81,6 +82,19 @@ test('Follow phases report the domain state even when its generic state is runni
     assert.equal(view.label, label)
     assert.equal(view.successful, false)
   }
+})
+
+test('missing Follow record cannot be shown as following and an external cancel remains pending', () => {
+  const unknown = presentAgentTask(status({
+    navigation: { follow_task_id: 'old-follow', state: 'FOLLOW_UNKNOWN', terminal: false },
+  }))
+  assert.equal(unknown.label, '跟随状态未知')
+  assert.equal(unknown.successful, false)
+  const cancelling = presentAgentTask(status({
+    navigation: { follow_task_id: 'follow', state: 'cancelling', phase: 'following', terminal: false },
+  }))
+  assert.equal(cancelling.label, '正在取消跟随')
+  assert.equal(cancelling.terminal, false)
 })
 
 test('failed or cancelled motion keeps polling until the native motion task ends', () => {

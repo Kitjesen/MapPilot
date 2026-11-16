@@ -1,4 +1,5 @@
 import { SurfaceSettings } from './SurfaceSettings.tsx'
+import { ModelConnections } from './agentConversation/ModelConnections'
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Activity, ArrowLeft, Check, CheckCircle2, ChevronRight, CircleAlert, Download, LocateFixed, Map, Network, Palette, RefreshCw, SlidersHorizontal, Stethoscope, X } from 'lucide-react'
@@ -30,7 +31,7 @@ interface SettingsMenuProps {
   showToast: (message: string, kind?: ToastKind) => void
 }
 
-type Section = 'appearance' | 'map' | 'sensors' | 'diagnostics' | 'system'
+type Section = 'appearance' | 'map' | 'sensors' | 'diagnostics' | 'system' | 'agent'
 type Diagnostic = 'slam' | 'dataflow' | 'planner'
 
 const DIAGNOSTICS = [
@@ -92,6 +93,8 @@ function SystemSettings({ locale }: { locale: Locale }) {
 
   const modules = Object.entries(snapshot?.data.modules ?? {})
   const okCount = modules.filter(([, status]) => status === 'ok').length
+  const issues = snapshot?.data.issues?.filter(issue => issue.active) ?? []
+  const advisories = snapshot?.data.advisories?.filter(advisory => advisory.active) ?? []
   return <>
     <div className={styles.sectionHeading}>
       <div><h3>{text(locale, 'System health', '系统健康')}</h3>
@@ -105,7 +108,8 @@ function SystemSettings({ locale }: { locale: Locale }) {
     {snapshot ? <>
       <div className={styles.healthSummary}>
         <span><strong>{okCount}</strong>{text(locale, ' healthy', ' 正常')}</span>
-        <span><strong>{modules.length - okCount}</strong>{text(locale, ' issues', ' 异常')}</span>
+        <span><strong>{issues.length}</strong>{text(locale, ' motion issues', ' 个运动问题')}</span>
+        <span><strong>{advisories.length}</strong>{text(locale, ' advisories', ' 条诊断提示')}</span>
         <span className={styles.timestamp}>{text(locale, 'Updated ', '更新于 ')}
           {snapshot.receivedAt.toLocaleTimeString(locale === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })}</span>
       </div>
@@ -118,6 +122,23 @@ function SystemSettings({ locale }: { locale: Locale }) {
           </span>
         </li>)}
       </ul> : <p className={styles.help}>{text(locale, 'The server returned no module status.', '服务端尚未返回模块状态。')}</p>}
+      {issues.length > 0 && <ul className={styles.moduleList} aria-label={text(locale, 'Active issues', '活动问题')}>
+        {issues.map(issue => <li key={`${issue.code}-${issue.source}`}>
+          <span className={styles.moduleName}><code>{issue.code}</code><small>{issue.message}</small></span>
+          <span className={issue.impact === 'motion_blocking' || issue.impact === 'motion_hold' ? styles.moduleIssue : styles.moduleOk}>
+            {issue.impact === 'motion_blocking' ? text(locale, 'Motion blocked', '运动阻止')
+              : issue.impact === 'motion_hold' ? text(locale, 'Motion held', '保持停止')
+                : issue.impact === 'motion_degrading' ? text(locale, 'Degraded', '性能下降')
+                  : text(locale, 'Diagnostic', '仅诊断')}
+          </span>
+        </li>)}
+      </ul>}
+      {advisories.length > 0 && <ul className={styles.moduleList} aria-label={text(locale, 'Diagnostic advisories', '诊断提示')}>
+        {advisories.map(advisory => <li key={`${advisory.code}-${advisory.source}`}>
+          <span className={styles.moduleName}><code>{advisory.code}</code><small>{advisory.message}</small></span>
+          <span className={styles.moduleOk}>{text(locale, 'Diagnostic', '仅诊断')}</span>
+        </li>)}
+      </ul>}
     </> : loading && <p className={styles.help} role="status">{text(locale, 'Reading system health…', '正在读取系统健康状态…')}</p>}
     <div className={styles.downloadRow}>
       <div><h3>{text(locale, 'Diagnostic report', '诊断资料')}</h3>
@@ -171,6 +192,7 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
   const diagnosticEntry = DIAGNOSTICS.find(item => item.value === diagnostic)
   const categories = [
     { value: 'appearance' as const, icon: Palette, en: 'Appearance', zh: '外观' },
+    { value: 'agent' as const, icon: SlidersHorizontal, en: 'Agent', zh: '智能体' },
     { value: 'map' as const, icon: Map, en: 'Map', zh: '地图' },
     { value: 'sensors' as const, icon: Activity, en: 'Sensors', zh: '传感器' },
     { value: 'diagnostics' as const, icon: Stethoscope, en: 'Diagnostics', zh: '诊断' },
@@ -215,6 +237,7 @@ export function SettingsMenu({ open, onClose, theme, resolvedTheme, onThemeChang
               <button className={styles.actionButton} onClick={resetAllLayouts}><RefreshCw size={14} />{text(locale, 'Reset layout', '重置布局')}</button>
             </div>
           </>}
+          {section === 'agent' && <ModelConnections options={undefined} onClose={onClose} onChanged={() => undefined} />}
           {section === 'system' && <SystemSettings locale={locale} />}
           {section === 'sensors' && <Suspense fallback={<p role="status">正在加载传感器设置…</p>}><SensorSettings locale={locale} onOpen={onClose} /></Suspense>}
           {section === 'diagnostics' && (diagnosticEntry ? <>

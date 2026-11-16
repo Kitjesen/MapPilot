@@ -207,14 +207,6 @@ InspectionRuntimeController::activePoint() const noexcept {
   return active_point_;
 }
 
-lingtu::nav::inspection::Executor &InspectionRuntimeController::executor() noexcept {
-  return executor_;
-}
-
-const lingtu::nav::inspection::Executor &InspectionRuntimeController::executor() const noexcept {
-  return executor_;
-}
-
 bool InspectionRuntimeController::applyEvidenceResult(const InspectionRuntimeEvidenceResult &result,
                                                       double now_s) {
   const auto &status = executor_.status();

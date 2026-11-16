@@ -1,8 +1,11 @@
-"""Controlled-shirt RGB-D following diagnostic, not a learned person detector.
+"""RGB-D person-follow diagnostic using the configured production detector.
 
 Render the latest physical snapshot in a separate process so graphics cannot
 stall IMU/driver stepping. Actor poses only restore the rendered scene; the
 perception and servo receive pixels, depth and the synchronized camera pose.
+
+The synthetic colour fixture remains available to unit tests for deterministic
+projection checks. The worker itself always uses the production detector.
 """
 
 from __future__ import annotations
@@ -25,34 +28,10 @@ from sim.scripts.mujoco.rgbd_goal_acceptance import camera_optical_transform
 
 import mujoco
 from decision.modules.visual_servo import VisualServoModule
-from perception.backends import RgbdObservationSource
-from perception.detection.detector_base import Detection2D
+from perception.backends import DetectorSpec, RgbdObservationSource, create_observation_source
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.semantic import Detection3D, SemanticObservation
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
-
-
-class ShirtPixelDetector:
-    """Single distinctive shirt fixture; it has no world/actor access."""
-
-    def detect(self, bgr, prompt):
-        b, g, r = cv2.split(bgr.astype(np.int16))
-        mask = ((r > g * 1.6 + 20) & (b > g * 1.4 + 20) & (r > 65)).astype(np.uint8)
-        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
-        if count < 2:
-            return []
-        index = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        x, y, w, h, area = stats[index]
-        if area < 18:
-            return []
-        return [
-            Detection2D(
-                bbox=np.array([x, y, x + w, y + h], dtype=np.float32),
-                score=1.0,
-                label="person",
-                mask=labels == index,
-            )
-        ]
 
 
 def restore_snapshot(engine, row):
@@ -103,14 +82,14 @@ class FollowController:
         self.servo.setup()
         self.servo.goal_pose._add_callback(self.queue_goal)
         self.servo.goal_cancel._add_callback(self.queue_cancel)
-        self.servo.servo_target._deliver("follow_id:shirt_fixture")
+        self.servo.servo_target._deliver("follow:person")
 
     def queue_goal(self, goal):
         self.pending = goal
 
     def queue_cancel(self, reason):
         self.pending = None
-        self.cancel_reason = reason
+        self.cancel_reason = getattr(reason, "reason", str(reason))
 
     def command(self, arguments):
         started = time.monotonic()
@@ -142,14 +121,15 @@ class FollowController:
             return
         goal, self.pending = self.pending, None
         self.goals += 1
-        task = f"rgbd-follow-{self.goals}"
+        pose = goal.goal.pose
+        task = goal.task_id
         result = self.command(
             [
                 "goal",
-                str(goal.x),
-                str(goal.y),
-                str(goal.z),
-                str(goal.yaw),
+                str(pose.position.x),
+                str(pose.position.y),
+                str(pose.position.z),
+                str(pose.yaw),
                 "--task-id",
                 task,
             ]
@@ -180,14 +160,14 @@ class FollowController:
         )
         runtime_detections = tuple(
             Detection3D(
-                id="shirt_fixture",
+                id=str(getattr(item, "track_id", None) or f"person_{index}"),
                 label="person",
                 confidence=item.score,
                 position=Vector3(*map(float, item.position)),
                 bbox_2d=item.bbox_2d.tolist(),
                 ts=row["t"],
             )
-            for item in detections
+            for index, item in enumerate(detections)
         )
         self.servo.observation._deliver(
             SemanticObservation(
@@ -221,7 +201,12 @@ class FollowController:
 
 def run(args):
     root = Path(args.phase_dir)
-    source = RgbdObservationSource(ShirtPixelDetector(), min_depth=0.3, max_depth=8, u16_depth_scale=0.001)
+    source = create_observation_source(
+        DetectorSpec(name="yoloe"),
+        min_depth=0.3,
+        max_depth=8.0,
+        u16_depth_scale=0.001,
+    )
     source.load()
     engine = MuJoCoEngine(
         robot_config=RobotConfig.default_thunder_v4(),
@@ -281,7 +266,7 @@ def run(args):
             panel = np.hstack([annotated, depth])
             cv2.putText(
                 panel,
-                f"RGB-D | t={row['sim_time_s']:.1f}s | fixture shirt",
+                f"RGB-D | t={row['sim_time_s']:.1f}s | detector={source.name}",
                 (8, 22),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
@@ -335,7 +320,7 @@ def run(args):
                 "cancels": controller.cancels,
                 "max_snapshot_gap_wall_s": max_gap,
                 "error": error,
-                "detector": "RGB shirt color fixture, not learned person recognition",
+                "detector": source.name,
                 "goal_deadband_m": args.goal_deadband_m,
             }
             (root / "rgbd-follow-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

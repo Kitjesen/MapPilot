@@ -59,7 +59,7 @@ CommandSafetyDecision evaluateFinalSafety(const FinalSafetyInput &input,
       grid.boundaryDepartureMotionFree(body, decision.cmd, input.measured,
           std::min(cfg.recovery_translation_speed_mps, safety.max_speed_mps),
           reaction, deceleration, cfg.velocity_smoother.yaw.deceleration)) {
-    decision.reason = "scan_boundary_departure";
+    decision.reason = "aegis_exit";
     return decision;
   }
   const bool measured_blocked = !input.has_pose ||

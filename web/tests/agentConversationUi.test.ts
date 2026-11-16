@@ -53,7 +53,7 @@ function controller(overrides: Record<string, unknown> = {}) {
   return {
     open: true, draft: '', replyTo: '', setReplyTo() {}, editable: true, attachments: [], model: 'test', reasoning: 'default',
     permissionMode: 'default', approvalBusy: null, options: {
-      models: [{ id: 'test', label: 'Test model', reasoning: [{ id: 'default', label: '默认' }] }],
+      models: [{ id: 'test', label: 'Test model', reasoning: [{ id: 'default', label: '默认' }, { id: 'high', label: '深入' }] }],
       attachments: { accept: '.txt', max_files: 4, max_file_bytes: 1000 },
     },
     snapshot: { messages: [], turns: [], approvals: [] }, ...overrides,
@@ -96,7 +96,6 @@ test('queued messages stay above the composer and collapse after three rows', ()
   assert.equal((result.match(/queued-0/g) ?? []).length, 2)
   assert.doesNotMatch(result, /queued-3/)
 })
-
 test('unfinished turn feedback stays beside its request instead of below newer messages', () => {
   const markup = html({ snapshot: { conversation_id: 'feedback', messages: [
     { id: 'first', turn_id: 'one', seq: 1, role: 'user', text: '检查地图' },
@@ -181,7 +180,7 @@ test('selected text stays literal in the composer and sent quote', () => {
 
 test('an unavailable Agent has one stable notice without empty history panels', () => {
   const markup = html({ options: null, snapshot: null, optionsError: 'Agent 未启用', error: 'signal timed out' })
-  assert.equal((markup.match(/对话暂不可用/g) ?? []).length, 1)
+  assert.equal((markup.match(/模型未连接/g) ?? []).length, 1)
   assert.doesNotMatch(markup, /signal timed out|读取中|class="history"/)
   assert.match(markup, /title="Agent 未启用"/)
   assert.match(markup, /aria-label="刷新模型连接"/)
@@ -226,21 +225,21 @@ test('the bot follows current-turn tools and text instead of old history', () =>
   const laterOtherReply = { ...oldReply, id: 'later-other', seq: 6, metadata: { status: 'completed' } }
   const writing = { snapshot: { ...snapshot, messages: [streaming, laterOtherReply] } }
   assert.equal(avatarState(writing), 'writing')
-  assert.match(html(writing), /正在回复/)
-  assert.match(html({ active: true, snapshot: { ...snapshot, messages: [completedTool] } }), /正在处理工具结果/)
+  assert.match(html(writing), /回复中/)
+  assert.match(html({ active: true, snapshot: { ...snapshot, messages: [completedTool] } }), /整理结果/)
 })
 
 test('sending and uploading are processing while connection failures stop activity feedback', () => {
   for (const busy of [{ sending: true }, { uploading: true }, { optionsLoading: true }, { sessionBusy: 'fork' }]) {
     assert.equal(avatarState(busy), 'processing')
   }
-  assert.match(html({ sending: true }), /正在发送/)
-  assert.match(html({ uploading: true }), /正在上传附件/)
+  assert.match(html({ sending: true }), /发送中/)
+  assert.match(html({ uploading: true }), /上传中/)
   const broken = { active: true, error: 'offline', snapshot: { messages: [{
     id: 'tool', seq: 1, role: 'tool', turn_id: 'one', kind: 'inspect_saved_map', text: 'running', metadata: { status: 'running' },
   }], turns: [{ turn_id: 'one', state: 'running' }] } }
   assert.equal(avatarState(broken), 'error')
-  assert.match(html(broken), /连接异常，请重试/)
+  assert.match(html(broken), /连接异常/)
   assert.doesNotMatch(html(broken), /data-working="true"/)
   assert.equal(avatarState({ options: null, error: 'offline' }), 'unavailable')
 })
@@ -248,7 +247,7 @@ test('sending and uploading are processing while connection failures stop activi
 test('suggestions fill the draft without submitting a message', () => {
   const drafts: string[] = []
   let sends = 0
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useEffect() {}, useLayoutEffect() {} })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {}, useLayoutEffect() {} })
   const tree = render({ locale: 'zh', controller: controller({ setDraft: (value: string) => drafts.push(value), send: () => { sends++ } }) })
   type Element = { type?: string; props?: { children?: unknown; onClick?: () => void } }
   function elements(node: unknown): Element[] {
@@ -310,7 +309,7 @@ test('only the latest answer offers regeneration and busy drafts keep it disable
 test('work text follows actual tool events and terminal failure stops the tool animation', () => {
   const start = { id: 'start', seq: 1, role: 'tool', turn_id: 'one', kind: 'tool_start', text: '{"tool":"get_agent_status"}' }
   const running = html({ active: true, snapshot: { messages: [start], turns: [{ turn_id: 'one', state: 'running' }] } })
-  assert.match(running, /正在调用/)
+  assert.match(running, /工作中/)
   assert.match(running, /data-running="true"/)
   const waiting = html({ active: true, snapshot: { messages: [start], turns: [{ turn_id: 'one', state: 'running' }], approvals: [
     { approval_id: 'approval', turn_id: 'one', tool_name: 'get_agent_status', arguments: {}, state: 'pending' },
@@ -319,12 +318,12 @@ test('work text follows actual tool events and terminal failure stops the tool a
   assert.doesNotMatch(waiting, /data-working="true"|data-running="true"/)
   const result = { id: 'result', seq: 2, role: 'tool', turn_id: 'one', kind: 'get_agent_status', text: '{"ok":false,"reason":"定位未就绪"}' }
   const processing = html({ active: true, snapshot: { messages: [start, result], turns: [{ turn_id: 'one', state: 'running' }] } })
-  assert.match(processing, /正在处理工具结果/)
+  assert.match(processing, /整理结果/)
   assert.match(processing, /定位未就绪/)
   assert.doesNotMatch(processing, /<pre/)
   const failure = html({ snapshot: { messages: [start], turns: [{ turn_id: 'one', state: 'failed' }] } })
   assert.match(failure, /已发起/)
-  assert.match(failure, /本轮未完成/)
+  assert.match(failure, /本轮对话未完成/)
   assert.doesNotMatch(failure, /data-working="true"|data-running="true"/)
 })
 
@@ -362,6 +361,7 @@ test('step states follow tool events and a failed call never appears completed',
   assert.doesNotMatch(running, /data-state="completed"/)
   assert.match(render(tool, true, [{ approval_id: 'approval', turn_id: 'one', tool_name: 'inspect_saved_map', arguments: {}, state: 'pending' }]), /data-state="waiting"/)
   assert.match(render(tool, false), /data-state="pending"/)
+  assert.doesNotMatch(render(tool, false), /data-icon="success"/)
   assert.match(render({ ...tool, text: '{"success":true}', metadata: { status: 'completed' } }), /data-state="completed"/)
   const rejected = render({ ...tool, text: '{"success":false,"reason":"地图不存在"}', metadata: { status: 'completed' } })
   assert.match(rejected, /data-state="failed"/)
@@ -404,11 +404,12 @@ test('the permission menu shows three modes and locks with an unconfirmed messag
     /aria-label="权限"[^>]*aria-disabled="true"/)
 })
 
-test('permission stays to the left of model and reasoning controls', () => {
+test('permission stays to the left of model settings', () => {
   const markup = html()
   assert.ok(markup.indexOf('aria-label="添加内容"') < markup.indexOf('aria-label="权限"'))
   assert.ok(markup.indexOf('aria-label="权限"') < markup.indexOf('aria-label="模型"'))
-  assert.ok(markup.indexOf('aria-label="模型"') < markup.indexOf('aria-label="思考深度"'))
+  assert.ok(markup.indexOf('思考深度') > markup.indexOf('aria-label="模型"'))
+  assert.doesNotMatch(markup, /aria-label="思考深度"/)
 })
 
 test('composer offers an add menu and keeps history in the header', () => {
@@ -427,18 +428,18 @@ test('composer offers an add menu and keeps history in the header', () => {
   assert.doesNotMatch(addMenu, /Bot 形象与角色|更多机器人设置/)
   const header = markup.match(/<header[^>]*>([\s\S]*?)<\/header>/)![1]
   assert.match(header, /aria-label="会话历史"/)
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
+  assert.match(header, /aria-label="切换 Bot"/)
   assert.doesNotMatch(markup, /aria-label="会话记录"/)
 })
 
-test('default thinking is icon-only and permissions keep their selected mode', () => {
+test('model menu contains thinking settings and permissions keep their selected mode', () => {
   const markup = html()
-  const thinking = markup.match(/<summary[^>]*aria-label="思考深度"[\s\S]*?<\/summary>/)![0]
-  assert.doesNotMatch(thinking, /<span>默认<\/span>|lucide-sparkles/)
-  assert.match(thinking, /lucide-sliders-horizontal/)
+  assert.match(markup, /思考深度/)
+  assert.match(markup, /管理模型连接/)
+  assert.doesNotMatch(markup, /aria-label="思考深度"/)
   assert.match(markup, /data-mode="default"/)
   assert.match(markup, /执行前确认/)
-  assert.match(markup, /role="menuitemradio"[^>]*aria-checked="true"[^>]*>[\s\S]*?默认/)
+  assert.match(markup, /role="menuitemradio"[^>]*aria-checked="true"/)
 })
 
 test('conversation management exposes explicit actions and does not create a share on open', () => {
@@ -538,8 +539,8 @@ test('the header keeps Bot beside an icon-only share entry and waits for session
   const share = header.match(/<button[^>]*aria-label="分享对话"[^>]*>([\s\S]*?)<\/button>/)![1]
   assert.match(share, /<svg/)
   assert.equal(share.replace(/<[^>]*>/g, '').trim(), '')
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
-  assert.ok(header.indexOf('打开 Bot 形象与角色') < header.indexOf('aria-label="分享对话"'))
+  assert.match(header, /aria-label="切换 Bot"/)
+  assert.ok(header.indexOf('切换 Bot') < header.indexOf('aria-label="分享对话"'))
   const waiting = html({ sessionBusy: 'two', snapshot: { ...snapshot, metadata: { ...snapshot.metadata, archived: true } } })
   assert.match(waiting, /aria-label="分享对话"[^>]*disabled=""/)
 })
@@ -643,12 +644,12 @@ test('history search shows message snippets and opens a result without submittin
   assert.match(html({ sessionListOpen: true, searchQuery: '点云', searchError: '搜索服务不可用' }), /role="alert"[^>]*>搜索服务不可用/)
 })
 
-test('map context displays its version and selection and can be removed or attached again', () => {
+test('map context displays its id and selection and can be removed or attached again', () => {
   const context = { map_id: '办公室地图', content_epoch: 7, selection: { min: [1, 2, 3], max: [4, 5, 6] } }
   const markup = html({ context, includeMapContext: true, includeSelection: true })
   assert.match(markup, /本次消息的上下文/)
   assert.match(markup, /办公室地图/)
-  assert.match(markup, /内容版本.*7/)
+  assert.doesNotMatch(markup, /内容版本/)
   assert.match(markup, /Min · 1.00, 2.00, 3.00/)
   assert.match(markup, /aria-label="移除地图上下文"/)
   assert.match(markup, /aria-label="移除框选上下文"/)
@@ -681,7 +682,7 @@ test('a loaded search target receives focus and does not resume following new me
 test('only pending approvals show actions and decisions retain the approval identity', () => {
   const effects: Array<() => void> = []
   const decisions: unknown[][] = []
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
   const tree = render({ locale: 'zh', controller: controller({
     decideApproval: (...args: unknown[]) => decisions.push(args),
     snapshot: { messages: [], turns: [], approvals: [
@@ -759,7 +760,7 @@ test('connection cards distinguish configured models and missing server keys', (
       { id: 'gpt', label: 'GPT', configured: false, key_env: 'OPENAI_API_KEY' },
     ] }), metadata: { status: 'completed', duration_ms: 23 } }], turns: [] }, setModel() {} })
   assert.match(markup, /已配置/)
-  assert.match(markup, /未配置 · OPENAI_API_KEY/)
+  assert.match(markup, /需要配置 OPENAI_API_KEY/)
   assert.match(markup, /23 ms/)
   assert.equal((markup.match(/<summary>选择模型<\/summary>/g) ?? []).length, 1)
 })
@@ -882,7 +883,7 @@ test('new sensor monitor tool results open once without replaying history or fai
   let effects: Array<() => void> = []
   const render = component({
     useRef: (initial: unknown) => refIndex++ === 0 ? seen : { current: initial },
-    useState: () => [false, () => {}], useLayoutEffect() {},
+    useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {},
     useEffect: (effect: () => void) => effects.push(effect),
   }, {
     '../hooks/useSensorMonitor.ts': { useSensorMonitor: () => (view: string) => opened.push(view) },
@@ -901,3 +902,4 @@ test('new sensor monitor tool results open once without replaying history or fai
   update([old, message('new', 'joints'), message('bad', 'camera', false), message('unknown', 'missing')]); assert.deepEqual(opened, ['joints'])
   update([old, message('new', 'joints'), message('imu', 'imu'), message('all', 'catalog')]); assert.deepEqual(opened, ['joints','imu','catalog'])
 })
+

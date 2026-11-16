@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=lingtu
 Group=lingtu
+SupplementaryGroups=video render
 WorkingDirectory=/opt/lingtu/current
 Environment=HOME=/var/lib/lingtu
 Environment=LINGTU_REPO=/opt/lingtu/current

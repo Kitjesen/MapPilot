@@ -39,9 +39,9 @@ the native MuJoCo entrypoints below, not in a second Python navigation stack.
   position with production RGB-D projection, and test the resulting visual goal
   through native navigation. See the scope and commands in
   [`docs/simulation.md`](../../docs/simulation.md#rendered-rgb-d-goal-diagnostic).
-- `mujoco/rgbd_follow_acceptance.py` — moving human-shaped pixel fixture, live
-  rendered RGB-D, production visual following and native physical navigation
-  over a 26.5 m factory aisle. See
+- `mujoco/rgbd_follow_acceptance.py` — moving pedestrian scene, live rendered
+  RGB-D, configured image detection, production visual following and native
+  physical navigation over a 26.5 m factory aisle. See
   [`docs/simulation.md`](../../docs/simulation.md#continuous-rgb-d-follow-diagnostic)
   for the detector/localization limitations and measured acceptance gates.
 

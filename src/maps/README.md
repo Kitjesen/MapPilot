@@ -50,22 +50,20 @@ Rebuild/deploy mapd and navd together when changing this DDS type.
 
 ### Live collision evidence
 
-`RollingOccupancyGrid` combines the current scan's endpoints with historical
-probabilistic occupancy before inflation. `current_hit` lasts until the next
-scan containing usable rays; repeated endpoints stay blocked even when older free-space
-probability dominates. Historical occupied cells still require clearing rays
-or the configured decay/window policy. Missing a scan does not update probability.
-The previous endpoint list limits expiry work to that scan's hits, not the whole grid.
-An empty or fully filtered scan does not replace those hits. Mapd reports a
+`RollingOccupancyGrid` combines unresolved endpoints with historical
+probabilistic occupancy before inflation. `unresolved_hit` blocks immediately,
+even when older free-space probability dominates, and remains until a later
+ray crosses that cell without an endpoint or the configured decay/window policy
+removes the cell. A scan looking elsewhere does not clear the hit or update its
+probability. An empty or fully filtered scan also preserves hits. Mapd reports a
 fully filtered observation through its existing input-error path and retains
 the last successfully processed snapshot and observation time.
 
 `ray_free` records a ray observation with no endpoint in the cell. Only this
 evidence, together with non-occupied probability, can publish known-free or
-remove a surface voxel. Expiring a current hit alone leaves the collision
-evidence unknown; it must not authorize surface cleanup.
+remove a surface voxel. Missing observations cannot authorize surface cleanup.
 `StateAt`, `Contains`, dense snapshots, observed-cell chunks and the packed
-collision bits share `StateFor`: current or historical occupied, ray-confirmed
+collision bits share `StateFor`: unresolved or historical occupied, ray-confirmed
 free, otherwise unknown. Exploration and mapd projections consume that same
 state. `OccupancyProbability` and snapshot log odds retain the numerical history;
 a low probability alone does not make the published evidence free.
@@ -76,14 +74,16 @@ LingTu retains its SCAN-derived probability fusion and inflation, rather than
 copying DimOS health counters, normal-based clearing, or neighbor filtering.
 DimOS's production ingest skips empty extracted clouds. Its live-point union
 only bypasses neighbor filtering for not-yet-healthy points; LingTu deliberately
-keeps every current endpoint instead of copying that isolated-point policy.
+keeps every unresolved endpoint instead of copying that isolated-point policy.
+Retaining unresolved hits is a LingTu correction, not DimOS or SCAN default behavior.
 Mapd owns evidence lifetime; SCAN consumes the published collision map. No live
 region feed to the global planner is introduced here.
 
-The component regressions cover current-hit replacement, unchanged probability,
+The component regressions cover unresolved-hit retention, unchanged probability,
 unknown versus observed-free, retained confirmed obstacles, rolling/reset,
-shared inflation and actual mapd snapshots. A weak obstacle seen only once can
-leave the current-hit set on the next scan, including a missed thin obstacle.
+shared inflation and actual mapd snapshots. The unchanged four-direction SCAN
+braking regression failed when the next scan looked elsewhere before this fix;
+it now requires a real clearing ray before the new obstacle leaves the sweep.
 This candidate still needs recorded/simulated sparse-return navigation evidence
 before field deployment; it does not solve persistently occluded historical hits.
 

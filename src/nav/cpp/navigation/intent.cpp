@@ -259,12 +259,12 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       plan_status != nav_kernel::LocalPlanStatus::NotConfigured;
   const bool plan_unusable =
       !plan_ready || near_field_stop || !spline_trackable || !path_trackable;
-  const bool scan_boundary_departure_candidate =
+  const bool aegis_exit_candidate =
       local_planner_.capabilities().supportsBoundaryDeparture && planner_input_valid &&
       plan_status != nav_kernel::LocalPlanStatus::Pending &&
       plan_unusable && config_.recovery.translation_speed_mps > 1e-6 &&
       std::abs(intent.wz) <= 1e-6 && observation.collision.valid();
-  if (scan_boundary_departure_candidate) {
+  if (aegis_exit_candidate) {
     constexpr double departure_distance_m = 0.35;
     const std::vector<nav_kernel::Vec3> departure_body{
         {},
@@ -288,7 +288,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       output.recovery_candidate_count = 1;
       output.recovery_verified = true;
       output.recovery_trigger = "local_blocked";
-      output.recovery_reason = "scan_boundary_departure";
+      output.recovery_reason = "aegis_exit";
 
       const auto recovery_params = nav_kernel::recoveryFollowerParams(
           config_.follower,

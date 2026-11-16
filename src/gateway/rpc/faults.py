@@ -6,6 +6,7 @@ import time
 
 from gateway.services.native_control import status_is_fresh
 from gateway.services.native_status import read_json_snapshot, read_navigation_status
+from gateway.services.health_issues import navigation_health_issues
 
 from .generated import system_pb2 as pb
 
@@ -26,7 +27,7 @@ def _driver():
 
 
 def _fault(source, code, message, severity):
-    return pb.Fault(source=source, code=code, message=message, severity=severity, active=True)
+    return pb.Fault(source=source, code=str(code), message=message, severity=severity, active=True)
 
 
 def read():
@@ -61,13 +62,19 @@ def read():
         result.unavailable_sources.append("driver.health")
 
     navigation = read_navigation_status()
+    navigation_issues = navigation_health_issues(navigation)
     loop = navigation.get("control_loop_health") if isinstance(navigation, dict) else None
     if status_is_fresh(navigation) and isinstance(loop, dict) and loop.get("ready") is True and isinstance(loop.get("healthy"), bool):
         result.observed_sources.append("navigation.control_loop")
         if not loop["healthy"]:
-            reason = loop.get("reason") if isinstance(loop.get("reason"), str) else ""
+            issue = next(
+                (item for item in navigation_issues if item["source"] == "navigation.control_loop"),
+                None,
+            )
+            reason = issue["reason"] if issue else loop.get("reason") if isinstance(loop.get("reason"), str) else ""
+            code = issue["code"] if issue else reason or "unhealthy"
             result.faults.append(_fault(
-                "navigation.control_loop", reason or "unhealthy", reason or "Native control loop reports unhealthy state",
+                "navigation.control_loop", code, reason or "Native control loop reports unhealthy state",
                 pb.FAULT_SEVERITY_WARNING,
             ))
     else:

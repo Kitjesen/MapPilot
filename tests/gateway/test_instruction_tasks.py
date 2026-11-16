@@ -265,7 +265,8 @@ def test_control_only_preserves_owner_controls_and_never_starts_a_task(gateway, 
         assert owner._active_run is original
         assert gateway.instruction.msg_count == 0 and mcp.instruction.msg_count == 0
         paused = send('暂停一下')
-        assert paused['accepted'] is False and paused['reason'] == 'unsupported_control'
+        assert paused['accepted'] is False
+        assert paused['reason'] == ('navigation_not_submitted' if active else 'no_current_task')
         if active:
             stopped = send('停下')
             assert stopped['accepted'] and stopped['operation'] == 'cancel'

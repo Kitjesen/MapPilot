@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
-import { Activity, ChevronDown, Cpu, Route } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import styles from './LiveCameraCard.module.css'
 const NumericCard = lazy(() => import('../sensors/NumericCard').then(m => ({ default: m.NumericCard })))
 const ImuPanel = lazy(() => import('../ImuMonitor').then(m => ({ default: m.ImuPanel })))
@@ -9,10 +9,9 @@ const titles = { robot: '机器人状态', joints: '关节与故障', imu: 'IMU 
 export function ObservationCard({ view }: { view: ObservationView }) {
   const [open, setOpen] = useState(false)
   const [sensor, setSensor] = useState<'joints' | 'motors'>('joints')
-  const Icon = view === 'navigation' ? Route : view === 'joints' ? Cpu : Activity
-  return <section className={styles.card} aria-label={titles[view] + '卡片'}>
+  return <section className={styles.card} data-view={view} aria-label={titles[view] + '卡片'}>
     <button type="button" className={styles.toggle} aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <span className={styles.icon}><Icon size={17} /></span><span className={styles.title}>{titles[view]}</span>
+      <span className={styles.title}><i className={styles.stateDot} aria-hidden="true" data-active={open} />{titles[view]}</span>
       <span className={styles.action}>{open ? '收起' : '展开'}</span><ChevronDown size={14} className={styles.chevron} />
     </button>
     <div className={styles.disclosure} data-open={open} inert={!open} aria-hidden={!open}><div className={styles.body}>

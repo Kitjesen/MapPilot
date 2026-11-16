@@ -1003,13 +1003,15 @@ class TestLingTuClient(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(RuntimeError, "FAILED.*snapshot_failed"):
+        with patch("lingtu.sdk.maps.time.monotonic", side_effect=[0.0, 0.0, 1.0]), \
+                self.assertRaisesRegex(RuntimeError, "FAILED.*snapshot_failed"):
             self.robot.map.save_and_wait(
                 "test_map",
                 request_id="request_1",
                 timeout=0.01,
                 poll_interval=0.0,
             )
+        self.robot.map.operation.assert_called_once_with("operation_1")
 
     def test_save_map_and_wait_raises_for_cancelled_operation_spellings(self) -> None:
         for state in ("CANCELLED", "CANCELED"):

@@ -11,6 +11,7 @@
 #include "lingtu/maps/io/pcd.hpp"
 
 #include "lingtu/maps/mapd/engine.hpp"
+#include "lingtu/maps/mapd/region_update.hpp"
 
 namespace {
 
@@ -21,6 +22,7 @@ using lingtu::maps::mapd::LiveMapEngine;
 using lingtu::maps::mapd::Observation;
 using lingtu::maps::mapd::SnapshotDetail;
 using lingtu::maps::mapd::SubmitCode;
+using lingtu::maps::mapd::BuildRegionUpdate;
 
 std::int64_t WallTimeNs() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -59,6 +61,40 @@ Config TestConfig() {
   config.accumulated.cell_size_m = 0.5F;
   config.accumulated.block_size = 8;
   return config;
+}
+
+void TestRegionUpdateContract() {
+  lingtu::maps::mapd::Snapshot snapshot;
+  snapshot.frame_id = "map";
+  snapshot.reset_epoch = 4U;
+  snapshot.sequence = 12U;
+  snapshot.generation = 31U;
+  auto &collision = snapshot.collision;
+  collision.complete = true;
+  collision.resolution_m = 0.5;
+  collision.min_x_m = -1.0;
+  collision.min_y_m = 2.0;
+  collision.min_z_m = -0.5;
+  collision.size_x = 2;
+  collision.size_y = 2;
+  collision.size_z = 2;
+  collision.measured_occupied_bits = {0b00000001U};
+  collision.known_free_bits = {0b00000010U};
+  collision.occupied_cells = 1U;
+
+  const auto update = BuildRegionUpdate(snapshot, 101);
+  assert(update.has_value());
+  assert(update->resolution_m == 0.5);
+  assert(update->origin_x_m == -1.0 && update->origin_y_m == 2.0);
+  assert(update->map_content_epoch == 101);
+  assert(update->reset_epoch == 4U && update->sequence == 12U && update->generation == 31U);
+  assert((update->occupied ==
+          std::vector<lingtu::maps::mapd::RegionCell>{{0, 0, 0}}));
+  assert((update->known_free ==
+          std::vector<lingtu::maps::mapd::RegionCell>{{1, 0, 0}}));
+
+  collision.measured_occupied_bits.clear();
+  assert(!BuildRegionUpdate(snapshot, 101).has_value());
 }
 
 Observation MakeObservation(
@@ -121,10 +157,16 @@ void TestLiveSnapshot() {
   assert(engine.Submit(MakeObservation(1, 3, 0, 0, 0, {1.25F, 1.25F, .25F})).accepted());
   assert(engine.WaitUntilProcessed(1, 3, std::chrono::seconds(2)));
   const auto next = engine.GetSnapshot();
-  assert(!bit(next.collision.measured_occupied_bits, old_cell));
+  assert(bit(next.collision.measured_occupied_bits, old_cell));
   assert(!bit(next.collision.known_free_bits, old_cell));
   assert(bit(next.collision.measured_occupied_bits, new_cell));
   assert(engine.GetState().last_error.empty());
+  assert(engine.Submit(MakeObservation(1, 4, 0, 0, 0, {2.5F, .5F, .5F})).accepted());
+  assert(engine.WaitUntilProcessed(1, 4, std::chrono::seconds(2)));
+  const auto cleared = engine.GetSnapshot();
+  assert(!bit(cleared.collision.measured_occupied_bits, old_cell));
+  assert(bit(cleared.collision.known_free_bits, old_cell));
+  assert(bit(cleared.collision.measured_occupied_bits, new_cell));
   engine.Stop();
 }
 
@@ -813,80 +855,6 @@ void TestOccupancyKeepsDoublePrecisionThroughPoseTransform() {
   engine.Stop();
 }
 
-void TestGroundModelConsumesSoaSnapshotAndResetsWithEpoch() {
-  Config config = TestConfig();
-  config.voxel.voxel_size_m = 0.05F;
-  LiveMapEngine engine(config);
-  engine.Start();
-  std::vector<float> floor;
-  for (int r = 0; r < 16; ++r) for (int c = 0; c < 16; ++c)
-    floor.insert(floor.end(), {0.525F+c*0.05F, -0.375F+r*0.05F, -0.325F});
-  assert(engine.Submit(MakeObservation(1, 1, 0, 0, 0, floor)).accepted());
-  assert(engine.WaitUntilProcessed(1, 1, std::chrono::seconds(2)));
-  const auto first = engine.GetSnapshot();
-  assert(first.voxel_cloud.layout == CloudLayout::kXyzF32SoA);
-  assert(std::count_if(first.ground_surface.height.data.begin(), first.ground_surface.height.data.end(),
-      [](float z) { return std::isfinite(z) && std::abs(z+0.325F) < 0.03F; }) > 4);
-  assert(std::count(first.surface_projection.data.begin(), first.surface_projection.data.end(), 0.0F) > 4);
-  assert(engine.Submit(MakeObservation(2, 1, 0, 0, 0, {0.525F, 0.025F, 0.5F})).accepted());
-  assert(engine.WaitUntilProcessed(2, 1, std::chrono::seconds(2)));
-  const auto reset = engine.GetSnapshot();
-  assert(std::none_of(reset.ground_surface.height.data.begin(), reset.ground_surface.height.data.end(),
-      [](float z) { return std::isfinite(z); }));
-  engine.Stop();
-}
-
-void TestGroundModelIsIndependentOfDisplayPointCap() {
-  Config config = TestConfig();
-  config.voxel.voxel_size_m = 0.05F;
-  config.max_voxel_snapshot_points = 64U;
-  LiveMapEngine capped(config);
-  config.max_voxel_snapshot_points = 1000U;
-  LiveMapEngine complete(config);
-  capped.Start();
-  complete.Start();
-
-  std::vector<float> floor;
-  for (int r = 0; r < 8; ++r) for (int c = 0; c < 8; ++c)
-    floor.insert(floor.end(), {1.025F+c*0.05F, -0.375F+r*0.05F, -0.325F});
-  std::vector<float> wall;
-  for (int r = 0; r < 8; ++r) for (int z = 0; z < 17; ++z)
-    wall.insert(wall.end(), {0.325F, 0.025F+r*0.05F, 0.125F+z*0.05F});
-
-  for (auto* engine : {&capped, &complete}) {
-    assert(engine->Submit(MakeObservation(1, 1, 0, 0, 0, floor)).accepted());
-    assert(engine->WaitUntilProcessed(1, 1, std::chrono::seconds(2)));
-    const auto initial = engine->GetSnapshot();
-    assert(std::count(initial.surface_projection.data.begin(),
-                      initial.surface_projection.data.end(), 0.0F) >= 3);
-    // Later, nearer wall returns exceed the display budget without moving the
-    // rolling window or ray-clearing the earlier floor in the opposite sector.
-    assert(engine->Submit(MakeObservation(1, 2, 0, 0, 0, wall)).accepted());
-    assert(engine->WaitUntilProcessed(1, 2, std::chrono::seconds(2)));
-  }
-  const auto small = capped.GetView(SnapshotDetail::kComplete);
-  const auto large = complete.GetView(SnapshotDetail::kComplete);
-  assert(small.state.voxel_cells == large.state.voxel_cells);
-  assert(small.state.voxel_cells == (floor.size()+wall.size())/3U);
-  assert(small.snapshot.voxel_cloud.point_count == 64U);
-  assert(large.snapshot.voxel_cloud.point_count == large.state.voxel_cells);
-  assert(small.state.voxel_snapshot_omitted_cells == small.state.voxel_cells-64U);
-  assert(std::all_of(small.snapshot.voxel_cloud.x.begin(),
-                    small.snapshot.voxel_cloud.x.end(), [](float x) { return x < 0.4F; }));
-
-  const auto& a = small.snapshot.ground_surface.height;
-  const auto& b = large.snapshot.ground_surface.height;
-  assert(lingtu::maps::layers::sameGeometry(a, b));
-  for (std::size_t i = 0; i < a.data.size(); ++i)
-    assert((std::isnan(a.data[i]) && std::isnan(b.data[i])) ||
-           std::abs(a.data[i]-b.data[i]) < 1e-6F);
-  assert(small.snapshot.surface_projection.data == large.snapshot.surface_projection.data);
-  assert(std::count(small.snapshot.surface_projection.data.begin(),
-                    small.snapshot.surface_projection.data.end(), 0.0F) >= 3);
-  capped.Stop();
-  complete.Stop();
-}
-
 void TestSavedMapDoesNotSeedLiveCollision() {
   const auto directory = std::filesystem::temp_directory_path() /
       ("lingtu-reference-" + std::to_string(WallTimeNs()));
@@ -1080,6 +1048,7 @@ void TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch() {
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   assert(engine.Submit(MakeObservation(202, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
   assert(engine.WaitUntilProcessed(202, 1, std::chrono::milliseconds(500)));
+  assert(engine.GetState().live);
   const auto generation = engine.GetState().generation;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   bool rejected = false;
@@ -1090,7 +1059,8 @@ void TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  assert(rejected && engine.GetState().reset_epoch == 202 && engine.GetState().live);
+  // The scan's one-second freshness may expire while the old reconstruction finishes.
+  assert(rejected && engine.GetState().reset_epoch == 202);
   assert(engine.GetState().generation == generation);
   engine.Stop();
   std::filesystem::remove_all(directory);
@@ -1253,8 +1223,6 @@ int main() {
   TestGeometryFiltersOutOfRangeAndInactiveSavedMapReceivesTerminalAck();
   TestCorrectedGeometryReplacesHistoryAndRequiresFreshScan();
   TestSavedMapDoesNotSeedLiveCollision();
-  TestGroundModelIsIndependentOfDisplayPointCap();
-  TestGroundModelConsumesSoaSnapshotAndResetsWithEpoch();
   TestExactPoseTransformAndDerivedLayers();
   TestScanOccupancyReceivesPointsBeforeGenericMapFilters();
   TestIdentityGateAndEpochReset();
@@ -1274,5 +1242,6 @@ int main() {
   TestDefaultOccupancyDoesNotDecayOutsideOfficialRayUpdates();
   TestOccupancyProjectionUsesPhysicalSensorHeight();
   TestOccupancyKeepsDoublePrecisionThroughPoseTransform();
+  TestRegionUpdateContract();
   return 0;
 }

@@ -653,14 +653,10 @@ def compile_native_nav_config(
         else:
             tuning_environment[env_key] = _env_number(_finite_number(native_nav_config, key))
     if local_planner == "scan":
-        # Global XYZ search finds a corridor with the local body's width.
-        # SCAN checks body length, heading and executable motion with both
-        # cylinders; adding their offset here would require room to turn
-        # everywhere along a straight corridor.
-        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = max(
-            native_nav["octoplanner3d"]["octoplanner3d_robot_radius"],
-            parameters["collision_cylinder_radius_m"],
-        )
+        # The native endpoint derives both planners' envelope from these cylinders.
+        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = parameters[
+            "collision_cylinder_radius_m"
+        ]
     if parameters["teleop_planner_horizon_m"] < 0.5:
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
     if parameters["tick_hz"] <= 0.0:

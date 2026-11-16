@@ -95,7 +95,7 @@ const char *stateName(ScanReplanState state) {
     case ScanReplanState::EXEC_TRAJ:
       return "scan_execute_trajectory";
     case ScanReplanState::EMERGENCY_STOP:
-      return "scan_emergency_stop";
+      return "aegis_estop";
   }
   return "scan_invalid_state";
 }
@@ -429,7 +429,7 @@ class Backend::Impl {
       // unchecked geometry or resume the superseded fast trajectory.
       active_.reset();
       emergencyStopped_ = true;
-      return stop(LocalPlanStatus::NearFieldStop, "scan_speed_transition_blocked");
+      return stop(LocalPlanStatus::NearFieldStop, "aegis_speed_blocked");
     }
     if (headingChanged || speedReduction || plannerModeChanged) {
       // A new body heading invalidates the previous collision footprint.
@@ -525,13 +525,13 @@ class Backend::Impl {
       // owns stopping; publishing this stationary spline as Ready hides failure.
       active_.reset();
       emergencyStopped_ = true;
-      return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
+      return stop(LocalPlanStatus::NearFieldStop, "aegis_estop");
     }
     if (emergencyStopped_ && !fsm_->hasTarget())
-      return stop(LocalPlanStatus::NoPath, "scan_replan_failed");
+      return stop(LocalPlanStatus::NoPath, "aegis_replan_failed");
     if (output.localTargetBlocked) {
       active_.reset();
-      return stop(LocalPlanStatus::Blocked, "scan_local_target_blocked");
+      return stop(LocalPlanStatus::Blocked, "aegis_goal_blocked");
     }
     if (output.trajectory) {
       SplineTarget target = splineTarget(*output.trajectory, plan.max_vel_);
@@ -555,9 +555,9 @@ class Backend::Impl {
       }
     }
     if (referenceRejected_ && !active_)
-      return stop(LocalPlanStatus::NoPath, "scan_target_rejected");
+      return stop(LocalPlanStatus::NoPath, "aegis_goal_rejected");
     if (emergencyStopped_)
-      return stop(LocalPlanStatus::NearFieldStop, "scan_emergency_stop");
+      return stop(LocalPlanStatus::NearFieldStop, "aegis_estop");
     const bool continuationFailed = output.state == ScanReplanState::REPLAN_TRAJ &&
         !manager_->reboundDebug().success;
     const auto &executing = manager_->local_data_;
@@ -566,7 +566,7 @@ class Backend::Impl {
         input.clock.timestampS >= executing.start_time_ + executing.duration_)
       active_.reset();
     if ((output.initializationFailed || continuationFailed) && !active_)
-      return stop(LocalPlanStatus::Blocked, "scan_initialization_failed");
+      return stop(LocalPlanStatus::Blocked, "aegis_init_failed");
     if (active_) {
       debug_.valid = true;
       debug_.continuityReused = !output.trajectory.has_value();

@@ -11,6 +11,8 @@ on:
       - 'scripts/build/cmake/settings.cmake'
       - 'tests/nav/cpp/**'
       - 'tests/explore/cpp/**'
+      - 'src/drivers/sim/mujoco/**'
+      - 'tests/sim/test_mujoco_runtime.py'
       - '.github/workflows/nav-core-tests.yml'
   pull_request:
     paths:
@@ -22,6 +24,8 @@ on:
       - 'scripts/build/cmake/settings.cmake'
       - 'tests/nav/cpp/**'
       - 'tests/explore/cpp/**'
+      - 'src/drivers/sim/mujoco/**'
+      - 'tests/sim/test_mujoco_runtime.py'
       - '.github/workflows/nav-core-tests.yml'
 
 jobs:

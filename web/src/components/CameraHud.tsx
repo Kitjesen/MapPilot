@@ -4,6 +4,7 @@ import styles from './CameraHud.module.css'
 
 interface CameraHudProps {
   sseState: SSEState
+  videoFps?: number | null
 }
 
 function fmt(v: number | undefined, dec: number, unit: string, fallback = '--') {
@@ -20,7 +21,7 @@ function numericMetric(data: Record<string, unknown> | undefined, key: string): 
   return undefined
 }
 
-export function CameraHud({ sseState }: CameraHudProps) {
+export function CameraHud({ sseState, videoFps = null }: CameraHudProps) {
   const slam = sseState.slamStatus
   const slamDiag = sseState.slamDiag?.data
   const robot = sseState.robotStatus
@@ -70,6 +71,12 @@ export function CameraHud({ sseState }: CameraHudProps) {
         <span className={styles.key}>心跳距今</span>
         <span className={styles.val}>{heartbeatAge}</span>
       </div>
+      {videoFps !== null && Number.isFinite(videoFps) && (
+        <div className={styles.row}>
+          <span className={styles.key}>解码</span>
+          <span className={styles.val}>{videoFps.toFixed(1)} fps</span>
+        </div>
+      )}
     </div>
   )
 }

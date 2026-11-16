@@ -236,6 +236,6 @@ def test_diagnostics_keeps_unobserved_native_pipeline_unknown_for_go2rtc(monkeyp
     assert status["camera"]["status"] == "not_loaded"
     assert status["camera"]["frames_fresh"] is None
     assert status["video"]["pipeline_ready"] is None
-    assert status["video"]["reason"] == "native_video_status_not_supported"
+    assert status["video"]["reason"] == "camera_source_not_ready"
     assert status["whep"]["available"] is True
     assert status["ready_for_receiver"] is None

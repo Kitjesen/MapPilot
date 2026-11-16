@@ -21,9 +21,6 @@ def test_yaml_values_reach_map_service_environment():
     settings["input"]["max_points"] = 120000
     settings["occupancy"]["resolution_m"] = 0.10
     settings["occupancy"]["size_x"] = 80
-    settings["surface"]["residual_m"] = 0.06
-    settings["surface"]["max_hole_area_m2"] = 0.12
-    settings["surface"]["max_slope"] = 0.5
     settings["save"]["dynamic_filter"] = False
     before = deepcopy(settings)
 
@@ -33,7 +30,6 @@ def test_yaml_values_reach_map_service_environment():
     assert environment["LINGTU_MAPD_MAX_POINTS"] == "120000"
     assert environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.1"
     assert environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "80"
-    assert environment["LINGTU_MAPD_SURFACE_RESIDUAL_M"] == "0.06"
     assert environment["LINGTU_SAVE_DYNAMIC_FILTER"] == "0"
     assert environment["LINGTU_MAPD_QUERY_MAX_JSON_BYTES"] == str(4 * 1024 * 1024)
     assert "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2" not in environment
@@ -67,9 +63,6 @@ def test_scan_uses_selected_robot_inflation(radius, below, above):
     ("input", "max_points", 1.5),
     ("occupancy", "resolution_m", float("nan")),
     ("occupancy", "p_hit", 1),
-    ("surface", "min_columns", 2),
-    ("surface", "max_hole_area_m2", -1),
-    ("surface", "max_slope", float("nan")),
     ("save", "dynamic_filter", "false"),
 ])
 def test_invalid_map_settings_fail_at_compilation(group, field, value):

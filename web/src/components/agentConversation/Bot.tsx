@@ -11,6 +11,7 @@ export type BotState = 'idle' | 'processing' | 'working' | 'writing' | 'waiting'
 interface BotProps {
   state: BotState; shape?: BotProfile['shape']; color?: BotProfile['color']; size?: 32 | 48 | 64; preview?: boolean
   look?: { x: number; y: number }; greeting?: boolean; animated?: boolean
+  followPointer?: boolean
   expression?: BotExpression; activity?: BotActivity
 }
 
@@ -21,7 +22,7 @@ export function Bot(props: BotProps) {
     const palette = BOT_COLORS[props.color ?? 'graphite']
     return <GrokAvatar {...props} shape={grok.shape} fill={palette.fill} eyes={palette.eyes}
       size={(props.size ?? 48) * (props.preview ? 2 : 1)} animated={props.animated ?? true}
-      look={props.look ?? { x: 0, y: 0 }} greeting={props.greeting ?? false} className={styles.bot} />
+      look={props.look ?? { x: 0, y: 0 }} greeting={props.greeting ?? false} followPointer={props.followPointer} className={styles.bot} />
   }
   return <FlatBot {...props} shape={shape as keyof typeof LINGTU_HEADS} />
 }
@@ -44,7 +45,7 @@ function FlatBot({ state, shape, color = 'graphite', size = 48, preview = false,
     data-animated={animated} data-family="lingtu" data-shape={shape} data-expression={face} data-activity={activity}
     data-size={size} data-greeting={greeting || undefined} style={style} viewBox="0 0 16 16" shapeRendering="geometricPrecision"
     aria-hidden="true" focusable="false">
-    {activity && ['orbit', 'radar', 'progress', 'uploading'].includes(activity) && <g className={styles.effect}>
+    {activity && ['orbit', 'radar', 'searching', 'progress', 'spawning', 'loading', 'uploading'].includes(activity) && <g className={styles.effect}>
       <circle cx="8" cy="8" r="7.5" fill="none" stroke="var(--bot-fill)" strokeWidth=".35" strokeDasharray={activity === 'radar' ? '2 4' : '12 35'} />
     </g>}
     <g className={styles.head}>

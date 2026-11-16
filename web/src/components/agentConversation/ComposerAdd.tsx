@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Activity, Camera, ClipboardList, Cpu, Radar, CircleStop, Compass, FileUp, History, Map, Plus, ScanSearch, Settings2, ShieldCheck } from 'lucide-react'
+import { Activity, Camera, CalendarDays, BrainCircuit, ClipboardList, Cpu, Radar, CircleStop, Compass, FileUp, History, Map, PlugZap, Plus, ScanSearch, Settings2, ShieldCheck } from 'lucide-react'
 import type { Locale } from '../../i18n'
 import styles from '../AgentConversation.module.css'
 import { useImuMonitor } from '../../hooks/useImuMonitor.ts'
@@ -110,6 +110,22 @@ export function ComposerAdd({ locale, disabled, hasMap, onFiles, onPrompt }: {
         menu.current?.querySelector('summary')?.focus()
         onPrompt(text('Show recent robot tasks and conversation history.', '查看最近的机器人任务和对话历史。'))
       }} data-tone="history"><History className={styles.addIcon} size={15} aria-hidden="true" /><span><strong>{text('Recent tasks', '最近任务')}</strong><small>{text('Continue from the current conversation', '从当前对话继续')}</small></span></button>
+      <div className={styles.addSectionLabel}>{text('Grok-style workspace', '工作台')}</div>
+      <button type="button" role="menuitem" disabled={disabled} onClick={() => {
+        if (menu.current) menu.current.open = false
+        menu.current?.querySelector('summary')?.focus()
+        onPrompt(text('Open the inspection schedule and prepare a routine draft for a saved route. Do not enable it until I confirm the time and route.', '打开巡检日历，为已保存路线准备一个定时计划草稿。没有确认时间和路线前不要启用。'))
+      }} data-tone="status"><CalendarDays className={styles.addIcon} size={15} aria-hidden="true" /><span><strong>{text('Routines', '定时计划')}</strong><small>{text('Prepare a schedule draft', '准备巡检计划草稿')}</small></span></button>
+      <button type="button" role="menuitem" disabled={disabled} onClick={() => {
+        if (menu.current) menu.current.open = false
+        menu.current?.querySelector('summary')?.focus()
+        onPrompt(text('Read my Bot memory and robot memory separately, then show what can be remembered, updated or forgotten.', '分别读取 Bot 记忆和机器人记忆，展示可以记住、修改或忘记的内容。'))
+      }} data-tone="history"><BrainCircuit className={styles.addIcon} size={15} aria-hidden="true" /><span><strong>{text('Bot + robot memory', 'Bot + 机器人记忆')}</strong><small>{text('Bot profile and procedures · robot space and episodes', 'Bot 画像与流程 · 机器人空间与情节')}</small></span></button>
+      <button type="button" role="menuitem" disabled={disabled} onClick={() => {
+        if (menu.current) menu.current.open = false
+        menu.current?.querySelector('summary')?.focus()
+        onPrompt(text('List connected apps, MCP servers, skills and searchable sources. Report which ones are unavailable.', '列出已连接的应用、MCP 服务、技能和可搜索来源，并说明哪些不可用。'))
+      }} data-tone="status"><PlugZap className={styles.addIcon} size={15} aria-hidden="true" /><span><strong>{text('Connectors', '连接器')}</strong><small>{text('Apps, MCP and searchable sources', '应用、MCP 与搜索来源')}</small></span></button>
       <div className={styles.addSectionLabel}>{text('Safety', '安全')}</div>
       <button type="button" role="menuitem" disabled={disabled} onClick={() => {
         if (menu.current) menu.current.open = false

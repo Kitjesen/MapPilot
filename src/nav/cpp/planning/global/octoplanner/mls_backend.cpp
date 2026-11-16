@@ -2,6 +2,8 @@
 #include "lingtu_mls_core.h"
 
 #include <cmath>
+#include <cstddef>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <stdexcept>
@@ -52,6 +54,38 @@ struct RustBuffers {
 };
 
 const LtMlsCell kDummyCell{0, 0, 0};
+
+LtMlsPose metricPose(const PointPose& point) {
+  return {{point.x, point.y, point.z}, point.yaw.value_or(0.0),
+          static_cast<std::uint8_t>(point.yaw.has_value())};
+}
+
+struct MetricInput {
+  const MetricGeometry& source;
+  std::vector<LtMlsCell> preblocked;
+  std::exception_ptr error;
+  LtMlsGeometry raw{};
+
+  explicit MetricInput(const MetricGeometry& geometry) : source(geometry) {
+    preblocked.reserve(source.preblocked.size());
+    for (const auto& cell : source.preblocked) preblocked.push_back({cell.x, cell.y, cell.z});
+    raw.config = source.config;
+    raw.regions = source.regions.data();
+    raw.regions_len = source.regions.size();
+    raw.preblocked = preblocked.data();
+    raw.preblocked_len = preblocked.size();
+    raw.context = this;
+    raw.cancel = [](void* context) -> std::int32_t {
+      auto& input = *static_cast<MetricInput*>(context);
+      try {
+        return input.source.cancel && input.source.cancel() ? 1 : 0;
+      } catch (...) {
+        input.error = std::current_exception();
+        return 1;
+      }
+    };
+  }
+};
 
 std::vector<SurfaceCell> copyCells(const LtMlsBuffer& buffer) {
   std::vector<SurfaceCell> cells;
@@ -165,6 +199,9 @@ PreparedArtifactHandle PreparedArtifactHandle::createFromGraph(
   std::vector<LtMlsGraphEdge> edges;
   edges.reserve(graph.edges.size());
   std::vector<LtMlsCell> corridor;
+  std::size_t corridor_count = 0;
+  for (const auto& edge : graph.edges) corridor_count += edge.corridor.size();
+  corridor.reserve(corridor_count);
   for (const auto& node : graph.nodes) {
     nodes.push_back({node.id, node.cell.x, node.cell.y, node.cell.z});
   }
@@ -384,6 +421,95 @@ std::vector<SurfaceCell> PreparedArtifactHandle::queryAvoiding(
   return result;
 }
 
+PreparedArtifactHandle::QueryResult PreparedArtifactHandle::checkedQuery(
+    SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
+    std::int32_t max_iterations, const SegmentCheck& check) const {
+  if (handle_ == nullptr) throw std::runtime_error("empty Rust MLS artifact handle");
+  struct Context {
+    const SegmentCheck& check;
+    std::exception_ptr error;
+  } context{check, {}};
+  const auto callback = [](LtMlsCell from, LtMlsCell to, std::uint32_t kind,
+                           void* user) -> std::int32_t {
+    auto& context = *static_cast<Context*>(user);
+    try {
+      return context.check({from.x, from.y, from.z}, {to.x, to.y, to.z}, kind);
+    } catch (...) {
+      context.error = std::current_exception();
+      return -1;
+    }
+  };
+  LtMlsBuffer output{};
+  const auto status = lt_mls_artifact_query_checked(
+      handle_, {start.x, start.y, start.z}, {goal.x, goal.y, goal.z},
+      max_snap_cells, max_iterations, callback, &context, &output);
+  auto cells = copyCells(output);
+  lt_mls_free_buffer(&output);
+  if (context.error) std::rethrow_exception(context.error);
+  switch (status) {
+    case 0: return {QueryStatus::Found, std::move(cells)};
+    case 1: return {QueryStatus::Exhausted, {}};
+    case 2: return {QueryStatus::Budget, {}};
+    case 3: return {QueryStatus::Cancelled, {}};
+    default: throw std::runtime_error("Rust MLS checked query failed");
+  }
+}
+
+
+PreparedArtifactHandle::MetricQueryResult PreparedArtifactHandle::metricQuery(
+    const PointPose& start, const PointPose& goal, std::int32_t max_snap_cells,
+    std::int32_t max_iterations, const MetricGeometry& geometry) const {
+  MetricInput input(geometry);
+  LtMlsPoseBuffer output{};
+  const auto status = lt_mls_artifact_query_metric(
+      handle_, metricPose(start), metricPose(goal), max_snap_cells, max_iterations,
+      &input.raw, &output);
+  std::vector<PointPose> poses;
+  poses.reserve(output.len);
+  for (std::uint64_t i = 0; i < output.len; ++i) {
+    const auto& pose = output.ptr[i];
+    poses.push_back({pose.point.x,pose.point.y,pose.point.z,
+        pose.has_yaw ? std::optional<double>(pose.yaw) : std::nullopt});
+  }
+  lt_mls_free_pose_buffer(&output);
+  if (input.error) std::rethrow_exception(input.error);
+  switch (status) {
+    case 0: return {QueryStatus::Found, std::move(poses)};
+    case 1: return {QueryStatus::Exhausted, {}};
+    case 2: return {QueryStatus::Budget, {}};
+    case 3: return {QueryStatus::Cancelled, {}};
+    default: throw std::runtime_error("Rust MLS metric query failed: " + std::to_string(status));
+  }
+}
+
+RustRouteCheckResult PreparedArtifactHandle::checkMetricRoute(
+    const std::vector<PointPose>& route, const MetricGeometry& geometry) const {
+  MetricInput input(geometry);
+  std::vector<LtMlsPose> poses;
+  poses.reserve(route.size());
+  for (const auto& point : route) poses.push_back(metricPose(point));
+  LtMlsRouteCheckResult result{};
+  const auto status = lt_mls_artifact_check_metric_poses(
+      handle_, poses.data(), poses.size(), &input.raw, &result);
+  if (input.error) std::rethrow_exception(input.error);
+  if (status != 0) throw std::runtime_error("Rust MLS metric route check failed");
+  return {result.valid != 0, result.failure_kind, result.failed_segment,
+          {result.failed_cell.x, result.failed_cell.y, result.failed_cell.z}};
+}
+
+void PreparedArtifactHandle::setGeometry(
+    const std::vector<SurfaceCell>& occupied,
+    const std::vector<SurfaceCell>& known_free,
+    const LtMlsConfig& config) {
+  std::vector<LtMlsCell> source, free;
+  source.reserve(occupied.size());
+  free.reserve(known_free.size());
+  for (const auto& cell : occupied) source.push_back({cell.x,cell.y,cell.z});
+  for (const auto& cell : known_free) free.push_back({cell.x,cell.y,cell.z});
+  if (lt_mls_artifact_set_geometry(handle_, source.data(), source.size(),
+                                  free.data(), free.size(), &config) != 0)
+    throw std::runtime_error("Rust MLS geometry restore failed");
+}
 
 ArtifactUpdateReport PreparedArtifactHandle::update(
     LtMlsRegion region,
@@ -615,16 +741,13 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
     out.value(edge.from);
     out.value(edge.to);
     out.value(edge.cost);
-    out.value<std::uint64_t>(edge.corridor.size());
-    for (const auto& cell : edge.corridor) {
-      out.value(cell.x);
-      out.value(cell.y);
-      out.value(cell.z);
-    }
+    out.vector(edge.corridor);
   }
 }
 
 Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
+  static_assert(sizeof(SurfaceCell) == 12 && offsetof(SurfaceCell, z) == 8);
+  static_assert(sizeof(Node) == 16 && offsetof(Node, cell) == 4);
   if (in.text() != kMagic) {
     throw std::runtime_error("unsupported MLS artifact format");
   }
@@ -637,26 +760,9 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
   artifact.resolution_m = in.value<double>();
   artifact.revision = in.value<std::uint64_t>();
 
-  const auto surface_count = in.count(12);
-  artifact.observed.reserve(surface_count);
-  for (std::size_t i = 0; i < surface_count; ++i) {
-    artifact.observed.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
-                                 in.value<std::int32_t>()});
-  }
-  const auto inferred_count = in.count(12);
-  artifact.inferred.reserve(inferred_count);
-  for (std::size_t i = 0; i < inferred_count; ++i) {
-    artifact.inferred.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
-                                 in.value<std::int32_t>()});
-  }
-
-  const auto node_count = in.count(16);
-  artifact.nodes.reserve(node_count);
-  for (std::size_t i = 0; i < node_count; ++i) {
-    artifact.nodes.push_back({in.value<std::uint32_t>(),
-                              {in.value<std::int32_t>(), in.value<std::int32_t>(),
-                               in.value<std::int32_t>()}});
-  }
+  artifact.observed = in.vector<SurfaceCell>();
+  artifact.inferred = in.vector<SurfaceCell>();
+  artifact.nodes = in.vector<Node>();
 
   const auto edge_count = in.count(32);
   artifact.edges.reserve(edge_count);
@@ -666,12 +772,7 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
     edge.from = in.value<std::uint32_t>();
     edge.to = in.value<std::uint32_t>();
     edge.cost = in.value<double>();
-    const auto corridor_count = in.count(12);
-    edge.corridor.reserve(corridor_count);
-    for (std::size_t j = 0; j < corridor_count; ++j) {
-      edge.corridor.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
-                               in.value<std::int32_t>()});
-    }
+    edge.corridor = in.vector<SurfaceCell>();
     if (edge.id == 0) edge.id = edgeKey(edge.from, edge.to);
     artifact.edges.push_back(std::move(edge));
   }

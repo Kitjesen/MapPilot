@@ -2,14 +2,11 @@
 // Adapted in 2026 for LingTu; Apache-2.0. See src/maps/SURFACE_NOTICE.
 #include <algorithm>
 #include <cmath>
-#include <iterator>
-#include <limits>
 #include <map>
 #include <set>
 
 #include <octomap/OcTree.h>
 
-#include "lingtu/maps/legacy/ground_surface.hpp"
 #include "lingtu/maps/layers/surface.hpp"
 #include "lingtu/maps/io/binary.hpp"
 
@@ -170,7 +167,11 @@ std::vector<SurfaceCell> SurfaceIndex::inferredPoints() const {
 }
 
 SurfaceIndex::SurfaceIndex(const octomap::OcTree& tree, double headroom, double radius,
-                           double max_hole_area_m2, double max_slope) {
+                           double max_hole_area_m2, double max_slope,
+                           bool collect_rejections)
+    : collect_rejections_(collect_rejections) {
+  (void)max_hole_area_m2;
+  (void)max_slope;
   const double resolution = tree.getResolution();
   resolution_ = resolution;
   for (auto it = tree.begin_leafs(); it != tree.end_leafs(); ++it) {
@@ -209,89 +210,64 @@ SurfaceIndex::SurfaceIndex(const octomap::OcTree& tree, double headroom, double 
     }
     levels.resize(size);
   }
-  if (radius <= 0 || max_hole_area_m2 <= 0 || observed.empty()) return;
-
-  const int band = static_cast<int>(std::ceil(radius*max_slope/resolution))+1;
-  const std::size_t max_cells = static_cast<std::size_t>(
-      std::floor(max_hole_area_m2/(resolution*resolution)+1e-7));
-  const int missing = std::numeric_limits<int>::min();
-  const std::array<std::array<int,2>,4> directions{{{{-1,0}},{{1,0}},{{0,-1}},{{0,1}}}};
-  // Each expected Z selects its nearest observed sheet, preserving stacked surfaces.
-  for (int z=observed.begin()->first; z<=observed.rbegin()->first; ++z) {
-    std::vector<SurfaceCell> samples;
-    for (auto it=observed.lower_bound(z-band); it!=observed.end() && it->first<=z+band; ++it)
-      samples.insert(samples.end(),it->second.begin(),it->second.end());
-    if (samples.empty()) continue;
-    int min_x=samples.front().x, max_x=min_x, min_y=samples.front().y, max_y=min_y;
-    for (const auto& p : samples) {
-      min_x=std::min(min_x,p.x); max_x=std::max(max_x,p.x);
-      min_y=std::min(min_y,p.y); max_y=std::max(max_y,p.y);
+  const int passes = radius > 0.0
+      ? static_cast<int>(std::ceil(radius / resolution)) : 0;
+  if (passes <= 0 || observed.empty()) return;
+  std::map<int, std::set<std::pair<int, int>>> layers;
+  for (const auto &[z, cells] : observed) {
+    auto &layer = layers[z];
+    for (const auto &cell : cells) layer.insert({cell.x, cell.y});
+  }
+  const std::array<std::array<int, 2>, 4> directions{{{{-1, 0}}, {{1, 0}},
+                                                        {{0, -1}}, {{0, 1}}}};
+  const auto supported = [&](int x, int y, int z) {
+    for (int dx = -3; dx <= 3; ++dx) for (int dy = -3; dy <= 3; ++dy) {
+      const auto column = occupied_.find({x + dx, y + dy, 0});
+      if (column == occupied_.end()) continue;
+      if (std::any_of(column->second.begin(), column->second.end(),
+                      [&](int occupied_z) { return std::abs(occupied_z - z) <= 3; }))
+        return true;
     }
-    --min_x; --min_y; ++max_x; ++max_y;
-    const int cols=max_x-min_x+1, rows=max_y-min_y+1;
-    const auto index=[&](int x,int y){return static_cast<std::size_t>(y)*cols+x;};
-    std::vector<int> grid(static_cast<std::size_t>(cols)*rows,missing);
-    std::vector<bool> visited(grid.size(),false);
-    for (const auto& p : samples) {
-      auto& value=grid[index(p.x-min_x,p.y-min_y)];
-      if (value==missing || std::abs(p.z-z)<std::abs(value-z)) value=p.z;
+    return false;
+  };
+  for (auto &[z, original] : layers) {
+    const int min_x = original.begin()->first - passes;
+    const int max_x = original.rbegin()->first + passes;
+    int min_y = original.begin()->second - passes;
+    int max_y = original.begin()->second + passes;
+    for (const auto &[x, y] : original) {
+      (void)x;
+      min_y = std::min(min_y, y - passes);
+      max_y = std::max(max_y, y + passes);
     }
-    for (int sy=0; sy<rows; ++sy) for (int sx=0; sx<cols; ++sx) {
-      if (grid[index(sx,sy)]!=missing || visited[index(sx,sy)]) continue;
-      std::vector<std::array<int,2>> hole{{sx,sy}};
-      std::set<std::array<int,2>> rim;
-      visited[index(sx,sy)]=true;
-      bool outside=false;
-      int low_x=sx,high_x=sx,low_y=sy,high_y=sy;
-      for (std::size_t next=0; next<hole.size(); ++next) {
-        const auto cell=hole[next];
-        low_x=std::min(low_x,cell[0]); high_x=std::max(high_x,cell[0]);
-        low_y=std::min(low_y,cell[1]); high_y=std::max(high_y,cell[1]);
-        if (cell[0]==0 || cell[1]==0 || cell[0]+1==cols || cell[1]+1==rows) outside=true;
-        for (const auto& direction : directions) {
-          const int x=cell[0]+direction[0], y=cell[1]+direction[1];
-          if (x<0 || y<0 || x>=cols || y>=rows) continue;
-          const auto i=index(x,y);
-          if (grid[i]!=missing) { rim.insert({x,y}); continue; }
-          if (!visited[i]) { visited[i]=true; hole.push_back({x,y}); }
-        }
+    auto closed = original;
+    for (int pass = 0; pass < passes; ++pass) {
+      auto next = closed;
+      for (const auto &[x, y] : closed)
+        for (const auto &direction : directions)
+          if (x + direction[0] >= min_x && x + direction[0] <= max_x &&
+              y + direction[1] >= min_y && y + direction[1] <= max_y)
+            next.insert({x + direction[0], y + direction[1]});
+      closed.swap(next);
+    }
+    for (int pass = 0; pass < passes; ++pass) {
+      std::set<std::pair<int, int>> next;
+      for (const auto &[x, y] : closed) {
+        if (std::all_of(directions.begin(), directions.end(), [&](const auto &direction) {
+              return closed.count({x + direction[0], y + direction[1]}) != 0;
+            })) next.insert({x, y});
       }
-      if (outside || hole.size()>max_cells ||
-          (high_x-low_x+1)*resolution>2*radius+1e-7 ||
-          (high_y-low_y+1)*resolution>2*radius+1e-7) continue;
-      const double center_x=.5*(low_x+high_x), center_y=.5*(low_y+high_y);
-      std::vector<ground_detail::Point> boundary;
-      boundary.reserve(rim.size());
-      for (const auto& p : rim) boundary.push_back({
-          (p[0]-center_x)*resolution,(p[1]-center_y)*resolution,
-          (grid[index(p[0],p[1])]+.5)*resolution,p[0],p[1],{}});
-      const auto plane=ground_detail::Fit(boundary);
-      if (!plane.valid || std::hypot(plane.x,plane.y)>max_slope+1e-7 ||
-          plane.rms>.35*resolution) continue;
-      if (std::any_of(boundary.begin(),boundary.end(),[&](const auto& p){
-            return std::abs(p.z-plane.At(p.x,p.y))>.6*resolution;
-          })) continue;
-      bool matched=false,filled=false;
-      for (const auto& p : hole) {
-        const double fitted=plane.At((p[0]-center_x)*resolution,(p[1]-center_y)*resolution);
-        const int level=static_cast<int>(std::floor(fitted/resolution+1e-7));
-        if (level!=z) continue;
-        matched=true;
-        const bool nearby=std::any_of(rim.begin(),rim.end(),[&](const auto& q){
-          return std::hypot(static_cast<double>(p[0]-q[0]),static_cast<double>(p[1]-q[1]))
-              *resolution<=radius+1e-7;
-        });
-        if (!nearby) continue;
-        const int x=p[0]+min_x,y=p[1]+min_y;
-        const auto* evidence=tree.search((x+.5)*resolution,(y+.5)*resolution,(level+.5)*resolution);
-        if (evidence && !tree.isNodeOccupied(evidence)) { ++stats_.free_rejected; continue; }
-        if (occupied(x,y,level,level) || !headroomFree(x,y,level,clearance)) continue;
-        inferred_[{x,y,0}].push_back(level);
-        filled=true;
-      }
-      if (matched) ++stats_.bounded_holes;
-      if (filled) ++stats_.filled_holes;
+      closed.swap(next);
     }
+    closed.insert(original.begin(), original.end());
+    bool filled = false;
+    for (const auto &[x, y] : closed) {
+      if (original.count({x, y}) != 0 || !headroomFree(x, y, z, clearance) ||
+          !supported(x, y, z)) continue;
+      inferred_[{x, y, 0}].push_back(z);
+      filled = true;
+    }
+    if (filled) ++stats_.filled_holes;
   }
   for (auto& [xy,levels] : inferred_) {
     std::sort(levels.begin(),levels.end());

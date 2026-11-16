@@ -539,12 +539,10 @@ int main()
       {center(-18), center(0), center(4)},
       {center(18), center(0), center(1)},
       displaced_start_options);
-    if (!displaced_start_result.ok || !displaced_start_result.reached_goal ||
-        displaced_start_result.path.empty() ||
-        std::abs(displaced_start_result.path.front().x-center(-18)) > 1e-6 ||
-        std::abs(displaced_start_result.path.front().y-center(0)) > 1e-6 ||
-        std::abs(displaced_start_result.path.front().z-center(4)) > 1e-6) {
-      std::cerr << "actual-start exemption lost the requested departure pose; reason="
+    // The actual pose exemption does not authorize an unsupported departure.
+    if (displaced_start_result.ok ||
+        displaced_start_result.failure_reason != "start_snap_exhausted") {
+      std::cerr << "unsupported departure bypassed ground support; reason="
                 << displaced_start_result.failure_reason << "\n";
       return 30;
     }

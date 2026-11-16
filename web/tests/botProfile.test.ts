@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { BOT_SHAPES, BOT_COLORS, BOT_PROFILE_KEY, DEFAULT_BOT_PROFILE, botPersona, readBotProfile, saveBotProfile, validateBotProfile, type BotProfile } from '../src/services/botProfile.ts'
+import { BOT_SHAPES, BOT_COLORS, BOT_PROFILE_KEY, DEFAULT_BOT_PROFILE, botPersona, readActiveBotId, readBotProfile, readBotRoster, saveActiveBotId, saveBotProfile, validateBotProfile, type BotProfile } from '../src/services/botProfile.ts'
 
 test('appearance is local and persona carries only name and role', () => {
   const profile = validateBotProfile({ ...DEFAULT_BOT_PROFILE, name: ' 巡检伙伴 ', instructions: '简洁中文回答', color: 'blue', shape: 'square' })
@@ -42,5 +42,19 @@ test('profile reloads; a storage failure is not reported as saved', () => {
     assert.deepEqual(readBotProfile(), DEFAULT_BOT_PROFILE)
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { setItem() { throw new Error('quota') } } })
     assert.throws(() => saveBotProfile(DEFAULT_BOT_PROFILE), /quota/)
+  } finally { Reflect.deleteProperty(globalThis, 'localStorage') }
+})
+
+test('bot roster keeps three presets and persists the active bot', () => {
+  const storage = new Map<string, string>()
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => storage.get(key), setItem: (key: string, value: string) => storage.set(key, value) } })
+  try {
+    const roster = readBotRoster()
+    assert.deepEqual(roster.map(profile => profile.id), ['inspection', 'navigation', 'maintenance'])
+    assert.equal(readActiveBotId(), 'inspection')
+    assert.equal(saveActiveBotId('navigation').name, '地图导航')
+    assert.equal(readActiveBotId(), 'navigation')
+    assert.equal(readBotProfile().name, '地图导航')
+    assert.equal(readBotProfile('maintenance').name, '设备维护')
   } finally { Reflect.deleteProperty(globalThis, 'localStorage') }
 })

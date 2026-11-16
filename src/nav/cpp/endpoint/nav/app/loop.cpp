@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -60,6 +62,64 @@ using lingtu::nav::endpoint::elapsedMs;
 using lingtu::nav::endpoint::nowSeconds;
 using lingtu::nav::endpoint::sourceStampError;
 using lingtu::nav::endpoint::steadySeconds;
+
+bool hasSensorData(const lingtu::nav::endpoint::SensorBatch &batch) {
+  return batch.simulation_time_s.has_value() || !batch.transforms.empty() ||
+         !batch.odometry.empty() || batch.driver_control.has_value() ||
+         batch.motion_profile.has_value() || batch.exploration_grid.has_value() ||
+         batch.obstacles.has_value() || batch.terrain.has_value() ||
+         batch.terrain_extended.has_value() || !batch.clears.empty() ||
+         batch.traversability.has_value() || batch.local_traversability.has_value() ||
+         batch.local_collision.has_value() || batch.localization_health.has_value();
+}
+
+// DDS point-cloud decoding can copy a large payload. Keep that work outside
+// the 100 Hz control thread and publish only the newest sensor batch.
+class SensorMailbox {
+ public:
+  explicit SensorMailbox(lingtu::nav::endpoint::Dds &dds)
+      : dds_(dds), thread_([this] { run(); }) {}
+
+  ~SensorMailbox() { stop(); }
+
+  SensorMailbox(const SensorMailbox &) = delete;
+  SensorMailbox &operator=(const SensorMailbox &) = delete;
+
+  std::optional<lingtu::nav::endpoint::SensorBatch> takeLatest() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::optional<lingtu::nav::endpoint::SensorBatch> result;
+    result.swap(latest_);
+    return result;
+  }
+
+  void stop() {
+    if (stopping_.exchange(true)) return;
+    if (thread_.joinable()) thread_.join();
+  }
+
+ private:
+  void run() {
+    while (!stopping_.load()) {
+      auto batch = dds_.takeSensors(steadySeconds());
+      if (!hasSensorData(batch)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        continue;
+      }
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stopping_.load()) return;
+        latest_ = std::move(batch);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+
+  lingtu::nav::endpoint::Dds &dds_;
+  std::mutex mutex_;
+  std::optional<lingtu::nav::endpoint::SensorBatch> latest_;
+  std::atomic_bool stopping_{false};
+  std::thread thread_;
+};
 
 bool pathsMateriallyDiffer(const std::vector<nav_kernel::Vec3> &left,
                            const std::vector<nav_kernel::Vec3> &right) noexcept {
@@ -131,6 +191,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &map_identity = ctx.current_map_identity;
   auto &sync_goal_diagnostics = ctx.sync_goal_plan_diagnostics;
   auto &current_timing = ctx.current_timing;
+  SensorMailbox sensor_mailbox(dds);
   std::uint64_t operator_motion_admitted_sequence{0U};
   std::uint64_t operator_motion_final_output_sequence{0U};
   std::optional<NavigationMapIdentity> navigation_map_identity;
@@ -330,6 +391,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     admission.autonomy_request_not_before_s = autonomy_retry_after_s;
     if (map_body) {
       admission.map_position = map_body->position;
+      admission.map_yaw = map_body->yaw;
     }
     admission.odometry_ready = odom_body.has_value();
     admission.planner_map_configured = !cfg.map_path.empty();
@@ -384,6 +446,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.input_gate_reason = input_gate_state.reason;
     if (map_body) {
       context.map_position = map_body->position;
+      context.map_yaw = map_body->yaw;
     }
     context.odometry_ready = odom_body.has_value();
     context.planner_map_configured = !cfg.map_path.empty();
@@ -802,6 +865,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
   std::function<void()> process_shutdown_commands;
   auto shutdown = [&]() -> int {
+    sensor_mailbox.stop();
     if (rolling_segment.snapshot().active) {
       (void)rolling_effects.apply(
           rolling_segment.step(RollingSegmentShutdown{}));
@@ -850,12 +914,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
   };
   auto drain_sensors = [&](TimingDiagnostics &timing) {
-    const auto take_start = SteadyClock::now();
-    auto batch = dds.takeSensors(steadySeconds());
-    timing.sensor_take_ms += elapsedMs(take_start);
+    auto batch = sensor_mailbox.takeLatest();
+    if (!batch) return;
     const auto apply_start = SteadyClock::now();
-    if (ctx.observe_stop_inputs) ctx.observe_stop_inputs(batch);
-    inputs.apply(std::move(batch), timing);
+    if (ctx.observe_stop_inputs) ctx.observe_stop_inputs(*batch);
+    inputs.apply(std::move(*batch), timing);
     timing.sensor_apply_ms += elapsedMs(apply_start);
   };
   CommandBatch command_batch;

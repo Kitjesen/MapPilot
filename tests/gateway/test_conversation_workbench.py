@@ -18,7 +18,7 @@ async def test_live_camera_card_only_requests_a_view_not_capture_or_motion():
 
 
 @pytest.mark.asyncio
-async def test_view_map_returns_versioned_card_without_geometry_or_activation(monkeypatch):
+async def test_view_map_returns_named_card_without_geometry_or_activation(monkeypatch):
     calls = []
     def request(gw, command):
         calls.append(command)
@@ -28,17 +28,81 @@ async def test_view_map_returns_versioned_card_without_geometry_or_activation(mo
     definition = next(item for item in tools if item["function"]["name"] == "view_saved_map")
     assert definition["writes"] is False
     result = await invoke("view_saved_map", {"map_id": "hall"})
-    assert result == {"success": True, "map_view": {"map_id": "hall", "content_epoch": 12}, "state": "READY", "read_only": True}
+    assert result == {"success": True, "map_view": {"map_id": "hall"}, "state": "READY", "read_only": True}
     assert calls == [{"action": "get_record", "map_id": "hall"}]
     invalid = await invoke("view_saved_map", {"map_id": "../other"})
     assert invalid["success"] is False and len(calls) == 1
 
 
 @pytest.mark.asyncio
+async def test_list_maps_exposes_only_map_id_and_name_to_conversation(monkeypatch):
+    async def fake_list(_gw):
+        return {
+            "maps": [{"name": "hall", "content_epoch": 12, "state": "READY", "size_mb": 4.5}],
+            "count": 1,
+        }
+
+    monkeypatch.setattr("gateway.services.conversation_tools.list_maps", fake_list)
+    _, invoke = workbench_tools(SimpleNamespace())
+
+    result = await invoke("list_saved_maps", {})
+
+    assert result["maps"] == [{"name": "hall", "state": "READY", "size_mb": 4.5}]
+
+
+@pytest.mark.asyncio
+async def test_conversation_can_submit_complete_inspection_route(monkeypatch):
+    calls = []
+
+    async def fake_start(gw, body):
+        calls.append(body)
+        return {
+            "schema_version": "lingtu.inspection.task.v1",
+            "ok": True,
+            "accepted": True,
+            "action": "start",
+            "task_id": "inspection-task-1",
+            "request_id": body.request_id,
+            "route_id": body.route_id,
+            "revision": body.revision,
+        }
+
+    monkeypatch.setattr("gateway.services.conversation_tools.start_task", fake_start)
+    tools, invoke = workbench_tools(SimpleNamespace())
+    definition = next(item for item in tools if item["function"]["name"] == "start_inspection_route")
+
+    result = await invoke("start_inspection_route", {"route_id": "morning-loop", "revision": 4})
+
+    assert definition["writes"] is True
+    assert result["accepted"] is True
+    assert result["task_id"] == "inspection-task-1"
+    assert calls[0].route_id == "morning-loop"
+    assert calls[0].revision == 4
+
+
+@pytest.mark.asyncio
+async def test_conversation_route_listing_uses_current_active_map(monkeypatch):
+    calls = []
+
+    async def fake_list(gw, map_id):
+        calls.append(map_id)
+        return {"ok": True, "routes": []}
+
+    monkeypatch.setattr("gateway.services.conversation_tools.list_routes", fake_list)
+    tools, invoke = workbench_tools(SimpleNamespace())
+    definition = next(item for item in tools if item["function"]["name"] == "list_inspection_routes")
+
+    result = await invoke("list_inspection_routes", {})
+
+    assert result == {"ok": True, "routes": []}
+    assert calls == [None]
+    assert definition["function"]["parameters"]["properties"] == {}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("response", [{"success": False, "reason_code": "map_not_found"},
-    {"success": True, "record": {"content_epoch": 0}}, {"success": True, "record": {"content_epoch": True}},
     {"success": True, "record": "invalid"}])
-async def test_view_map_rejects_missing_map_and_invalid_version(monkeypatch, response):
+async def test_view_map_rejects_missing_map_and_invalid_record(monkeypatch, response):
     monkeypatch.setattr("gateway.services.conversation_tools.mapd_request", lambda *_: response)
     _, invoke = workbench_tools(SimpleNamespace())
     result = await invoke("view_saved_map", {"map_id": "hall"})

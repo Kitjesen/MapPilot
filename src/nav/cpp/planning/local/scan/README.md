@@ -490,9 +490,11 @@ response. Fixed-heading native requests retain their explicit target heading.
 
 ## Final-command body geometry and native pose-route segments
 
-The multipart queries described here belong to native motion/braking checks.
-The SCAN backend builds its planning Grid without Body or observedBody, so these
-raw-body checks do not veto ordinary candidate optimization.
+The multipart queries are used by both SCAN candidate admission and native
+motion/braking checks. The candidate Grid uses the configured `body` or the
+current `observedBody`, so a route that cannot fit the selected robot model is
+rejected before it reaches FinalControl. FinalControl repeats the check with
+the latest runtime snapshot.
 
 `LocalPlanRequest::body` optionally shares the immutable model selected by
 RobotConfig and forwarded with the route. Global XYZ search does not use this

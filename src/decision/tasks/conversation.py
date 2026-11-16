@@ -19,6 +19,18 @@ class ConversationError(ValueError):
     pass
 
 
+DEFAULT_BOT_ID = "lingtu-default"
+
+
+def _bot_id(value: str | None) -> str:
+    if value is None:
+        return DEFAULT_BOT_ID
+    value = value.strip()
+    if not value or len(value) > 120:
+        raise ConversationError("invalid_bot_id")
+    return value
+
+
 def validate_tool_arguments(schema: dict, args: dict) -> str | None:
     properties = schema.get("properties", {})
     if args.keys() - properties.keys():
@@ -48,9 +60,19 @@ class ConversationStore:
         self._db.row_factory = sqlite3.Row
         with self._db:
             self._db.executescript("""
-                CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    bot_id TEXT NOT NULL DEFAULT 'lingtu-default'
+                );
                 CREATE TABLE IF NOT EXISTS assistant_preferences (
                     id TEXT PRIMARY KEY, content TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS robot_memories (
+                    id TEXT PRIMARY KEY, layer TEXT NOT NULL, content TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'operator', confidence REAL,
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                    expires_at REAL, archived INTEGER NOT NULL DEFAULT 0,
+                    domain TEXT NOT NULL DEFAULT 'robot', owner_id TEXT NOT NULL DEFAULT 'default'
                 );
                 CREATE TABLE IF NOT EXISTS conversation_context (
                     conversation_id TEXT PRIMARY KEY, through_ordinal INTEGER NOT NULL,
@@ -93,6 +115,7 @@ class ConversationStore:
                 "title": "TEXT NOT NULL DEFAULT '新对话'", "created_at": "REAL NOT NULL DEFAULT 0",
                 "updated_at": "REAL NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0",
                 "forked_from": "TEXT",
+                "bot_id": "TEXT NOT NULL DEFAULT 'lingtu-default'",
             }.items():
                 if name not in conversation_columns:
                     self._db.execute(f"ALTER TABLE conversations ADD COLUMN {name} {declaration}")
@@ -116,6 +139,12 @@ class ConversationStore:
                 if name not in columns:
                     self._db.execute(f"ALTER TABLE turns ADD COLUMN {name} {declaration}")
             message_columns = {row["name"] for row in self._db.execute("PRAGMA table_info(messages)")}
+            memory_columns = {row["name"] for row in self._db.execute("PRAGMA table_info(robot_memories)")}
+            if "domain" not in memory_columns:
+                self._db.execute("ALTER TABLE robot_memories ADD COLUMN domain TEXT NOT NULL DEFAULT 'robot'")
+            if "owner_id" not in memory_columns:
+                self._db.execute("ALTER TABLE robot_memories ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'default'")
+            self._db.execute("UPDATE robot_memories SET domain=CASE WHEN layer IN ('operator','procedural','working') THEN 'bot' ELSE 'robot' END")
             self._db.execute("UPDATE turns SET queue_order=ordinal WHERE queue_order=0")
             if "metadata" not in message_columns:
                 self._db.execute("ALTER TABLE messages ADD COLUMN metadata TEXT")
@@ -179,17 +208,169 @@ class ConversationStore:
                 self._db.execute("UPDATE assistant_preferences SET content=? WHERE id=?", (content, entry_id))
             return {"saved": True, "created": action == "remember", "entry": {"id": entry_id, "content": content}}
 
-    def create(self) -> dict:
+    @staticmethod
+    def _memory_layer(layer: str) -> str:
+        if layer not in {"operator", "spatial", "episodic", "procedural", "working"}:
+            raise ConversationError("invalid_robot_memory_layer")
+        return layer
+
+    @staticmethod
+    def _memory_content(content: str) -> str:
+        if not isinstance(content, str) or not content.strip() or len(content) > 2000:
+            raise ConversationError("robot_memory_content_must_contain_1_to_2000_characters")
+        return content.strip()
+
+    @staticmethod
+    def _memory_confidence(confidence):
+        if confidence is None:
+            return None
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ConversationError("robot_memory_confidence_must_be_between_0_and_1")
+        return float(confidence)
+
+    @staticmethod
+    def _memory_domain(domain: str | None, layer: str | None = None) -> str:
+        if domain is None:
+            return "bot" if layer in {"operator", "procedural", "working"} else "robot"
+        if domain not in {"bot", "robot"}:
+            raise ConversationError("invalid_robot_memory_domain")
+        return domain
+
+    @staticmethod
+    def _memory_owner(owner_id: str | None) -> str:
+        owner = str(owner_id or "default").strip()
+        if not owner or len(owner) > 120:
+            raise ConversationError("invalid_robot_memory_owner")
+        return owner
+
+    def read_robot_memory(self, *, layer: str | None = None, domain: str | None = None,
+                          owner_id: str | None = None, query: str = "", limit: int = 50) -> dict:
+        if layer is not None:
+            layer = self._memory_layer(layer)
+        domain = self._memory_domain(domain, layer) if domain is not None or layer is not None else None
+        owner = self._memory_owner(owner_id)
+        if not isinstance(query, str) or len(query) > 200:
+            raise ConversationError("invalid_robot_memory_query")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
+            raise ConversationError("invalid_robot_memory_limit")
+        now = time.time()
+        clauses = ["archived=0", "(expires_at IS NULL OR expires_at>?)"]
+        params: list[object] = [now]
+        if domain is not None:
+            clauses.append("domain=?")
+            params.append(domain)
+        clauses.append("owner_id=?")
+        params.append(owner)
+        if layer:
+            clauses.append("layer=?")
+            params.append(layer)
+        if query.strip():
+            clauses.append("lower(content) LIKE ?")
+            params.append(f"%{query.strip().casefold()}%")
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT id,layer,content,source,confidence,created_at,updated_at,expires_at,domain,owner_id "
+                f"FROM robot_memories WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return {"memories": [dict(row) for row in rows], "layers": ["operator", "spatial", "episodic", "procedural", "working"],
+                "domains": ["bot", "robot"], "scope": domain or "all", "owner_id": owner, "now": now}
+
+    def remember_robot_memory(self, *, layer: str, content: str, source: str = "operator",
+                              domain: str | None = None, owner_id: str | None = None,
+                              confidence=None, ttl_seconds: int | None = None) -> dict:
+        layer = self._memory_layer(layer)
+        domain = self._memory_domain(domain, layer)
+        owner_id = self._memory_owner(owner_id)
+        content = self._memory_content(content)
+        source = str(source or "operator").strip()
+        if len(source) > 200:
+            raise ConversationError("robot_memory_source_too_long")
+        confidence = self._memory_confidence(confidence)
+        if ttl_seconds is not None and (not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool)
+                                        or not 60 <= ttl_seconds <= 31536000):
+            raise ConversationError("invalid_robot_memory_ttl")
+        now = time.time()
+        expires_at = now + ttl_seconds if ttl_seconds is not None else None
+        memory_id = "memory-" + uuid.uuid4().hex
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO robot_memories VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                             (memory_id, layer, content, source, confidence, now, now, expires_at, 0, domain, owner_id))
+        return {"saved": True, "created": True, "memory": {
+            "id": memory_id, "layer": layer, "content": content, "source": source,
+            "confidence": confidence, "created_at": now, "updated_at": now, "expires_at": expires_at,
+            "domain": domain, "owner_id": owner_id}}
+
+    def read_bot_memory(self, **kwargs) -> dict:
+        kwargs.pop("domain", None)
+        return self.read_robot_memory(domain="bot", **kwargs)
+
+    def remember_bot_memory(self, **kwargs) -> dict:
+        kwargs.pop("domain", None)
+        return self.remember_robot_memory(domain="bot", **kwargs)
+
+    def update_robot_memory(self, *, memory_id: str, old_content: str, content: str,
+                            source: str | None = None, confidence=None, ttl_seconds: int | None = None,
+                            domain: str | None = None, owner_id: str | None = None) -> dict:
+        content = self._memory_content(content)
+        confidence = self._memory_confidence(confidence)
+        if source is not None and len(str(source).strip()) > 200:
+            raise ConversationError("robot_memory_source_too_long")
+        if ttl_seconds is not None and (not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool)
+                                        or not 60 <= ttl_seconds <= 31536000):
+            raise ConversationError("invalid_robot_memory_ttl")
+        now = time.time()
+        with self._lock, self._db:
+            row = self._db.execute("SELECT * FROM robot_memories WHERE id=? AND archived=0", (memory_id,)).fetchone()
+            if row is None:
+                return {"error": "robot_memory_not_found"}
+            if domain is not None and row["domain"] != self._memory_domain(domain):
+                return {"error": "robot_memory_scope_mismatch"}
+            if owner_id is not None and row["owner_id"] != self._memory_owner(owner_id):
+                return {"error": "robot_memory_owner_mismatch"}
+            if row["content"] != old_content:
+                return {"error": "robot_memory_changed", "hint": "Read robot memory again before updating."}
+            expires_at = now + ttl_seconds if ttl_seconds is not None else row["expires_at"]
+            self._db.execute("UPDATE robot_memories SET content=?,source=?,confidence=?,updated_at=?,expires_at=? WHERE id=?",
+                             (content, str(source).strip() if source is not None else row["source"], confidence if confidence is not None else row["confidence"], now, expires_at, memory_id))
+            updated = self._db.execute("SELECT id,layer,content,source,confidence,created_at,updated_at,expires_at,domain,owner_id FROM robot_memories WHERE id=?", (memory_id,)).fetchone()
+        return {"saved": True, "created": False, "memory": dict(updated)}
+
+    def update_bot_memory(self, **kwargs) -> dict:
+        kwargs.pop("domain", None)
+        return self.update_robot_memory(domain="bot", **kwargs)
+
+    def forget_robot_memory(self, *, memory_id: str, old_content: str,
+                            domain: str | None = None, owner_id: str | None = None) -> dict:
+        with self._lock, self._db:
+            row = self._db.execute("SELECT content FROM robot_memories WHERE id=? AND archived=0", (memory_id,)).fetchone()
+            if row is None:
+                return {"error": "robot_memory_not_found"}
+            if domain is not None and row["domain"] != self._memory_domain(domain):
+                return {"error": "robot_memory_scope_mismatch"}
+            if owner_id is not None and row["owner_id"] != self._memory_owner(owner_id):
+                return {"error": "robot_memory_owner_mismatch"}
+            if row["content"] != old_content:
+                return {"error": "robot_memory_changed", "hint": "Read robot memory again before forgetting."}
+            self._db.execute("UPDATE robot_memories SET archived=1,updated_at=? WHERE id=?", (time.time(), memory_id))
+        return {"removed": True, "id": memory_id, "history_erased": False}
+
+    def forget_bot_memory(self, **kwargs) -> dict:
+        kwargs.pop("domain", None)
+        return self.forget_robot_memory(domain="bot", **kwargs)
+
+    def create(self, bot_id: str | None = None) -> dict:
         conversation_id = f"conversation-{uuid.uuid4().hex}"
+        bot_id = _bot_id(bot_id)
         with self._lock, self._db:
             created_at = time.time()
-            self._db.execute("INSERT INTO conversations (id,created_at,updated_at) VALUES (?,?,?)",
-                             (conversation_id, created_at, created_at))
-        return {"conversation_id": conversation_id}
+            self._db.execute("INSERT INTO conversations (id,bot_id,created_at,updated_at) VALUES (?,?,?,?)",
+                             (conversation_id, bot_id, created_at, created_at))
+        return {"conversation_id": conversation_id, "bot_id": bot_id}
 
     @staticmethod
     def _metadata(row) -> dict:
-        metadata = {"conversation_id": row["id"], "title": row["title"], "created_at": row["created_at"],
+        metadata = {"conversation_id": row["id"], "bot_id": row["bot_id"], "title": row["title"], "created_at": row["created_at"],
                     "updated_at": row["updated_at"], "archived": bool(row["archived"])}
         if row["forked_from"]:
             metadata["forked_from"] = json.loads(row["forked_from"])
@@ -230,8 +411,9 @@ class ConversationStore:
             title = source["title"][:80 - len(suffix)].rstrip() + suffix
             origin = {"conversation_id": conversation_id, "message_id": message_id,
                       "title": source["title"], "seq": point["seq"]}
-            self._db.execute("""INSERT INTO conversations (id,title,created_at,updated_at,forked_from)
-                VALUES (?,?,?,?,?)""", (target_id, title, created_at, created_at, json.dumps(origin, ensure_ascii=False)))
+            self._db.execute("""INSERT INTO conversations (id,bot_id,title,created_at,updated_at,forked_from)
+                VALUES (?,?,?,?,?,?)""", (target_id, source["bot_id"], title, created_at, created_at,
+                                           json.dumps(origin, ensure_ascii=False)))
             attachment_ids = set()
             for row in turns:
                 reply_to = message_ids.get(row["reply_to"])
@@ -264,21 +446,33 @@ class ConversationStore:
             row = self._db.execute("SELECT * FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             return self._metadata(row)
 
-    def list(self, archived: bool = False) -> dict:
+    def list(self, archived: bool = False, bot_id: str | None = None) -> dict:
+        bot_id = _bot_id(bot_id) if bot_id is not None else None
         with self._lock:
-            rows = self._db.execute("SELECT * FROM conversations WHERE archived=? ORDER BY updated_at DESC,id",
-                                    (int(archived),)).fetchall()
+            if bot_id is None:
+                rows = self._db.execute("SELECT * FROM conversations WHERE archived=? ORDER BY updated_at DESC,id",
+                                        (int(archived),)).fetchall()
+            else:
+                rows = self._db.execute("""SELECT * FROM conversations
+                    WHERE archived=? AND bot_id=? ORDER BY updated_at DESC,id""",
+                                        (int(archived), bot_id)).fetchall()
             return {"conversations": [self._metadata(row) for row in rows]}
 
-    def search(self, query: str, archived: bool = False) -> dict:
+    def search(self, query: str, archived: bool = False, bot_id: str | None = None) -> dict:
         query = query.strip()
         if not query:
             return {"results": []}
+        bot_id = _bot_id(bot_id) if bot_id is not None else None
         with self._lock:
-            rows = self._db.execute("""SELECT c.id AS conversation_id,c.title,m.id AS message_id,
+            sql = """SELECT c.id AS conversation_id,c.title,m.id AS message_id,
                 m.seq,m.role,m.text FROM messages m JOIN conversations c ON c.id=m.conversation_id
-                WHERE c.archived=? AND m.role IN ('user','assistant') AND instr(lower(m.text),lower(?))>0
-                ORDER BY c.updated_at DESC,m.seq DESC LIMIT 30""", (int(archived), query)).fetchall()
+                WHERE c.archived=? AND m.role IN ('user','assistant') AND instr(lower(m.text),lower(?))>0"""
+            params: list[object] = [int(archived), query]
+            if bot_id is not None:
+                sql += " AND c.bot_id=?"
+                params.append(bot_id)
+            sql += " ORDER BY c.updated_at DESC,m.seq DESC LIMIT 30"
+            rows = self._db.execute(sql, params).fetchall()
             results = []
             for row in rows:
                 body = row["text"]
@@ -742,7 +936,8 @@ class ConversationStore:
             if not messages:
                 raise ConversationError("share_empty")
             created_at = time.time()
-            payload = {"title": self.metadata(conversation_id)["title"], "created_at": created_at,
+            metadata = self.metadata(conversation_id)
+            payload = {"title": metadata["title"], "bot_id": metadata["bot_id"], "created_at": created_at,
                        "messages": [dict(row) for row in messages]}
             token = secrets.token_urlsafe(32)
             self._db.execute("INSERT INTO conversation_shares VALUES (?,?,?,?)",

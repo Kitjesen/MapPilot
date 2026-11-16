@@ -1,5 +1,4 @@
 #include "lingtu/maps/mapd/engine.hpp"
-#include "lingtu/maps/legacy/surface_projection.hpp"
 #include "lingtu/maps/io/scans.hpp"
 
 #include <algorithm>
@@ -1175,14 +1174,6 @@ void LiveMapEngine::EnsureCompleteSnapshotLocked() const {
       config_);
   snapshot_.elevation =
       ProjectElevation(snapshot_.voxel_cloud.View(), snapshot_.occupancy);
-  const auto surface_geometry = layers::GroundSurfaceGeometry(snapshot_.occupancy);
-  const auto surface_xyz = voxel_.SnapshotXyz(surface_geometry);
-  snapshot_.ground_surface = layers::EstimateGroundSurface(surface_xyz,
-      surface_geometry, config_.ground_surface);
-  snapshot_.surface_projection = layers::ProjectSupportSurface(
-      snapshot_.ground_surface, occupancy_snapshot,
-      snapshot_.map_sensor.x, snapshot_.map_sensor.y, snapshot_.map_sensor.z);
-
   layers::Grid2D collision_cost = snapshot_.occupancy;
   for (float& value : collision_cost.data) {
     if (value < 0.0F) {

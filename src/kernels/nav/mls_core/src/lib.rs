@@ -1,8 +1,8 @@
 //! Dependency-free multi-level surface and sparse graph core.
 //!
 //! The data model follows the useful ownership split from the DimOS MLS
-//! planner. LingTu keeps map I/O, body geometry, support checks, route
-//! validation, and runtime ownership outside this crate.
+//! planner. LingTu keeps map I/O and process ownership outside this crate.
+//! Metric route checks consume explicit robot geometry and raw map evidence.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -12,11 +12,16 @@ mod edge_repair;
 mod edges;
 mod node_relocation;
 mod nodes;
+mod query;
+mod route_check;
 mod stable_graph;
 mod surfaces;
 mod voronoi_repair;
 
 pub(crate) use edges::build_graph;
+pub use route_check::{
+    LtMlsCancelCheck, LtMlsMetricConfig, LtMlsMetricRegion, LtMlsPoint, LtMlsPose,
+};
 pub use stable_graph::{
     GraphRepairReport, IncrementalGraph, StableEdge, StableEdgeId, StableNode, StableNodeId,
 };
@@ -223,6 +228,8 @@ pub struct PlannerState {
     artifact: PlannerArtifact,
     incremental_graph: Option<IncrementalGraph>,
     surface_source: bool,
+    query_surface: std::sync::OnceLock<query::Surface>,
+    geometry_index: std::sync::OnceLock<route_check::Index>,
 }
 
 impl PlannerState {
@@ -240,6 +247,8 @@ impl PlannerState {
             artifact: PlannerArtifact::default(),
             incremental_graph: None,
             surface_source: false,
+            query_surface: std::sync::OnceLock::new(),
+            geometry_index: std::sync::OnceLock::new(),
         };
         state.occupied.sort_unstable();
         state.occupied.dedup();
@@ -274,6 +283,8 @@ impl PlannerState {
             artifact: PlannerArtifact { surface, graph },
             incremental_graph: None,
             surface_source: true,
+            query_surface: std::sync::OnceLock::new(),
+            geometry_index: std::sync::OnceLock::new(),
         }
     }
 
@@ -296,6 +307,8 @@ impl PlannerState {
             artifact: PlannerArtifact { surface, graph },
             incremental_graph: None,
             surface_source: true,
+            query_surface: std::sync::OnceLock::new(),
+            geometry_index: std::sync::OnceLock::new(),
         }
     }
 
@@ -311,6 +324,24 @@ impl PlannerState {
         &self.known_free
     }
 
+    pub fn set_geometry(
+        &mut self,
+        mut occupied: Vec<SurfaceCell>,
+        mut known_free: Vec<SurfaceCell>,
+        surface_config: SurfaceConfig,
+    ) {
+        occupied.sort_unstable();
+        occupied.dedup();
+        known_free.sort_unstable();
+        known_free.dedup();
+        self.occupied = occupied;
+        self.known_free = known_free;
+        self.surface_config = surface_config;
+        self.surface_source = false;
+        self.query_surface.take();
+        self.geometry_index.take();
+    }
+
     /// Replace occupied/free source evidence. Extracted-surface artifacts reject source updates.
     pub fn update_region(
         &mut self,
@@ -321,8 +352,10 @@ impl PlannerState {
         if self.surface_source {
             return Err("source updates require an occupied/free artifact");
         }
+        self.query_surface.take();
+        self.geometry_index.take();
         let incremental_graph = self.incremental_graph.get_or_insert_with(|| {
-            IncrementalGraph::from_cells(&graph_cells(&self.artifact.surface), self.graph_config)
+            IncrementalGraph::from_graph(&graph_cells(&self.artifact.surface), &self.artifact.graph)
         });
         Ok(update_region(
             &mut self.artifact,
@@ -408,23 +441,38 @@ pub fn update_region(
     known_free.sort_unstable();
     known_free.dedup();
 
-    let expanded = region.expand(
-        (if surface_config.closing_radius_cells > 0.0 {
-            surface_config.closing_radius_cells.ceil() as i32
-        } else {
-            surface_config.closing_passes as i32
-        }) + 1,
-        surface_config.clearance_cells.max(1) + 1,
-    );
+    let closing = if surface_config.closing_radius_cells > 0.0 {
+        surface_config.closing_radius_cells.ceil() as i32
+    } else {
+        surface_config.closing_passes as i32
+    };
+    // Closing reads through dilation and erosion; support reads a three-cell neighbourhood.
+    let halo = if closing > 0 {
+        closing.saturating_mul(2).max(3)
+    } else {
+        0
+    };
+    let mut expanded = region.expand(halo.saturating_add(1), 0);
+    // Keep complete columns so a cropped wall cannot acquire an artificial top surface.
+    for cell in occupied
+        .iter()
+        .chain(known_free.iter())
+        .chain(&artifact.surface.observed)
+        .chain(&artifact.surface.inferred)
+    {
+        expanded.min_z = expanded.min_z.min(cell.z);
+        expanded.max_z = expanded.max_z.max(cell.z);
+    }
+    let context = expanded.expand(halo, 0);
     let local_occupied: Vec<_> = occupied
         .iter()
         .copied()
-        .filter(|cell| expanded.contains(*cell))
+        .filter(|cell| context.contains(*cell))
         .collect();
     let local_free: Vec<_> = known_free
         .iter()
         .copied()
-        .filter(|cell| expanded.contains(*cell))
+        .filter(|cell| context.contains(*cell))
         .collect();
     let local_surface =
         surfaces::extract_surfaces_with_free(&local_occupied, &local_free, surface_config);
@@ -462,7 +510,12 @@ pub fn update_region(
         .copied()
         .filter(|cell| !expanded.contains(*cell))
         .collect();
-    observed.extend(local_surface.observed);
+    observed.extend(
+        local_surface
+            .observed
+            .into_iter()
+            .filter(|cell| expanded.contains(*cell)),
+    );
     observed.sort_unstable();
     observed.dedup();
     let mut inferred: Vec<_> = artifact
@@ -472,7 +525,12 @@ pub fn update_region(
         .copied()
         .filter(|cell| !expanded.contains(*cell))
         .collect();
-    inferred.extend(local_surface.inferred);
+    inferred.extend(
+        local_surface
+            .inferred
+            .into_iter()
+            .filter(|cell| expanded.contains(*cell)),
+    );
     inferred.sort_unstable();
     inferred.dedup();
     artifact.surface = SurfaceMap { observed, inferred };
@@ -649,7 +707,15 @@ pub struct LtMlsBuffer {
     pub cap: u64,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 8;
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LtMlsPoseBuffer {
+    pub ptr: *mut LtMlsPose,
+    pub len: u64,
+    pub cap: u64,
+}
+
+pub const LT_MLS_ABI_VERSION: u32 = 10;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {
@@ -783,7 +849,7 @@ fn graph_component_count(graph: &SurfaceGraph) -> usize {
     components
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn graph_route(
     graph: &SurfaceGraph,
     start: SurfaceCell,
@@ -792,6 +858,7 @@ fn graph_route(
     graph_route_limited(graph, start, goal, None, None)
 }
 
+#[cfg(test)]
 fn graph_route_limited(
     graph: &SurfaceGraph,
     start: SurfaceCell,
@@ -802,118 +869,7 @@ fn graph_route_limited(
     graph_route_limited_avoiding(graph, start, goal, max_snap_cells, max_iterations, &[])
 }
 
-const ENDPOINT_MAX_STEP_CELLS: i32 = 1;
-const ENDPOINT_MAX_SLOPE: f64 = 1.0;
-
-fn endpoint_step_allowed(from: SurfaceCell, to: SurfaceCell) -> bool {
-    let dx = i64::from(to.x) - i64::from(from.x);
-    let dy = i64::from(to.y) - i64::from(from.y);
-    let dz = i64::from(to.z) - i64::from(from.z);
-    if dx == 0 && dy == 0 && dz == 0 {
-        return true;
-    }
-    if dz.unsigned_abs() > ENDPOINT_MAX_STEP_CELLS as u64 {
-        return false;
-    }
-    let horizontal = ((dx * dx + dy * dy) as f64).sqrt();
-    horizontal > 0.0 && (dz.unsigned_abs() as f64) <= ENDPOINT_MAX_SLOPE * horizontal
-}
-
-fn endpoint_connector(
-    target: SurfaceCell,
-    node: SurfaceCell,
-    surface: &HashSet<SurfaceCell>,
-    blocked: &HashSet<SurfaceCell>,
-    max_snap_cells: Option<i32>,
-    max_iterations: Option<usize>,
-    budget: &mut usize,
-) -> Option<Vec<SurfaceCell>> {
-    if blocked.contains(&node) || surface.is_empty() {
-        return None;
-    }
-    let limit = max_snap_cells.unwrap_or(i32::MAX);
-    if limit < 0 {
-        return None;
-    }
-    let limit_sq = i64::from(limit) * i64::from(limit);
-    let seed = surface
-        .iter()
-        .filter(|cell| !blocked.contains(cell))
-        .min_by_key(|cell| {
-            let dx = i64::from(cell.x) - i64::from(target.x);
-            let dy = i64::from(cell.y) - i64::from(target.y);
-            let dz = i64::from(cell.z) - i64::from(target.z);
-            dx * dx + dy * dy + dz * dz
-        })
-        .copied()?;
-    let seed_distance = {
-        let dx = i64::from(seed.x) - i64::from(target.x);
-        let dy = i64::from(seed.y) - i64::from(target.y);
-        let dz = i64::from(seed.z) - i64::from(target.z);
-        dx * dx + dy * dy + dz * dz
-    };
-    if seed_distance > limit_sq || !endpoint_step_allowed(target, seed) {
-        return None;
-    }
-    if seed == node {
-        return Some(if target == seed {
-            vec![target]
-        } else {
-            vec![target, seed]
-        });
-    }
-
-    let mut queue = VecDeque::from([seed]);
-    let mut previous = HashMap::<SurfaceCell, SurfaceCell>::new();
-    let mut visited = HashSet::from([seed]);
-    while let Some(current) = queue.pop_front() {
-        *budget = budget.saturating_add(1);
-        if max_iterations.is_some_and(|limit| *budget > limit) {
-            return None;
-        }
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                for dz in -1..=1 {
-                    if dx == 0 && dy == 0 && dz == 0 {
-                        continue;
-                    }
-                    let next = SurfaceCell::new(current.x + dx, current.y + dy, current.z + dz);
-                    if !surface.contains(&next)
-                        || blocked.contains(&next)
-                        || visited.contains(&next)
-                        || !endpoint_step_allowed(current, next)
-                    {
-                        continue;
-                    }
-                    let dx = i64::from(next.x) - i64::from(target.x);
-                    let dy = i64::from(next.y) - i64::from(target.y);
-                    let dz = i64::from(next.z) - i64::from(target.z);
-                    if dx * dx + dy * dy + dz * dz > limit_sq {
-                        continue;
-                    }
-                    previous.insert(next, current);
-                    if next == node {
-                        let mut path = vec![node];
-                        let mut cursor = node;
-                        while cursor != seed {
-                            cursor = previous[&cursor];
-                            path.push(cursor);
-                        }
-                        path.reverse();
-                        if target != seed {
-                            path.insert(0, target);
-                        }
-                        return Some(path);
-                    }
-                    visited.insert(next);
-                    queue.push_back(next);
-                }
-            }
-        }
-    }
-    None
-}
-
+#[cfg(test)]
 fn graph_route_limited_avoiding(
     graph: &SurfaceGraph,
     start: SurfaceCell,
@@ -922,164 +878,75 @@ fn graph_route_limited_avoiding(
     max_iterations: Option<usize>,
     blocked_cells: &[SurfaceCell],
 ) -> Option<Vec<SurfaceCell>> {
-    if graph.nodes.is_empty() {
-        return None;
-    }
-    let indices: HashMap<u32, usize> = graph
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| (node.id, index))
-        .collect();
-    let blocked: HashSet<SurfaceCell> = blocked_cells.iter().copied().collect();
-    let mut surface = HashSet::new();
-    for node in &graph.nodes {
-        surface.insert(node.cell);
-    }
-    for edge in &graph.edges {
-        surface.extend(edge.corridor.iter().copied());
-    }
-    let mut connector_budget = 0usize;
-    let mut start_attachments = Vec::<(usize, Vec<SurfaceCell>, f32)>::new();
-    let mut goal_attachments = HashMap::<usize, (Vec<SurfaceCell>, f32)>::new();
-    for (index, node) in graph.nodes.iter().enumerate() {
-        if let Some(path) = endpoint_connector(
-            start,
-            node.cell,
-            &surface,
-            &blocked,
-            max_snap_cells,
-            max_iterations,
-            &mut connector_budget,
-        ) {
-            let cost = path
-                .windows(2)
-                .map(|pair| {
-                    let dx = (pair[1].x - pair[0].x) as f32;
-                    let dy = (pair[1].y - pair[0].y) as f32;
-                    let dz = (pair[1].z - pair[0].z) as f32;
-                    (dx * dx + dy * dy + dz * dz).sqrt()
-                })
-                .sum();
-            start_attachments.push((index, path, cost));
-        }
-        if let Some(path) = endpoint_connector(
-            goal,
-            node.cell,
-            &surface,
-            &blocked,
-            max_snap_cells,
-            max_iterations,
-            &mut connector_budget,
-        ) {
-            let cost = path
-                .windows(2)
-                .map(|pair| {
-                    let dx = (pair[1].x - pair[0].x) as f32;
-                    let dy = (pair[1].y - pair[0].y) as f32;
-                    let dz = (pair[1].z - pair[0].z) as f32;
-                    (dx * dx + dy * dy + dz * dz).sqrt()
-                })
-                .sum();
-            goal_attachments.insert(index, (path, cost));
-        }
-    }
-    if start_attachments.is_empty() || goal_attachments.is_empty() {
-        return None;
-    }
-    let mut adjacency = vec![Vec::<(usize, usize)>::new(); graph.nodes.len()];
-    for (edge_index, edge) in graph.edges.iter().enumerate() {
-        let (Some(&a), Some(&b)) = (indices.get(&edge.a), indices.get(&edge.b)) else {
-            continue;
-        };
-        adjacency[a].push((b, edge_index));
-        adjacency[b].push((a, edge_index));
-    }
-    let mut distances = vec![f32::INFINITY; graph.nodes.len()];
-    let mut previous = vec![(usize::MAX, usize::MAX); graph.nodes.len()];
-    let mut queue =
-        std::collections::BinaryHeap::<std::cmp::Reverse<(corridor::OrderedF32, usize)>>::new();
-    let mut start_paths = HashMap::<usize, Vec<SurfaceCell>>::new();
-    for (index, path, cost) in start_attachments {
-        if cost < distances[index] {
-            distances[index] = cost;
-            start_paths.insert(index, path);
-            queue.push(std::cmp::Reverse((corridor::OrderedF32(cost), index)));
-        }
-    }
-    let mut iterations = connector_budget;
-    let mut best_goal = None::<(f32, usize)>;
-    while let Some(std::cmp::Reverse((corridor::OrderedF32(cost), current))) = queue.pop() {
-        iterations += 1;
-        if max_iterations.is_some_and(|limit| iterations > limit) {
-            return None;
-        }
-        if cost > distances[current] + 1e-6 {
-            continue;
-        }
-        if let Some((_, goal_cost)) = goal_attachments.get(&current) {
-            let candidate = cost + goal_cost;
-            if best_goal.is_none_or(|(best, _)| candidate < best) {
-                best_goal = Some((candidate, current));
-            }
-        }
-        for &(next, edge_index) in &adjacency[current] {
-            if !blocked.is_empty()
-                && graph.edges[edge_index]
-                    .corridor
-                    .iter()
-                    .any(|cell| blocked.contains(cell))
-            {
-                continue;
-            }
-            let next_cost = cost + graph.edges[edge_index].cost;
-            if next_cost + 1e-6 >= distances[next] {
-                continue;
-            }
-            distances[next] = next_cost;
-            previous[next] = (current, edge_index);
-            queue.push(std::cmp::Reverse((corridor::OrderedF32(next_cost), next)));
-        }
-    }
-    let Some((_, goal_index)) = best_goal else {
-        return None;
-    };
-    let mut node_path = Vec::new();
-    let mut current = goal_index;
-    node_path.push(current);
-    while previous[current].0 != usize::MAX {
-        let (parent, _) = previous[current];
-        current = parent;
-        node_path.push(current);
-    }
-    node_path.reverse();
+    graph_route_limited_avoiding_with_config(
+        graph,
+        start,
+        goal,
+        max_snap_cells,
+        max_iterations,
+        blocked_cells,
+        GraphConfig::default(),
+    )
+}
 
-    let start_index = current;
-    let mut route = start_paths.get(&start_index)?.clone();
-    for pair in node_path.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        let (_, edge_index) = previous[to];
-        let edge = &graph.edges[edge_index];
-        let forward = graph.nodes[from].id == edge.a;
-        let cells: Box<dyn Iterator<Item = &SurfaceCell>> = if forward {
-            Box::new(edge.corridor.iter())
-        } else {
-            Box::new(edge.corridor.iter().rev())
-        };
-        for &cell in cells {
-            if route.last() != Some(&cell) {
-                route.push(cell);
+#[cfg(test)]
+fn graph_route_limited_avoiding_with_config(
+    graph: &SurfaceGraph,
+    start: SurfaceCell,
+    goal: SurfaceCell,
+    max_snap_cells: Option<i32>,
+    max_iterations: Option<usize>,
+    blocked_cells: &[SurfaceCell],
+    config: GraphConfig,
+) -> Option<Vec<SurfaceCell>> {
+    let mut cells = graph.nodes.iter().map(|node| node.cell).collect::<Vec<_>>();
+    cells.extend(
+        graph
+            .edges
+            .iter()
+            .flat_map(|edge| edge.corridor.iter())
+            .copied(),
+    );
+    let state = PlannerState::from_graph(cells, Vec::new(), graph.clone(), config);
+    let blocked = blocked_cells.iter().copied().collect::<HashSet<_>>();
+    let mut path = query::plan(
+        &state,
+        start,
+        goal,
+        max_snap_cells.unwrap_or(i32::MAX),
+        max_iterations.unwrap_or(usize::MAX),
+        false,
+        |from, to, kind| {
+            if kind == 3 {
+                return 1;
             }
-        }
-    }
-    if let Some((goal_path, _)) = goal_attachments.get(&goal_index) {
-        for &cell in goal_path.iter().rev() {
-            if route.last() != Some(&cell) {
-                route.push(cell);
+            if blocked.contains(&from) || blocked.contains(&to) {
+                return 0;
             }
-        }
+            if kind != 0 && from.x == to.x && from.y == to.y && from.z != to.z {
+                return 0;
+            }
+            if kind != 0 {
+                let rise = (to.z - from.z).unsigned_abs() as f32;
+                let run = ((to.x - from.x) as f32).hypot((to.y - from.y) as f32);
+                if config.max_step_cells > 0 && rise > config.max_step_cells as f32 {
+                    return 0;
+                }
+                if config.max_slope > 0.0 && rise > config.max_slope * run {
+                    return 0;
+                }
+            }
+            1
+        },
+    )
+    .ok()?;
+    if path.first() != Some(&start) {
+        path.insert(0, start);
     }
-    Some(route)
+    if path.last() != Some(&goal) {
+        path.push(goal);
+    }
+    Some(path)
 }
 
 const ROUTE_OK: u32 = 0;
@@ -1271,10 +1138,6 @@ unsafe fn read_graph(
     } else {
         std::slice::from_raw_parts(corridor, corridor_len)
     };
-    let corridor_cells: Vec<SurfaceCell> = corridor_values
-        .iter()
-        .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
-        .collect();
     let mut graph_edges = Vec::with_capacity(edges_len);
     let edge_values = if edges_len == 0 {
         &[][..]
@@ -1288,7 +1151,7 @@ unsafe fn read_graph(
             .ok_or(-2)?;
         let end = usize::try_from(end).map_err(|_| -3)?;
         let start = usize::try_from(edge.corridor_offset).map_err(|_| -3)?;
-        if end > corridor_cells.len()
+        if end > corridor_values.len()
             || start >= end
             || edge.from == edge.to
             || !node_ids.contains(&edge.from)
@@ -1306,7 +1169,10 @@ unsafe fn read_graph(
             a: edge.from,
             b: edge.to,
             cost: edge.cost,
-            corridor: corridor_cells[start..end].to_vec(),
+            corridor: corridor_values[start..end]
+                .iter()
+                .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
+                .collect(),
         });
     }
     Ok(SurfaceGraph {
@@ -1551,6 +1417,12 @@ pub unsafe extern "C" fn lt_mls_artifact_surfaces(
     0
 }
 
+fn surface_column(cells: &[SurfaceCell], x: i32, y: i32) -> &[SurfaceCell] {
+    let first = cells.partition_point(|cell| (cell.x, cell.y) < (x, y));
+    let end = first + cells[first..].partition_point(|cell| (cell.x, cell.y) == (x, y));
+    &cells[first..end]
+}
+
 #[no_mangle]
 /// # Safety
 ///
@@ -1566,15 +1438,14 @@ pub unsafe extern "C" fn lt_mls_artifact_below(
         return -1;
     }
     let artifact = &*handle;
-    let floor = artifact
-        .state
-        .artifact()
-        .surface
-        .observed
-        .iter()
-        .chain(artifact.state.artifact().surface.inferred.iter())
-        .filter(|cell| cell.x == x && cell.y == y && cell.z <= z)
-        .map(|cell| cell.z)
+    let surface = &artifact.state.artifact.surface;
+    let floor = [&surface.observed, &surface.inferred]
+        .into_iter()
+        .filter_map(|cells| {
+            let column = surface_column(cells, x, y);
+            let end = column.partition_point(|cell| cell.z <= z);
+            end.checked_sub(1).map(|index| column[index].z)
+        })
         .max();
     match floor {
         Some(value) => {
@@ -1600,13 +1471,9 @@ pub unsafe extern "C" fn lt_mls_artifact_inferred(
         return -1;
     }
     let artifact = &*handle;
-    if artifact
-        .state
-        .artifact()
-        .surface
-        .inferred
+    if surface_column(&artifact.state.artifact.surface.inferred, x, y)
         .iter()
-        .any(|cell| cell.x == x && cell.y == y && cell.z >= min_z && cell.z <= max_z)
+        .any(|cell| cell.z >= min_z && cell.z <= max_z)
     {
         1
     } else {
@@ -1733,35 +1600,29 @@ pub unsafe extern "C" fn lt_mls_artifact_height(
     }
     let artifact = &*handle;
     let mut best = None;
-    for cell in artifact
-        .state
-        .artifact()
-        .surface
-        .observed
+    let surface = &artifact.state.artifact.surface;
+    for cell in surface_column(&surface.observed, x, y)
         .iter()
-        .chain(artifact.state.artifact().surface.inferred.iter())
+        .chain(surface_column(&surface.inferred, x, y))
     {
-        if cell.x != x || cell.y != y {
+        // Select the observed voxel interval with the existing standing-height tolerance.
+        // Its exposed top remains the physical height returned to the caller.
+        let bottom = f64::from(cell.z) * resolution;
+        let value = f64::from(cell.z + 1) * resolution;
+        let distance = (bottom - expected_z).max(0.0).max(expected_z - value);
+        if distance > tolerance + 1e-7 {
             continue;
         }
-        let lower = f64::from(cell.z) * resolution;
-        let upper = f64::from(cell.z + 1) * resolution;
-        let value = expected_z.clamp(lower, upper);
-        if (value - expected_z).abs() > tolerance + 1e-7 {
-            continue;
-        }
-        if (value - expected_z).abs() <= 1e-7 {
+        if distance <= 1e-7 {
             *result = value;
             return 1;
         }
-        if best.map_or(true, |current: f64| {
-            (value - expected_z).abs() < (current - expected_z).abs()
-        }) {
-            best = Some(value);
+        if best.map_or(true, |(current, _)| distance < current) {
+            best = Some((distance, value));
         }
     }
     match best {
-        Some(value) => {
+        Some((_, value)) => {
             *result = value;
             1
         }
@@ -1789,11 +1650,91 @@ pub unsafe extern "C" fn lt_mls_artifact_graph(
     }
 }
 
+pub type LtMlsSegmentCheck =
+    unsafe extern "C" fn(LtMlsCell, LtMlsCell, u32, *mut std::ffi::c_void) -> i32;
+
+fn cell_from_abi(cell: LtMlsCell) -> SurfaceCell {
+    SurfaceCell::new(cell.x, cell.y, cell.z)
+}
+
+fn cell_to_abi(cell: SurfaceCell) -> LtMlsCell {
+    LtMlsCell {
+        x: cell.x,
+        y: cell.y,
+        z: cell.z,
+    }
+}
+
+unsafe fn legacy_query(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsCell,
+    goal: LtMlsCell,
+    max_snap_cells: i32,
+    max_iterations: usize,
+    blocked: &[SurfaceCell],
+    route: *mut LtMlsBuffer,
+) -> i32 {
+    let route = &mut *route;
+    lt_mls_free_buffer(route);
+    let blocked = blocked.iter().copied().collect::<HashSet<_>>();
+    let cells = graph_cells(&(*handle).state.artifact.surface);
+    let nearest_distance = |target: LtMlsCell| {
+        cells
+            .iter()
+            .map(|cell| {
+                let dx = i64::from(cell.x) - i64::from(target.x);
+                let dy = i64::from(cell.y) - i64::from(target.y);
+                let dz = i64::from(cell.z) - i64::from(target.z);
+                dx * dx + dy * dy + dz * dz
+            })
+            .min()
+    };
+    let start_distance = nearest_distance(start);
+    let goal_distance = nearest_distance(goal);
+    match query::plan(
+        &(*handle).state,
+        cell_from_abi(start),
+        cell_from_abi(goal),
+        max_snap_cells,
+        max_iterations,
+        false,
+        |from, to, kind| {
+            if kind == 3 {
+                return 1;
+            }
+            if blocked.contains(&from) || blocked.contains(&to) {
+                return 0;
+            }
+            let dx = i64::from(to.x) - i64::from(from.x);
+            let dy = i64::from(to.y) - i64::from(from.y);
+            let dz = i64::from(to.z) - i64::from(from.z);
+            let distance = dx * dx + dy * dy + dz * dz;
+            match kind {
+                1 => i32::from(start_distance == Some(distance)),
+                2 => i32::from(goal_distance == Some(distance)),
+                _ => 1,
+            }
+        },
+    ) {
+        Ok(mut path) => {
+            let start = cell_from_abi(start);
+            let goal = cell_from_abi(goal);
+            if path.first() != Some(&start) {
+                path.insert(0, start);
+            }
+            if path.last() != Some(&goal) {
+                path.push(goal);
+            }
+            put_buffer(path, route).map_or(-3, |_| 0)
+        }
+        Err(_) => -2,
+    }
+}
+
 #[no_mangle]
 /// # Safety
 ///
-/// `handle`, `route` and input cells must be valid pointers. The route is owned
-/// by the caller and must be released with `lt_mls_free_buffer`.
+/// `handle` and `route` must be valid. The returned buffer belongs to the caller.
 pub unsafe extern "C" fn lt_mls_artifact_query(
     handle: *const LtMlsArtifactHandle,
     start: LtMlsCell,
@@ -1803,24 +1744,13 @@ pub unsafe extern "C" fn lt_mls_artifact_query(
     if handle.is_null() || route.is_null() {
         return -1;
     }
-    let handle = &*handle;
-    let route = &mut *route;
-    lt_mls_free_buffer(route);
-    let Some(path) = graph_route(
-        &handle.state.artifact().graph,
-        SurfaceCell::new(start.x, start.y, start.z),
-        SurfaceCell::new(goal.x, goal.y, goal.z),
-    ) else {
-        return -2;
-    };
-    put_buffer(path, route).map_or(-3, |_| 0)
+    legacy_query(handle, start, goal, i32::MAX, usize::MAX, &[], route)
 }
 
 #[no_mangle]
 /// # Safety
 ///
-/// `handle`, `route` and input cells must be valid pointers. The route is owned
-/// by the caller and must be released with `lt_mls_free_buffer`.
+/// `handle` and `route` must be valid. The returned buffer belongs to the caller.
 pub unsafe extern "C" fn lt_mls_artifact_query_limited(
     handle: *const LtMlsArtifactHandle,
     start: LtMlsCell,
@@ -1828,29 +1758,16 @@ pub unsafe extern "C" fn lt_mls_artifact_query_limited(
     max_snap_cells: i32,
     route: *mut LtMlsBuffer,
 ) -> i32 {
-    if handle.is_null() || route.is_null() {
+    if handle.is_null() || route.is_null() || max_snap_cells < 0 {
         return -1;
     }
-    let handle = &*handle;
-    let route = &mut *route;
-    lt_mls_free_buffer(route);
-    let Some(path) = graph_route_limited(
-        &handle.state.artifact().graph,
-        SurfaceCell::new(start.x, start.y, start.z),
-        SurfaceCell::new(goal.x, goal.y, goal.z),
-        Some(max_snap_cells),
-        None,
-    ) else {
-        return -2;
-    };
-    put_buffer(path, route).map_or(-3, |_| 0)
+    legacy_query(handle, start, goal, max_snap_cells, usize::MAX, &[], route)
 }
 
 #[no_mangle]
 /// # Safety
 ///
-/// `handle`, `route` and input cells must be valid pointers. The route is owned
-/// by the caller and must be released with `lt_mls_free_buffer`.
+/// `handle` and `route` must be valid. The returned buffer belongs to the caller.
 pub unsafe extern "C" fn lt_mls_artifact_query_budgeted(
     handle: *const LtMlsArtifactHandle,
     start: LtMlsCell,
@@ -1859,30 +1776,24 @@ pub unsafe extern "C" fn lt_mls_artifact_query_budgeted(
     max_iterations: i32,
     route: *mut LtMlsBuffer,
 ) -> i32 {
-    if handle.is_null() || route.is_null() || max_iterations < 1 {
+    if handle.is_null() || route.is_null() || max_snap_cells < 0 || max_iterations < 1 {
         return -1;
     }
-    let handle = &*handle;
-    let route = &mut *route;
-    lt_mls_free_buffer(route);
-    let Some(path) = graph_route_limited(
-        &handle.state.artifact().graph,
-        SurfaceCell::new(start.x, start.y, start.z),
-        SurfaceCell::new(goal.x, goal.y, goal.z),
-        Some(max_snap_cells),
-        Some(max_iterations as usize),
-    ) else {
-        return -2;
-    };
-    put_buffer(path, route).map_or(-3, |_| 0)
+    legacy_query(
+        handle,
+        start,
+        goal,
+        max_snap_cells,
+        max_iterations as usize,
+        &[],
+        route,
+    )
 }
 
 #[no_mangle]
 /// # Safety
 ///
-/// `handle`, `blocked_cells` and `route` must be valid for the duration of
-/// the call. The route is owned by the caller and must be released with
-/// `lt_mls_free_buffer`.
+/// Input cells, `handle`, and `route` must be valid for the call.
 pub unsafe extern "C" fn lt_mls_artifact_query_avoiding(
     handle: *const LtMlsArtifactHandle,
     start: LtMlsCell,
@@ -1893,41 +1804,105 @@ pub unsafe extern "C" fn lt_mls_artifact_query_avoiding(
     blocked_cells_len: u64,
     route: *mut LtMlsBuffer,
 ) -> i32 {
-    if handle.is_null()
-        || route.is_null()
-        || max_snap_cells < 0
-        || max_iterations < 1
-        || (blocked_cells_len > 0 && blocked_cells.is_null())
-    {
+    if handle.is_null() || route.is_null() || max_snap_cells < 0 || max_iterations < 1 {
         return -1;
     }
-    let blocked_len = match usize::try_from(blocked_cells_len) {
+    let blocked = match read_cells(blocked_cells, blocked_cells_len) {
         Ok(value) => value,
-        Err(_) => return -1,
+        Err(code) => return code,
     };
-    let blocked = if blocked_len == 0 {
-        &[]
-    } else {
-        std::slice::from_raw_parts(blocked_cells, blocked_len)
+    legacy_query(
+        handle,
+        start,
+        goal,
+        max_snap_cells,
+        max_iterations as usize,
+        &blocked,
+        route,
+    )
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// The handle, config and nonempty cell buffers must remain valid for the call.
+pub unsafe extern "C" fn lt_mls_artifact_set_geometry(
+    handle: *mut LtMlsArtifactHandle,
+    occupied: *const LtMlsCell,
+    occupied_len: u64,
+    known_free: *const LtMlsCell,
+    known_free_len: u64,
+    config: *const LtMlsConfig,
+) -> i32 {
+    if handle.is_null() || config.is_null() {
+        return -1;
+    }
+    let config = *config;
+    if config.clearance_cells < 0
+        || !config.closing_radius_cells.is_finite()
+        || config.closing_radius_cells < 0.0
+    {
+        return -2;
+    }
+    let occupied = match read_cells(occupied, occupied_len) {
+        Ok(c) => c,
+        Err(e) => return e,
     };
-    let blocked: Vec<SurfaceCell> = blocked
-        .iter()
-        .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
-        .collect();
-    let handle = &*handle;
+    let known_free = match read_cells(known_free, known_free_len) {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
+    (*handle).state.set_geometry(
+        occupied,
+        known_free,
+        SurfaceConfig {
+            clearance_cells: config.clearance_cells,
+            closing_passes: config.closing_passes,
+            closing_radius_cells: config.closing_radius_cells,
+        },
+    );
+    0
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle`, callback context, and `route` must remain valid throughout the call.
+/// Callback kinds are segment=0, start connector=1, goal connector=2, cancel poll=3.
+/// Callback results are pass=1, blocked=0, cancel=-1. Query status is found=0,
+/// exhausted=1, budget=2, cancelled=3. Negative status denotes invalid ABI input.
+pub unsafe extern "C" fn lt_mls_artifact_query_checked(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsCell,
+    goal: LtMlsCell,
+    max_snap_cells: i32,
+    max_iterations: i32,
+    check: Option<LtMlsSegmentCheck>,
+    context: *mut std::ffi::c_void,
+    route: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null() || route.is_null() || max_snap_cells < 0 || max_iterations < 1 {
+        return -1;
+    }
+    let Some(check) = check else {
+        return -1;
+    };
     let route = &mut *route;
     lt_mls_free_buffer(route);
-    let Some(path) = graph_route_limited_avoiding(
-        &handle.state.artifact().graph,
-        SurfaceCell::new(start.x, start.y, start.z),
-        SurfaceCell::new(goal.x, goal.y, goal.z),
-        Some(max_snap_cells),
-        Some(max_iterations as usize),
-        &blocked,
-    ) else {
-        return -2;
-    };
-    put_buffer(path, route).map_or(-3, |_| 0)
+    match query::plan(
+        &(*handle).state,
+        cell_from_abi(start),
+        cell_from_abi(goal),
+        max_snap_cells,
+        max_iterations as usize,
+        true,
+        |from, to, kind| check(cell_to_abi(from), cell_to_abi(to), kind, context),
+    ) {
+        Ok(path) => put_buffer(path, route).map_or(-3, |_| 0),
+        Err(query::QueryError::Exhausted) => 1,
+        Err(query::QueryError::Budget) => 2,
+        Err(query::QueryError::Cancelled) => 3,
+    }
 }
 
 #[no_mangle]
@@ -1965,6 +1940,279 @@ pub unsafe extern "C" fn lt_mls_artifact_check_route(
     let check = check_route(&(*handle).state, &cells, *config);
     *result = check;
     0
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// The handle, config, result and nonempty input buffers must be valid for the call.
+pub unsafe extern "C" fn lt_mls_artifact_check_metric_route(
+    handle: *const LtMlsArtifactHandle,
+    route: *const LtMlsPoint,
+    route_len: u64,
+    config: *const LtMlsMetricConfig,
+    regions: *const LtMlsMetricRegion,
+    regions_len: u64,
+    result: *mut LtMlsRouteCheckResult,
+) -> i32 {
+    if handle.is_null()
+        || config.is_null()
+        || result.is_null()
+        || (route_len > 0 && route.is_null())
+        || (regions_len > 0 && regions.is_null())
+    {
+        return -1;
+    }
+    let (Ok(route_len), Ok(regions_len)) =
+        (usize::try_from(route_len), usize::try_from(regions_len))
+    else {
+        return -2;
+    };
+    let route = if route_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(route, route_len)
+    };
+    let regions = if regions_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(regions, regions_len)
+    };
+    *result = route_check::check(&(*handle).state, route, *config, regions);
+    0
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LtMlsGeometry {
+    pub config: LtMlsMetricConfig,
+    pub regions: *const LtMlsMetricRegion,
+    pub regions_len: u64,
+    pub preblocked: *const LtMlsCell,
+    pub preblocked_len: u64,
+    pub cancel: Option<LtMlsCancelCheck>,
+    pub context: *mut std::ffi::c_void,
+}
+
+unsafe fn metric_checker<'a>(
+    state: &'a PlannerState,
+    geometry: &'a LtMlsGeometry,
+) -> Result<route_check::Checker<'a>, LtMlsRouteCheckResult> {
+    if geometry.regions_len > 0 && geometry.regions.is_null() {
+        return Err(route_failure(
+            ROUTE_INVALID_CONFIG,
+            -1,
+            SurfaceCell::new(0, 0, 0),
+        ));
+    }
+    let Ok(regions_len) = usize::try_from(geometry.regions_len) else {
+        return Err(route_failure(
+            ROUTE_INVALID_CONFIG,
+            -1,
+            SurfaceCell::new(0, 0, 0),
+        ));
+    };
+    let regions = if regions_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(geometry.regions, regions_len)
+    };
+    let preblocked = read_cells(geometry.preblocked, geometry.preblocked_len)
+        .map_err(|_| route_failure(ROUTE_INVALID_CONFIG, -1, SurfaceCell::new(0, 0, 0)))?;
+    route_check::prepare(
+        state,
+        geometry.config,
+        regions,
+        &preblocked,
+        geometry.cancel,
+        geometry.context,
+    )
+}
+
+#[no_mangle]
+/// # Safety
+/// All nonempty buffers and the geometry callback context must be valid for this call.
+pub unsafe extern "C" fn lt_mls_artifact_check_metric_poses(
+    handle: *const LtMlsArtifactHandle,
+    route: *const LtMlsPose,
+    route_len: u64,
+    geometry: *const LtMlsGeometry,
+    result: *mut LtMlsRouteCheckResult,
+) -> i32 {
+    if handle.is_null()
+        || geometry.is_null()
+        || result.is_null()
+        || (route_len > 0 && route.is_null())
+    {
+        return -1;
+    }
+    let Ok(len) = usize::try_from(route_len) else {
+        return -2;
+    };
+    let route = if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(route, len)
+    };
+    *result = match metric_checker(&(*handle).state, &*geometry) {
+        Ok(checker) => checker.check_poses(route),
+        Err(failure) => failure,
+    };
+    0
+}
+
+#[no_mangle]
+/// # Safety
+/// The handle, geometry buffers, output and callback context must be valid throughout this call.
+pub unsafe extern "C" fn lt_mls_artifact_query_metric(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsPose,
+    goal: LtMlsPose,
+    max_snap_cells: i32,
+    max_iterations: i32,
+    geometry: *const LtMlsGeometry,
+    route: *mut LtMlsPoseBuffer,
+) -> i32 {
+    if handle.is_null()
+        || geometry.is_null()
+        || route.is_null()
+        || max_snap_cells < 0
+        || max_iterations < 1
+    {
+        return -1;
+    }
+    if [start, goal]
+        .iter()
+        .any(|pose| !pose.point.finite() || (pose.has_yaw != 0 && !pose.yaw.is_finite()))
+    {
+        return -1;
+    }
+    let geometry = &*geometry;
+    let checker = match metric_checker(&(*handle).state, geometry) {
+        Ok(c) => c,
+        Err(_) => return -2,
+    };
+    let config = geometry.config;
+    let output = &mut *route;
+    lt_mls_free_pose_buffer(output);
+    let mut budget = query::Budget {
+        remaining: max_iterations as usize,
+    };
+    let goal = match checker.resolve_goal(start, goal, max_snap_cells, &mut budget) {
+        Ok(goal) => goal,
+        Err(query::QueryError::Exhausted) => return 1,
+        Err(query::QueryError::Budget) => return 2,
+        Err(query::QueryError::Cancelled) => return 3,
+    };
+    let cell = |pose: LtMlsPose| {
+        SurfaceCell::new(
+            (pose.point.x / config.resolution).floor() as i32,
+            (pose.point.y / config.resolution).floor() as i32,
+            ((pose.point.z - config.support_height) / config.resolution).round() as i32 - 1,
+        )
+    };
+    let start_attachment = checker.attachment(start.point.native());
+    let goal_attachment = checker.attachment(goal.point.native());
+    let start_cell = start_attachment.unwrap_or_else(|| cell(start));
+    let goal_cell = goal_attachment.unwrap_or_else(|| cell(goal));
+    let pose = |cell: SurfaceCell| LtMlsPose {
+        point: LtMlsPoint {
+            x: (cell.x as f64 + 0.5) * config.resolution,
+            y: (cell.y as f64 + 0.5) * config.resolution,
+            z: (cell.z as f64 + 1.0) * config.resolution + config.support_height,
+        },
+        ..LtMlsPose::default()
+    };
+    let same_xy = |a: LtMlsPoint, b: LtMlsPoint| {
+        let a = a.native();
+        let b = b.native();
+        a.x == b.x && a.y == b.y
+    };
+    let virtual_start = |cell: SurfaceCell| {
+        start_attachment == Some(cell) && same_xy(start.point, pose(cell).point)
+    };
+    let virtual_goal =
+        |cell: SurfaceCell| goal_attachment == Some(cell) && same_xy(goal.point, pose(cell).point);
+    let mut rejected = HashSet::<(SurfaceCell, SurfaceCell, u32)>::new();
+    loop {
+        let path = match query::plan_budgeted(
+            &(*handle).state,
+            start_cell,
+            goal_cell,
+            max_snap_cells,
+            &mut budget,
+            true,
+            |a, b, kind| {
+                if geometry
+                    .cancel
+                    .is_some_and(|cancel| cancel(geometry.context) != 0)
+                {
+                    return -1;
+                }
+                if kind == 3 {
+                    return 1;
+                }
+                if rejected.contains(&(a, b, kind)) {
+                    return 0;
+                }
+                let (from, to) = if kind == 1 && virtual_start(b) {
+                    (start, start)
+                } else if kind == 2 && virtual_goal(a) {
+                    (goal, goal)
+                } else {
+                    (
+                        if kind == 1 { start } else { pose(a) },
+                        if kind == 2 { goal } else { pose(b) },
+                    )
+                };
+                let actual =
+                    config.actual_start != 0 && from.point.native() == start.point.native();
+                let result = checker.check_connection(from, to, actual);
+                if result.failure_kind == route_check::CANCELLED {
+                    -1
+                } else {
+                    i32::from(result.valid != 0)
+                }
+            },
+        ) {
+            Ok(path) => path,
+            Err(query::QueryError::Exhausted) => return 1,
+            Err(query::QueryError::Budget) => return 2,
+            Err(query::QueryError::Cancelled) => return 3,
+        };
+        let mut poses = Vec::with_capacity(path.len() + 2);
+        poses.push(start);
+        poses.extend(path.iter().copied().map(pose));
+        poses.push(goal);
+        let mut keys = Vec::with_capacity(path.len() + 1);
+        keys.push((start_cell, path[0], 1));
+        keys.extend(path.windows(2).map(|edge| (edge[0], edge[1], 0)));
+        keys.push((*path.last().unwrap(), goal_cell, 2));
+        // Surface attachment keeps the physical endpoint height. It does not
+        // command a vertical move to the nominal standing height at the same XY.
+        let remove_goal = virtual_goal(*path.last().unwrap());
+        if remove_goal {
+            poses.remove(poses.len() - 2);
+            keys.pop();
+        }
+        if virtual_start(path[0]) && !(remove_goal && path.len() == 1) {
+            poses.remove(1);
+            keys.remove(0);
+        }
+        let checked = checker.check_poses(&poses);
+        if checked.valid != 0 {
+            return put_raw(poses, &mut output.ptr, &mut output.len, &mut output.cap)
+                .map_or(-3, |_| 0);
+        }
+        if checked.failure_kind == route_check::CANCELLED {
+            return 3;
+        }
+        let index = checked.failed_segment.max(0) as usize;
+        let edge = keys[index];
+        if !rejected.insert(edge) {
+            return 1;
+        }
+    }
 }
 
 #[no_mangle]
@@ -2279,9 +2527,485 @@ pub unsafe extern "C" fn lt_mls_free_buffer(buffer: *mut LtMlsBuffer) {
     *buffer = LtMlsBuffer::default();
 }
 
+#[no_mangle]
+/// # Safety
+/// The buffer must be returned by query_metric and must not be freed twice.
+pub unsafe extern "C" fn lt_mls_free_pose_buffer(buffer: *mut LtMlsPoseBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = &mut *buffer;
+    if !buffer.ptr.is_null() {
+        let _ = Vec::from_raw_parts(buffer.ptr, buffer.len as usize, buffer.cap as usize);
+    }
+    *buffer = LtMlsPoseBuffer::default();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_boundary() {
+        let occupied = (0..26)
+            .flat_map(|x| (-8..=8).map(move |y| SurfaceCell::new(x, y, -1)))
+            .collect();
+        let handle = LtMlsArtifactHandle {
+            state: PlannerState::new(
+                occupied,
+                Vec::new(),
+                SurfaceConfig {
+                    clearance_cells: 11,
+                    closing_passes: 4,
+                    closing_radius_cells: 4.0,
+                },
+                GraphConfig {
+                    node_spacing_cells: 2,
+                    max_link_cells: 9,
+                    max_step_cells: 9,
+                    horizontal_hop_cells: 2,
+                    wall_buffer_cells: 8,
+                    wall_buffer_weight: 2.0,
+                    ..GraphConfig::default()
+                },
+            ),
+            revision: 1,
+        };
+        let start = LtMlsPose {
+            point: LtMlsPoint {
+                x: -0.02,
+                y: 0.025,
+                z: 0.35,
+            },
+            ..LtMlsPose::default()
+        };
+        let goal = LtMlsPose {
+            point: LtMlsPoint {
+                x: 0.975,
+                ..start.point
+            },
+            ..LtMlsPose::default()
+        };
+        let geometry = LtMlsGeometry {
+            config: LtMlsMetricConfig {
+                resolution: 0.05,
+                robot_radius: 0.1,
+                below: 0.1,
+                above: 0.2,
+                support_height: 0.35,
+                support_tolerance: 0.05,
+                max_step: 0.45,
+                ground_support: 1,
+                actual_start: 1,
+                start,
+                min: LtMlsPoint {
+                    x: -0.5,
+                    y: -0.5,
+                    z: -0.1,
+                },
+                max: LtMlsPoint {
+                    x: 1.55,
+                    y: 0.55,
+                    z: 0.85,
+                },
+                ..LtMlsMetricConfig::default()
+            },
+            regions: std::ptr::null(),
+            regions_len: 0,
+            preblocked: std::ptr::null(),
+            preblocked_len: 0,
+            cancel: None,
+            context: std::ptr::null_mut(),
+        };
+        let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+        assert_eq!(
+            checker
+                .check_connection(
+                    start,
+                    LtMlsPose {
+                        point: LtMlsPoint {
+                            x: 0.025,
+                            ..start.point
+                        },
+                        ..start
+                    },
+                    true
+                )
+                .valid,
+            1
+        );
+        let mut route = LtMlsPoseBuffer::default();
+        assert_eq!(
+            unsafe {
+                lt_mls_artifact_query_metric(&handle, start, goal, 24, 10000, &geometry, &mut route)
+            },
+            0
+        );
+        unsafe { lt_mls_free_pose_buffer(&mut route) };
+    }
+
+    #[test]
+    fn standing_band_endpoints() {
+        let occupied = (-16..=16)
+            .flat_map(|x| {
+                (-8..=8).map(move |y| SurfaceCell::new(x, y, if x < 0 { -7 } else { -3 }))
+            })
+            .collect();
+        let state = PlannerState::new(
+            occupied,
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 9,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig {
+                max_link_cells: 5,
+                max_step_cells: 5,
+                horizontal_hop_cells: 2,
+                ..GraphConfig::default()
+            },
+        );
+        let handle = LtMlsArtifactHandle { state, revision: 1 };
+        let lower = LtMlsPose {
+            point: LtMlsPoint {
+                x: -0.225_f64 as f32 as f64,
+                y: 0.025_f64 as f32 as f64,
+                z: 0.025_f64 as f32 as f64,
+            },
+            ..LtMlsPose::default()
+        };
+        let upper = LtMlsPose {
+            point: LtMlsPoint {
+                x: 0.225_f64 as f32 as f64,
+                y: 0.025_f64 as f32 as f64,
+                z: 0.225_f64 as f32 as f64,
+            },
+            ..LtMlsPose::default()
+        };
+        for (start, goal) in [(lower, upper), (upper, lower)] {
+            let geometry = LtMlsGeometry {
+                config: LtMlsMetricConfig {
+                    resolution: 0.05,
+                    robot_radius: 0.155,
+                    below: 0.1,
+                    above: 0.1,
+                    support_height: 0.35,
+                    support_tolerance: 0.05,
+                    max_step: 0.25,
+                    ground_support: 1,
+                    actual_start: 1,
+                    start,
+                    min: LtMlsPoint {
+                        x: -1.0,
+                        y: -1.0,
+                        z: -1.0,
+                    },
+                    max: LtMlsPoint {
+                        x: 1.0,
+                        y: 1.0,
+                        z: 1.0,
+                    },
+                    ..LtMlsMetricConfig::default()
+                },
+                regions: std::ptr::null(),
+                regions_len: 0,
+                preblocked: std::ptr::null(),
+                preblocked_len: 0,
+                cancel: None,
+                context: std::ptr::null_mut(),
+            };
+            let mut route = LtMlsPoseBuffer::default();
+            assert_eq!(
+                unsafe {
+                    lt_mls_artifact_query_metric(
+                        &handle, start, goal, 0, 5000, &geometry, &mut route,
+                    )
+                },
+                0
+            );
+            let poses = unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
+            assert_eq!(poses.first().unwrap().point, start.point);
+            assert_eq!(poses.last().unwrap().point, goal.point);
+            assert!(poses.windows(2).all(|p| p[0].point.x != p[1].point.x
+                || p[0].point.y != p[1].point.y
+                || p[0].point.z == p[1].point.z));
+            let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+            assert_eq!(checker.check_poses(poses).valid, 1);
+            unsafe { lt_mls_free_pose_buffer(&mut route) };
+        }
+    }
+
+    #[test]
+    fn surface_top_height() {
+        for resolution in [0.1, 0.2] {
+            for level in [-2, -1, 0, 7] {
+                let cells = vec![SurfaceCell::new(0, 0, level), SurfaceCell::new(1, 0, level)];
+                let mut state = PlannerState::from_graph(
+                    cells.clone(),
+                    Vec::new(),
+                    SurfaceGraph::default(),
+                    GraphConfig::default(),
+                );
+                state.set_geometry(cells, Vec::new(), SurfaceConfig::default());
+                let handle = LtMlsArtifactHandle { state, revision: 1 };
+                let top = (level + 1) as f64 * resolution;
+                let start = LtMlsPose {
+                    point: LtMlsPoint {
+                        x: 0.5 * resolution,
+                        y: 0.5 * resolution,
+                        z: top + 0.435,
+                    },
+                    ..LtMlsPose::default()
+                };
+                let goal = LtMlsPose {
+                    point: LtMlsPoint {
+                        x: 1.5 * resolution,
+                        ..start.point
+                    },
+                    ..LtMlsPose::default()
+                };
+                let geometry = LtMlsGeometry {
+                    config: LtMlsMetricConfig {
+                        resolution,
+                        robot_radius: 0.32,
+                        body_offset: 0.23,
+                        below: 0.05,
+                        above: 0.35,
+                        support_height: 0.435,
+                        support_tolerance: 0.1,
+                        ground_support: 1,
+                        min: LtMlsPoint {
+                            x: -1.0,
+                            y: -1.0,
+                            z: top - 1.0,
+                        },
+                        max: LtMlsPoint {
+                            x: 2.0,
+                            y: 2.0,
+                            z: top + 2.0,
+                        },
+                        ..LtMlsMetricConfig::default()
+                    },
+                    regions: std::ptr::null(),
+                    regions_len: 0,
+                    preblocked: std::ptr::null(),
+                    preblocked_len: 0,
+                    cancel: None,
+                    context: std::ptr::null_mut(),
+                };
+                let mut route = LtMlsPoseBuffer::default();
+                assert_eq!(
+                    unsafe {
+                        lt_mls_artifact_query_metric(
+                            &handle, start, goal, 0, 100, &geometry, &mut route,
+                        )
+                    },
+                    0
+                );
+                let route_poses =
+                    unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
+                assert!(route_poses
+                    .iter()
+                    .all(|pose| (pose.point.z - top - 0.435).abs() < 1e-12));
+                unsafe { lt_mls_free_pose_buffer(&mut route) };
+                let mut height = f64::NAN;
+                assert_eq!(
+                    unsafe {
+                        lt_mls_artifact_height(
+                            &handle,
+                            0,
+                            0,
+                            top - 0.25 * resolution,
+                            0.3 * resolution,
+                            resolution,
+                            &mut height,
+                        )
+                    },
+                    1
+                );
+                assert!((height - top).abs() < 1e-12);
+                assert_eq!(
+                    unsafe {
+                        lt_mls_artifact_height(
+                            &handle,
+                            0,
+                            0,
+                            top - 0.5 * resolution,
+                            0.0,
+                            resolution,
+                            &mut height,
+                        )
+                    },
+                    1
+                );
+                assert!((height - top).abs() < 1e-12);
+                for (expected, tolerance, accepted) in [
+                    (top - 1.25 * resolution, 0.3 * resolution, 1),
+                    (top - 1.5 * resolution, 0.3 * resolution, 0),
+                    (top + 0.25 * resolution, 0.3 * resolution, 1),
+                    (top + 0.5 * resolution, 0.3 * resolution, 0),
+                ] {
+                    assert_eq!(
+                        unsafe {
+                            lt_mls_artifact_height(
+                                &handle,
+                                0,
+                                0,
+                                expected,
+                                tolerance,
+                                resolution,
+                                &mut height,
+                            )
+                        },
+                        accepted
+                    );
+                    if accepted == 1 {
+                        assert!((height - top).abs() < 1e-12);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn metric_turn_replans() {
+        let corners = [
+            SurfaceCell::new(-10, 0, 4),
+            SurfaceCell::new(0, 0, 4),
+            SurfaceCell::new(0, 10, 4),
+            SurfaceCell::new(-10, 10, 4),
+        ];
+        let mut cells = Vec::new();
+        let mut edges = Vec::new();
+        for (a, b) in [(0, 1), (1, 2), (0, 3), (3, 2)] {
+            let from = corners[a];
+            let to = corners[b];
+            let corridor = (0..=10)
+                .map(|i| {
+                    SurfaceCell::new(
+                        from.x + (to.x - from.x) * i / 10,
+                        from.y + (to.y - from.y) * i / 10,
+                        4,
+                    )
+                })
+                .collect::<Vec<_>>();
+            cells.extend_from_slice(&corridor);
+            edges.push(Edge {
+                a: a as u32,
+                b: b as u32,
+                cost: 10.0,
+                corridor,
+            });
+        }
+        let graph = SurfaceGraph {
+            nodes: corners
+                .iter()
+                .enumerate()
+                .map(|(i, &cell)| Node { id: i as u32, cell })
+                .collect(),
+            edges,
+        };
+        let mut state = PlannerState::from_graph(cells, Vec::new(), graph, GraphConfig::default());
+        let original_graph = state.artifact.graph.clone();
+        state.set_geometry(
+            vec![SurfaceCell::new(3, 3, 4)],
+            Vec::new(),
+            SurfaceConfig::default(),
+        );
+        assert_eq!(state.artifact.graph, original_graph);
+        let handle = LtMlsArtifactHandle { state, revision: 1 };
+        let start = LtMlsPose {
+            point: LtMlsPoint {
+                x: -0.95,
+                y: 0.05,
+                z: 0.5,
+            },
+            ..LtMlsPose::default()
+        };
+        let goal = LtMlsPose {
+            point: LtMlsPoint {
+                x: 0.05,
+                y: 1.05,
+                z: 0.5,
+            },
+            ..LtMlsPose::default()
+        };
+        let geometry = LtMlsGeometry {
+            config: LtMlsMetricConfig {
+                resolution: 0.1,
+                robot_radius: 0.05,
+                body_offset: 0.4,
+                below: 0.05,
+                above: 0.35,
+                min: LtMlsPoint {
+                    x: -2.0,
+                    y: -2.0,
+                    z: -2.0,
+                },
+                max: LtMlsPoint {
+                    x: 4.0,
+                    y: 4.0,
+                    z: 4.0,
+                },
+                ..LtMlsMetricConfig::default()
+            },
+            regions: std::ptr::null(),
+            regions_len: 0,
+            preblocked: std::ptr::null(),
+            preblocked_len: 0,
+            cancel: None,
+            context: std::ptr::null_mut(),
+        };
+        let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+        let world = |c: SurfaceCell| LtMlsPose {
+            point: LtMlsPoint {
+                x: (c.x as f64 + 0.5) * 0.1,
+                y: (c.y as f64 + 0.5) * 0.1,
+                z: 0.5,
+            },
+            ..LtMlsPose::default()
+        };
+        let first = query::plan(
+            &handle.state,
+            corners[0],
+            corners[2],
+            0,
+            2000,
+            true,
+            |a, b, kind| {
+                if kind == 3 {
+                    1
+                } else {
+                    i32::from(checker.check_connection(world(a), world(b), false).valid != 0)
+                }
+            },
+        )
+        .unwrap();
+        let first_poses = first.iter().copied().map(world).collect::<Vec<_>>();
+        assert_eq!(
+            checker.check_poses(&first_poses).failure_kind,
+            ROUTE_OCCUPIED
+        );
+        let mut route = LtMlsPoseBuffer::default();
+        let status = unsafe {
+            lt_mls_artifact_query_metric(&handle, start, goal, 0, 2000, &geometry, &mut route)
+        };
+        assert_eq!(status, 0);
+        let poses = unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
+        assert!(poses
+            .iter()
+            .any(|p| (p.point.x + 0.95).abs() < 1e-12 && (p.point.y - 1.05).abs() < 1e-12));
+        let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+        assert_eq!(checker.check_poses(poses).valid, 1);
+        unsafe { lt_mls_free_pose_buffer(&mut route) };
+        assert_eq!(
+            unsafe {
+                lt_mls_artifact_query_metric(&handle, start, goal, 0, 2, &geometry, &mut route)
+            },
+            2
+        );
+        assert_eq!(route.len, 0);
+    }
     use std::collections::HashSet;
 
     #[test]
@@ -2349,6 +3073,54 @@ mod tests {
     }
 
     #[test]
+    fn column_queries_preserve_layers_after_update() {
+        let observed = vec![
+            SurfaceCell::new(0, 0, 0),
+            SurfaceCell::new(0, 0, 10),
+            SurfaceCell::new(0, 0, 30),
+            SurfaceCell::new(1, 0, 50),
+        ];
+        let inferred = vec![SurfaceCell::new(0, 0, 5)];
+        let mut handle = LtMlsArtifactHandle {
+            state: PlannerState::from_surface(observed.clone(), inferred, GraphConfig::default()),
+            revision: 1,
+        };
+        handle
+            .state
+            .set_geometry(observed, Vec::new(), SurfaceConfig::default());
+        for pass in 0..2 {
+            for x in -1..=2 {
+                for z in -1..=52 {
+                    let surface = &handle.state.artifact.surface;
+                    let expected = surface
+                        .observed
+                        .iter()
+                        .chain(&surface.inferred)
+                        .filter(|cell| cell.x == x && cell.y == 0 && cell.z <= z)
+                        .map(|cell| cell.z)
+                        .max();
+                    let mut found = -999;
+                    let status = unsafe { lt_mls_artifact_below(&handle, x, 0, z, &mut found) };
+                    assert_eq!(status, i32::from(expected.is_some()));
+                    if let Some(expected) = expected {
+                        assert_eq!(found, expected);
+                    }
+                }
+            }
+            if pass == 0 {
+                handle
+                    .state
+                    .update_region(
+                        RegionBounds::new(0, 0, 0, 0, 8, 14),
+                        &[SurfaceCell::new(0, 0, 12)],
+                        &[],
+                    )
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn endpoint_attachment_adds_a_surface_lead_in() {
         let graph = SurfaceGraph {
             nodes: vec![
@@ -2402,12 +3174,68 @@ mod tests {
                 corridor: vec![SurfaceCell::new(1, 0, 2)],
             }],
         };
-        assert!(graph_route_limited(
+        assert!(graph_route_limited_avoiding_with_config(
             &graph,
             SurfaceCell::new(0, 0, 0),
             SurfaceCell::new(2, 0, 2),
             Some(3),
             Some(100),
+            &[],
+            GraphConfig {
+                max_step_cells: 1,
+                ..GraphConfig::default()
+            },
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn endpoint_attachment_uses_graph_step_limits() {
+        let graph = SurfaceGraph {
+            nodes: vec![
+                Node {
+                    id: 0,
+                    cell: SurfaceCell::new(0, 0, 2),
+                },
+                Node {
+                    id: 1,
+                    cell: SurfaceCell::new(2, 0, 2),
+                },
+            ],
+            edges: vec![Edge {
+                a: 0,
+                b: 1,
+                cost: 1.0,
+                corridor: vec![SurfaceCell::new(1, 0, 2)],
+            }],
+        };
+        let config = GraphConfig {
+            max_step_cells: 2,
+            max_slope: 2.0,
+            ..GraphConfig::default()
+        };
+        assert!(graph_route_limited_avoiding_with_config(
+            &graph,
+            SurfaceCell::new(0, 1, 0),
+            SurfaceCell::new(2, 1, 2),
+            Some(3),
+            Some(100),
+            &[],
+            config,
+        )
+        .is_some());
+        assert!(graph_route_limited_avoiding_with_config(
+            &graph,
+            SurfaceCell::new(0, 1, 0),
+            SurfaceCell::new(2, 1, 2),
+            Some(3),
+            Some(100),
+            &[],
+            GraphConfig {
+                max_step_cells: 1,
+                max_slope: 2.0,
+                ..GraphConfig::default()
+            },
         )
         .is_none());
     }
@@ -2450,13 +3278,14 @@ mod tests {
                 },
             ],
         };
-        let route = graph_route_limited_avoiding(
+        let route = graph_route_limited_avoiding_with_config(
             &graph,
             SurfaceCell::new(0, 0, 0),
             SurfaceCell::new(2, 0, 0),
             Some(0),
             Some(20),
             &[SurfaceCell::new(1, 0, 0)],
+            GraphConfig::default(),
         )
         .expect("detour route");
         assert!(route.contains(&SurfaceCell::new(1, 1, 0)));
@@ -3019,5 +3848,133 @@ mod tests {
         );
         assert!(state.artifact().graph.nodes.len() >= 3);
         assert!(!state.artifact().graph.edges.is_empty());
+    }
+
+    #[test]
+    fn update_tall_columns() {
+        let mut occupied = (0..24)
+            .flat_map(|x| (0..5).map(move |y| SurfaceCell::new(x, y, 0)))
+            .collect::<Vec<_>>();
+        occupied.extend((1..=100).map(|z| SurfaceCell::new(12, 2, z)));
+        let surface_config = SurfaceConfig {
+            clearance_cells: 8,
+            ..SurfaceConfig::default()
+        };
+        for z in [1, 40, 99] {
+            let mut state = PlannerState::new(
+                occupied.clone(),
+                Vec::new(),
+                surface_config,
+                GraphConfig::default(),
+            );
+            state
+                .update_region(RegionBounds::new(12, 12, 2, 2, z, z), &[], &[])
+                .unwrap();
+            let full =
+                extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
+            assert_eq!(
+                state.artifact().surface,
+                full,
+                "truncated wall at edit height {z}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_closing_context() {
+        let surface_config = SurfaceConfig {
+            clearance_cells: 3,
+            closing_passes: 2,
+            ..SurfaceConfig::default()
+        };
+        let occupied = (0..24)
+            .flat_map(|x| {
+                (0..12).flat_map(move |y| {
+                    [0, 12].into_iter().filter_map(move |z| {
+                        let hole = (10..=11).contains(&x) && (5..=6).contains(&y);
+                        (!hole).then_some(SurfaceCell::new(x, y, z))
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut state =
+            PlannerState::new(occupied, Vec::new(), surface_config, GraphConfig::default());
+        for cell in [SurfaceCell::new(8, 4, 0), SurfaceCell::new(14, 7, 12)] {
+            state
+                .update_region(
+                    RegionBounds::new(cell.x, cell.x, cell.y, cell.y, cell.z, cell.z),
+                    &[],
+                    &[],
+                )
+                .unwrap();
+            let full =
+                extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
+            assert_eq!(state.artifact().surface, full);
+        }
+    }
+
+    #[test]
+    fn update_source_states() {
+        let hole = SurfaceCell::new(4, 4, 0);
+        let occupied = (0..9)
+            .flat_map(|x| (0..9).map(move |y| SurfaceCell::new(x, y, 0)))
+            .filter(|cell| *cell != hole)
+            .collect::<Vec<_>>();
+        let surface_config = SurfaceConfig {
+            closing_passes: 1,
+            ..SurfaceConfig::default()
+        };
+        let mut state =
+            PlannerState::new(occupied, Vec::new(), surface_config, GraphConfig::default());
+        let region = RegionBounds::new(4, 4, 4, 4, 0, 0);
+        for (occupied, free) in [
+            (vec![], vec![hole]),
+            (vec![], vec![]),
+            (vec![hole], vec![]),
+            (vec![], vec![]),
+        ] {
+            state.update_region(region, &occupied, &free).unwrap();
+            assert_eq!(state.known_free(), free.as_slice());
+            assert_eq!(state.occupied().contains(&hole), occupied.contains(&hole));
+            let full =
+                extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
+            assert_eq!(state.artifact().surface, full);
+        }
+    }
+
+    #[test]
+    fn restored_ids() {
+        let cells = (0..24)
+            .flat_map(|x| (0..3).map(move |y| SurfaceCell::new(x, y, 0)))
+            .collect::<Vec<_>>();
+        let config = GraphConfig {
+            node_spacing_cells: 2,
+            max_link_cells: 1,
+            ..GraphConfig::default()
+        };
+        let mut graph = build_graph(&cells, config);
+        for node in &mut graph.nodes {
+            node.id += 100;
+        }
+        for edge in &mut graph.edges {
+            edge.a += 100;
+            edge.b += 100;
+        }
+        let original_ids = graph
+            .nodes
+            .iter()
+            .map(|node| (node.cell, node.id))
+            .collect::<HashMap<_, _>>();
+        let mut state = PlannerState::from_graph(cells.clone(), Vec::new(), graph, config);
+        assert!(state.incremental_graph.is_none());
+        state.set_geometry(cells, Vec::new(), SurfaceConfig::default());
+        state
+            .update_region(RegionBounds::new(11, 11, 1, 1, 0, 0), &[], &[])
+            .unwrap();
+        for node in &state.artifact.graph.nodes {
+            if let Some(&id) = original_ids.get(&node.cell) {
+                assert_eq!(node.id, id);
+            }
+        }
     }
 }

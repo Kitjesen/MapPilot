@@ -106,7 +106,6 @@ parameters:
   scan_planner.acceleration_tolerance: 1.2
   scan_follower.max_vx_mps: 1.2
   scan_follower.position_gain: 1.5
-  scan_follower.min_vy_mps: 0.35  # Thunder CTS39 response trials; zero and safety-limited commands stay exempt.
 processes:
   - lidar
   - imu

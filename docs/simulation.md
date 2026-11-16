@@ -163,18 +163,17 @@ projection, contact, arrival, and stop evidence together.
 
 ## Continuous RGB-D follow diagnostic
 
-`rgbd_follow_acceptance` uses a rendered pixel fixture and production tracking
-and visual-servo modules to send successive native navigation goals:
+`rgbd_follow_acceptance` uses rendered RGB-D frames, the configured image
+detector, and production tracking and visual-servo modules to send successive
+native navigation goals. The default detector is YOLO-E:
 
 ```powershell
 .venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_follow_acceptance --smoke --out-dir build/rgbd-follow-short-new
 .venv/Scripts/python.exe -m sim.scripts.mujoco.rgbd_follow_acceptance --out-dir build/rgbd-follow-long-new
 ```
 
-The fixture is not learned person recognition, multi-person identity, a
-`tracking` Product run, or Go2 locomotion. Ground-truth actor state is used only
-for rendering and scoring. Keep terminal stop and collision checks when tuning
-goal update thresholds. Known limitations and command ownership remain in
+Ground-truth actor state is used only for rendering and scoring. Keep terminal
+stop and collision checks when tuning goal update thresholds. Known limitations and command ownership remain in
 [`sim/scripts/README.md`](../sim/scripts/README.md) and Git history.
 
 ## Canonical chain

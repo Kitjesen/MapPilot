@@ -61,7 +61,7 @@ SessionRuntime must not resolve the Product or compile the bundle independently.
 
 | Surface | Role | Current status |
 | --- | --- | --- |
-| MuJoCo 3.10 | Physics authority and sensor raycast backend | Active |
+| MuJoCo 4.0.x (Python 3.11+) / 3.10.0 compatibility line (Python 3.10) | Physics authority and sensor raycast backend | 4.0.1 validated for Python acceptance; legacy 3.10 native/runtime artifacts remain separate |
 | G4 — RobotSimUE / UE 5.8.1 Editor | Visual Runtime and render-sensor backend | Pass: live 21-body contract, real RGB/depth frames, and inspected 1920x1080 hero render; Cook/package remains G9 |
 | RGB/depth render streams | 640x480@30 camera SHM streams | Same-run Editor evidence active; not Cook/distribution proof |
 | Native typed DDS sensors | IMU, truth odom, Mid360 Adapter surfaces | Pass in one coordinated SessionRuntime run; Mid360 emits field-preserving native typed frames |

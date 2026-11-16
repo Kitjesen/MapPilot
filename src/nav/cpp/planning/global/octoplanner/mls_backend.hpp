@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -94,10 +95,18 @@ struct RustGraph {
 };
 
 struct RustRouteCheckResult {
+  static constexpr std::uint32_t kCancelled = LT_MLS_ROUTE_CANCELLED;
   bool valid{false};
   std::uint32_t failure_kind{0};
   std::int32_t failed_segment{-1};
   SurfaceCell failed_cell{};
+};
+
+struct MetricGeometry {
+  LtMlsMetricConfig config{};
+  std::vector<LtMlsMetricRegion> regions;
+  std::vector<SurfaceCell> preblocked;
+  std::function<bool()> cancel;
 };
 
 struct ArtifactSummary {
@@ -127,6 +136,16 @@ struct ArtifactUpdateReport {
 
 class PreparedArtifactHandle {
 public:
+  enum class QueryStatus { Found, Exhausted, Budget, Cancelled };
+  struct QueryResult {
+    QueryStatus status;
+    std::vector<SurfaceCell> cells;
+  };
+  struct MetricQueryResult {
+    QueryStatus status;
+    std::vector<PointPose> poses;
+  };
+  using SegmentCheck = std::function<int(SurfaceCell, SurfaceCell, std::uint32_t)>;
   PreparedArtifactHandle() = default;
   ~PreparedArtifactHandle();
   PreparedArtifactHandle(const PreparedArtifactHandle&) = delete;
@@ -178,9 +197,21 @@ public:
       SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
       std::int32_t max_iterations,
       const std::vector<SurfaceCell>& blocked_cells) const;
+  QueryResult checkedQuery(SurfaceCell start, SurfaceCell goal,
+                           std::int32_t max_snap_cells,
+                           std::int32_t max_iterations,
+                           const SegmentCheck& check) const;
+  MetricQueryResult metricQuery(const PointPose& start, const PointPose& goal,
+                          std::int32_t max_snap_cells, std::int32_t max_iterations,
+                          const MetricGeometry& geometry) const;
+  RustRouteCheckResult checkMetricRoute(const std::vector<PointPose>& route,
+                                        const MetricGeometry& geometry) const;
   RustRouteCheckResult checkRoute(
       const std::vector<SurfaceCell>& route,
       const LtMlsRouteCheckConfig& config) const;
+  void setGeometry(const std::vector<SurfaceCell>& occupied,
+                   const std::vector<SurfaceCell>& known_free,
+                   const LtMlsConfig& config);
   ArtifactUpdateReport update(
       LtMlsRegion region,
       const std::vector<SurfaceCell>& occupied,

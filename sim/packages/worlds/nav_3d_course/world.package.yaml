@@ -1,0 +1,17 @@
+schema: lingtu.sim.world-package.v1
+id: nav_3d_course
+version: 1.0.0
+kind: world
+description: Deterministic Thunder three-dimensional navigation course with a 2.00 m L corridor, 3.00 m door, boxes, ramp, and a raised landing.
+physics:
+  mjcf: physics/nav_3d_course.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: euler
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:Nav3DCourse
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []

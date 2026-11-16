@@ -44,10 +44,6 @@ _FIELDS = {
         "z_up_m": "LINGTU_MAPD_INFLATION_Z_UP_M",
         "z_down_m": "LINGTU_MAPD_INFLATION_Z_DOWN_M",
     },
-    "surface": {
-        "residual_m": "LINGTU_MAPD_SURFACE_RESIDUAL_M",
-        "min_columns": "LINGTU_MAPD_SURFACE_MIN_COLUMNS",
-    },
     "capacity": {
         "cloud_bytes": "LINGTU_MAPD_MAX_CLOUD_BYTES",
         "point_fields": "LINGTU_MAPD_MAX_POINT_FIELDS",
@@ -76,7 +72,7 @@ _FIELDS = {
 _BOOLEAN = {"patches", "build_octomap", "dynamic_filter", "dynamic_filter_required"}
 _TEXT = {"dynamic_filter_command", "profile", "data_source"}
 _INTEGER = {
-    "max_points", "stale_ms", "size_x", "size_y", "size_z", "decay_ms", "min_columns",
+    "max_points", "stale_ms", "size_x", "size_y", "size_z", "decay_ms",
     "cloud_bytes", "point_fields", "point_step", "string_bytes", "scene_bytes",
     "voxel_snapshot_points", "voxels", "accumulated_cells", "accumulated_blocks", "query_json_bytes",
 }
@@ -97,7 +93,7 @@ def occupancy_resolution(settings: Mapping[str, Any]) -> float:
 def mapd_environment(settings: Mapping[str, Any], native_environment: Mapping[str, str]) -> dict[str, str]:
     """Validate the source settings once and bind the selected collision geometry."""
     if set(settings) != _FIELDS.keys():
-        raise ValueError("maps must contain publish, input, occupancy, inflation, surface, capacity and save")
+        raise ValueError("maps must contain publish, input, occupancy, inflation, capacity and save")
     environment: dict[str, str] = {}
     for group, fields in _FIELDS.items():
         values = settings[group]
@@ -129,8 +125,6 @@ def mapd_environment(settings: Mapping[str, Any], native_environment: Mapping[st
                 if field.startswith("p_") and not 0 < value < 1:
                     raise ValueError(f"{name} must be in (0, 1)")
                 environment[env_key] = format(value, ".15g")
-    if settings["surface"]["min_columns"] < 3:
-        raise ValueError("maps.surface.min_columns must be at least 3")
     if settings["input"]["min_range_m"] >= settings["input"]["max_range_m"]:
         raise ValueError("maps.input.min_range_m must be less than max_range_m")
 

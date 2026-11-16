@@ -66,7 +66,7 @@ Web 点选局部投影可查看同一 MapScene 的拟合高度、残差及细 XY
   不能把这个比例称为地面覆盖率。五次 NX 回放平均 22.19 ms，拟合残差中位数
   2.06 cm、95 分位 3.49 cm，均不是定位精度或地图对真实环境的测量误差。
 
-代码：`src/maps/include/lingtu/maps/legacy/ground_surface.hpp`；
+代码：`src/maps/include/lingtu/maps/legacy/ground_surface.hpp`（legacy）；
 证据与复现程序：`build/terrain-ground-model/`。
 实际点云拟合诊断图 (`build/terrain-ground-model/terrain-ground-before/terrain-ground-review.png`)。
 
@@ -81,9 +81,9 @@ Web 点选局部投影可查看同一 MapScene 的拟合高度、残差及细 XY
 ### 2026-09-15 局部投影脚下障碍显示复查（待浏览器现场核对）
 
 用户截图显示密集黄色格，视觉上与机器人重叠。本次只读采样 generation 6400：
-`maps.surface_projection` 为 20 cm 网格，雷达位姿 XY 对应格为支撑候选 0；
+历史版本的 `maps.surface_projection` 曾使用 20 cm 网格，当前 mapd 已停止生成该 legacy 层；
 不能将这一单格结果扩展为完整机身净空，也不能用晚于截图的数据否定现场现象。
-服务端当前首页加载 `app-BRbB38ZX.js`，该文件选择 surface_projection，障碍色为红色；
+旧版服务端首页曾选择 surface_projection，当前页面不应把该 legacy 字段当作导航地图；
 截图的细黄色格与此不一致。已请求在停车后刷新核对，尚未确认旧标签页或其他叠加图层
 是否为原因。浏览器检查接口不可用，不能宣称网页现场已验收。
 
@@ -130,7 +130,7 @@ session.active_map 为空。地图目录保留的旧 active 名称不代表已�
 
 | 环节 | 实现 | 本次职责 |
 | --- | --- | --- |
-| mapd | C++17 | 地面参考、支撑连通、障碍高度分类；生成 surface_projection |
+| mapd | C++17 | 实时三维占据、碰撞和地图快照；不再生成 legacy surface_projection |
 | native client | C++ / DDS / C ABI | 接收一致快照，将原生数据交给 Host |
 | HostBus / Gateway | Python | 数据校验、序列化、HTTP/SSE 发布；不重新做地面分类 |
 | Web | TypeScript / React / Three.js | 解码网格、显示颜色、交互查询 |
@@ -176,7 +176,7 @@ NX 上原生 projection / mapd_engine 两组回归通过，36 次新旧分类结
 
 2026-09-15 22:10 安装到当前 `.31` 发布目录，仅重启 lt-maps；SLAM PID 和 Product
 current record 保持一致，lt-maps / lt-host / lt-slam 均 active。本轮未发送运动指令。
-安装后 8 帧 generation 306–339 的 surface_projection 为 live，state 返回 mapping / map、
+历史安装记录中 8 帧 generation 306–339 的 surface_projection 曾为 live，当前该字段为空、仅保留兼容性，
 localizer_ready 和 pose_fresh 均 true。场景仍包含真实未知区域，不能据此宣称运动避障验收完成。
 证据：`build/go2-surface-projection/optimized-live.sse`、`optimized-live-stats.json`。
 回退二进制：`/home/unitree/lingtu-surface-update/backups/mapd-20260915-221051`。
@@ -187,9 +187,9 @@ PowerShell 包装脚本通过语法检查，但尚未在笔记本上一键完整
 
 #### 已安装分类修复的实现与证据
 
-修正：建图“局部投影”现在读取独立 `maps.surface_projection`，不再把
+历史修正：建图“局部投影”曾读取独立 `maps.surface_projection`，不再把
 `maps.occupancy` 的宽高度带直接解释为障碍。新增算法位于
-`src/maps/include/lingtu/maps/legacy/surface_projection.hpp`，由原生 mapd 执行。
+`src/maps/include/lingtu/maps/legacy/surface_projection.hpp`（legacy），由原生 mapd 兼容执行。
 
 - 在地图坐标上固定对齐 20 cm 显示格，避免 5 cm 滚动窗口移动时粗格边界整体平移。
 - 以已观测低表面的下四分位高度形成候选，默认 5 cm 输入时每格至少 3 个观测列。
@@ -199,8 +199,7 @@ PowerShell 包装脚本通过语法检查，但尚未在笔记本上一键完整
   无地面依据、断开的高处表面、部分边界格保持灰色。邻格参考只用于标红，不能填绿空洞。
 - 完整三维点云、原始占据、三维碰撞与 ESDF 不因显示分类而被删点或放宽；
   该图层不参与运动授权，也不取代 traversability。
-- `MapScene` 新增 `surface_projection`；map-scene C ABI version 更新为 2。
-  mapd、`liblingtu_nav_client.so`、Python ABI/HostBus/Gateway 必须一起更新，网页只接受新语义。
+- `MapScene` 保留 `surface_projection` 字段以兼容旧 ABI；当前 mapd 发布空字段，不能作为导航输入。
   没有新增 ROS 或第三方依赖。
 
 参考 [CMU terrain analysis](https://github.com/jizhang-cmu/ground_based_autonomy_basic/blob/noetic/src/terrain_analysis/src/terrainAnalysis.cpp)
@@ -208,7 +207,7 @@ PowerShell 包装脚本通过语法检查，但尚未在笔记本上一键完整
 [ANYbotics elevation mapping](https://github.com/ANYbotics/elevation_mapping)
 对观测表面与地形信息的区分；没有声称移植其完整地形、不确定性或通行算法。
 
-验证：NX 的 surface_projection、mapd_engine、mapd_dds 三组 C++ 测试，以及 native client
+历史验证：NX 的 surface_projection、mapd_engine、mapd_dds 三组 C++ 测试，以及 native client
 `--case map_scene` 通过；Python 59 项、网页投影 12 项、触及网页文件 ESLint 和
 TypeScript/Vite 构建通过。Vite 仍有既有大 chunk 提示。
 覆盖平地不染红、真实高处障碍、天花板、缺地面、凸起表面、厘米级高度噪声、
@@ -1377,7 +1376,7 @@ Scene3D 和该实图侧录验证红/绿格点击坐标及原因。点云视图�
 ### 2026-09-14 后续网页目标反复受阻与提示栏跳动
 
 后续用户网页任务出现 `replan_budget_consumed`，再次选点后长期在
-`local_plan_pending` / `scan_actual_motion_blocked` 之间切换，并曾执行安全检查通过的
+`local_plan_pending` / `aegis_move_blocked` 之间切换，并曾执行安全检查通过的
 0.25 rad/s 脱困旋转。已通过公开停止接口取消当前任务，停车确认成功，急停保持有效。
 这不能与此前 1.18 m 短路线的成功混为一项验收。
 
@@ -1389,7 +1388,7 @@ Scene3D 和该实图侧录验证红/绿格点击坐标及原因。点云视图�
 `build/go2-live-validation-20260913/` 下 `state-recovery-*` 和 `replay_recovery_bitmap.cpp`。
 此为真实位图离线回放，尚非脱困实机运动通过。
 
-代码缺口：`AutonomyTickController` 对最终 `scan_actual_motion_blocked` 只调用
+代码缺口：`AutonomyTickController` 对最终 `aegis_move_blocked` 只调用
 `stopLinearMotion` 重置局部规划，没有将制动拒绝送回 Executor 受阻计时；
 下一次成功规划又会清除规划器自身受阻计时。新增 `reportFinalMotionBlocked`，
 独立保留最终制动拒绝的持续时间，达到原 blocked_interval 后触发现有安全脱困。
@@ -1911,7 +1910,7 @@ SCAN 重新起步仍可能造成停顿。六项服务 active，输入 ready、dr
 采集包含 nav 路径/跟踪/最终指令、driver 回执及 Fast-LIO 速度，采样周期 0.2 秒；
 这些是状态快照，并非同一时刻的同步硬件测量。代码中没有路径生成后固定等待几秒的
 定时器，朝向对齐、速度重规划和最终碰撞检查仍可阻止平移。此前保留的
-`scan_actual_motion_blocked` 只能证明发生过最终拦截，不能代替本次起步复现。
+`aegis_move_blocked` 只能证明发生过最终拦截，不能代替本次起步复现。
 
 2026-09-13 继续核对「出路径后顿一下」：当前 RunPlan 的 SCAN 轨迹加速度上限为
 0.5 m/s²，通用路径跟踪器的上限为 1.0 m/s²；两者不是同一层参数，也不是实测
@@ -1920,7 +1919,7 @@ SCAN 重新起步仍可能造成停顿。六项服务 active，输入 ready、dr
 新轨迹后直接读取其起点速度，重新计时本身不要求零速度。
 最终制动碰撞检查拒绝候选时，`FinalControl` 会停车并清零速度平滑器，随后
 teleop 请求重规划；这条「拦截 → 停车 → 重规划 → 重新起步」链路会造成顿挫。
-当天记录中存在 `scan_actual_motion_blocked` 和 `collision_at_trajectory_start`，
+当天记录中存在 `aegis_move_blocked` 和 `collision_at_trajectory_start`，
 但尚未证明每次停顿都来自它们。第二轮 `start-delay-232324/samples.jsonl`
 同样为 75 秒、375 帧、无读取错误、全零遥控输入，仍不能给出运动延迟结论。
 验收需对齐同一次动作的轨迹 ID、跟踪候选、最终安全判定、驱动回执和定位速度；
@@ -1974,7 +1973,7 @@ NX 证据目录：`/home/unitree/lingtu-validation-20260913/steering-guide/`。
 
 随后用户实际操作了 WASD。300 秒只读采集共 1,499 帧，其中非零请求 760 帧，
 这 760 帧的控制循环全部 healthy，但有 233 帧最终输出为零；遥控 reason 中
-`scan_initialization_failed` 169 帧、`scan_actual_motion_blocked` 33 帧、
+`aegis_init_failed` 169 帧、`aegis_move_blocked` 33 帧、
 `local_intent_pending` 20 帧、`odom_stale` 1 帧。计数是 5 Hz 抽样帧数，
 不是独立事件数，也不能把有障碍时的正常停车全部算作故障。
 保存的 67 份失败快照中：轨迹起点碰撞 42 份、时间调整后碰撞 12 份、
@@ -2070,17 +2069,17 @@ mapd 水平膨胀 0.25 m，SCAN 前后圆柱查询中心偏移各 0.18 m；
 [107,101,47] 占据，格中心约 (1.125,0.025,-0.025) m，均为快照地图坐标。
 起点与目标的前后查询格均空闲；失败段距起点约 0.12 m，并非超出地图范围。
 这证明拒绝依据存在于保存的碰撞地图，尚不能证明该占据来自真实物体还是感知误差。
-截图的 `scan_local_target_blocked` 与上述保留的优化失败是两种不同诊断，不能等同。
+截图的 `aegis_goal_blocked` 与上述保留的优化失败是两种不同诊断，不能等同。
 
 读取时本会话最终安全检查触发重规划累计 18 次，最近原因为
-`scan_actual_motion_blocked`。初次 120 秒采集共 600 帧、非零输入 0 帧，
+`aegis_move_blocked`。初次 120 秒采集共 600 帧、非零输入 0 帧，
 控制循环健康 600 帧；静止数据不能验收用户报告的运动卡顿。
 证据目录：NX `/home/unitree/lingtu-validation-20260913/jerk-after-default/`。
 此轮仅采集分析，未放宽碰撞判断、修改速度或宣称运动修复。
 
 后续 `held-input` 300 秒采集共 1,499 帧，其中 336 帧请求非零，336 帧的控制
-循环均健康；13 帧 `scan_initialization_failed`、6 帧 `local_intent_pending`、
-3 帧 `scan_actual_motion_blocked`、1 帧 `scan_emergency_stop`，合计 32 帧非零
+循环均健康；13 帧 `aegis_init_failed`、6 帧 `local_intent_pending`、
+3 帧 `aegis_move_blocked`、1 帧 `aegis_estop`，合计 32 帧非零
 请求对应最终零输出（计数是 5 Hz 抽样帧数，不是独立事件数）。输入在导航端的
 age_s 为 p50=0.0101、p95=0.0403、max=0.0488，不能代表 PC 按键到机身运动的全链路延迟。
 
@@ -2483,7 +2482,7 @@ A、松键、无输入归零；仅更新同一碰撞图的版本时，初始化�
 
 现场复测未通过。676 份去重导航状态中，190 份新鲜纯 W 输入有 44.7% 的最终
 平移速度低于请求的 20%，15.3% 三轴为零。稳定 W 的 8.21 秒中，最终安全
-重规划计数从 0 增至 8，原因均为 `scan_actual_motion_blocked`；随后的初始化
+重规划计数从 0 增至 8，原因均为 `aegis_move_blocked`；随后的初始化
 碰撞失败与重新起步形成停走循环。采样未观察到首格退出，不据此宣称实机退出通过。
 
 已定位提前换侧：旧绕行段长 0.2458 m，计划推进 0.1271 m 后触发半程重规划。
@@ -2767,8 +2766,8 @@ healthy，导航和驱动输出均为零。里程计/碰撞帧龄 P95 分别为 
 
 随后实际操作者输入采集 239.76 s、1188 个样本，其中 391 个有非零有效输入。
 全部输入门仍 ready，非零输入的最大请求帧龄约 43.91 ms，最终平移指令峰值
-约 0.50 m/s。实际运动期间出现 51 个 `scan_local_target_blocked`、61 个
-`scan_initialization_failed` 和 2 个 `scan_emergency_stop` 样本；这些是状态采样
+约 0.50 m/s。实际运动期间出现 51 个 `aegis_goal_blocked`、61 个
+`aegis_init_failed` 和 2 个 `aegis_estop` 样本；这些是状态采样
 次数，不是独立故障次数。保存了 33 份优化失败快照，包含时间调整后动力学超限、
 调整后碰撞和重复碰撞重启达到上限。循环另有 22 个负载告警、60 个期限未满足
 告警样本；最大报告规划耗时 37.94 ms，循环工作耗时 P95 最大 12.87 ms。
@@ -2785,7 +2784,7 @@ healthy，导航和驱动输出均为零。里程计/碰撞帧龄 P95 分别为 
   参考，并沿原方向推进目标；这不是先在局部地图中求得的绕障引导路径。
 - `PlannerFsm::getLocalTarget()` 只在这条参考曲线上向前/向后寻找自由目标。
   没有可用点时直接置 `localTargetBlocked_`；`Backend::run()` 返回
-  `scan_local_target_blocked`，该次不会进入 rebound/DynAStar 优化。
+  `aegis_goal_blocked`，该次不会进入 rebound/DynAStar 优化。
 - `.4` 的 SCAN 接收的 `maxDirectionDeviationDeg=90` 只参与有效性/参考身份判断，
   没有用于展开左右替代目标；CMU 的方向搜索不能当作 SCAN 已实现的能力。
   因此仅把配置改成 180/360 度不会产生全向目标搜索。
@@ -3425,8 +3424,8 @@ StandUp，未执行 Go2 运动后刹停、自主导航、实体绕障或行人�
 - Go2 SDK 前后里程计 XY 为 (-0.113792, 0.209229) → (0.164244, 0.688788)，
   净位移 **0.554329 m**；指令积分 2 m 不是实测行程，也不能只用最后一个
   `last_completed_motion_run` 代表全部运动，本次输出中断分成了 6 段。
-- 输入门全程 ready；局部状态出现 `scan_actual_motion_limited` 4 次、
-  `local_intent_pending` 7 次、`scan_initialization_failed` 8 次，控制循环健康
+- 输入门全程 ready；局部状态出现 `aegis_move_limited` 4 次、
+  `local_intent_pending` 7 次、`aegis_init_failed` 8 次，控制循环健康
   中有 8 次 `p95_utilization_high`。这些是采样条数，不是独立故障次数。
   不能把本轮未走满归为加速度一项，也不能把初始化失败称作正确避障。
 - native stop 证据为 `CONFIRMED`、驱动 ACK observed/accepted；当前实机契约
@@ -3454,19 +3453,19 @@ Product 服务停止，没有追加运动。此次分析明确区分两件事：
   的输入没有连续维持 0.5 m/s，起停过程中的跟随响应也进一步减少了位移。
 - 去重后只有 73 个 nav 状态和 15 个 driver 状态；不能把 268 行读取当成
   268 次独立故障。有效前进段记录到两帧 `local_intent_pending` 和两帧
-  `scan_initialization_failed`，这四帧最终速度均为零，循环健康均正常。
+  `aegis_init_failed`，这四帧最终速度均为零，循环健康均正常。
 - `p95_utilization_high` 对应两帧：600 tick 滚窗的工作耗时 p95 为
   9.077760 / 9.016160 ms，略超 10 ms 周期的 90% 提醒线。两帧仍输出非零，
   `control_loop_hold=false`。因此纠正“负载告警导致此次停车”的推断；本次证据
   不支持该因果，也不支持初始化花了数秒。两帧初始化失败对应 worker 单次
   调用分别仅 1.361440 / 1.163200 ms，不能以它们代表所有调用的最大耗时。
-- 唯一可见 `scan_actual_motion_limited` 将约 0.500 m/s 缩到 0.494 m/s，
+- 唯一可见 `aegis_move_limited` 将约 0.500 m/s 缩到 0.494 m/s，
   缩放比例 253/256；这是制动包络碰撞限速，不是“底盘达不到速度”的故障码。
   该帧的小幅限速不足以解释全部路程损失；较低频状态可能遗漏其他制动事件。
 - 最终安全门停止后，会经 `replanTeleop` 重置旧轨迹，从当前位姿重新生成。
   本次多次轨迹 ID 回到 1、执行时钟重启与六段运动记录一致。但尚未记录每次
   reset 的首个停止原因，不能直接把重置判成不必要 bug 或删除此安全行为。
-- 确定的诊断缺口是 `scan_initialization_failed` 合并了 rebound 优化失败、
+- 确定的诊断缺口是 `aegis_init_failed` 合并了 rebound 优化失败、
   时间调整/refine 失败和最终速度/加速度超限；已有 debug 中的搜索/优化细项
   未从核心填入，默认零不代表没有搜索、碰撞或优化。对应实现：
   `src/nav/cpp/planning/local/scan/backend.cpp`、
@@ -3830,7 +3829,7 @@ exploration 的 Release 测试缺少启用断言选项也已补上，启用后�
 不能把原生回归和安装成功当成现场避障已通过。
 
 **不是始终没有路径。** 记录中多次出现 `teleop_assist_spline_ready`，之后进入
-零输出、`local_intent_pending`、`scan_initialization_failed`，再生成新轨迹。
+零输出、`local_intent_pending`、`aegis_init_failed`，再生成新轨迹。
 问题落在“执行安全否决后的重新初始化”这段链路；两次可见初始化失败分别只用了
 约 1.36/1.16 ms，不支持把它们解释成长时间搜索超时。两次 p95 告警出现时仍有
 非零输出、`control_loop_hold=false`，也不能将告警直接当作停车原因。
@@ -4204,7 +4203,7 @@ SDK `ObstaclesAvoidClient::SwitchGet` 实测成功返回 `enabled=true`，
   优化后的整条曲线又统一调整时间以满足速度上限。这里的 0.5 m/s² 是上限，
   不是实测加速度，也不保证 1 s 达到目标速度；这些采样没有证明重复重置缺陷。
 - 最新 `held-w-current-20260911.jsonl` 的 40 条非零 W/S 状态中，请求为
-  ±0.5 m/s，但最终输出全部为零。其中 39 条是 `scan_initialization_failed`，
+  ±0.5 m/s，但最终输出全部为零。其中 39 条是 `aegis_init_failed`，
   1 条是生成轨迹的等待状态；失败诊断为 `collision_at_trajectory_start`。
   失败 75 和 83 的完整位图离线重放均复现 t=0 碰撞，单次约 3 ms，
   不是等待数秒后才完成一次搜索。
@@ -4246,7 +4245,7 @@ blockers 为空；该检查没有取得控制权或发布命令，导航与驱�
 助手本轮未自动发送非零运动请求。
 
 `.2` 安装后的 `release2-acceptance-20260911.jsonl` 完整 119.987 s 共 596 条状态中，
-42 条有有效操作者输入：29 条 `scan_initialization_failed`、12 条
+42 条有有效操作者输入：29 条 `aegis_init_failed`、12 条
 `local_intent_pending`、1 条 `scan_generate_trajectory`，最终指令全部为零。
 首次 W 的 0.5 m/s 请求在 `1789071741.838459` 已新鲜到达，控制权和键盘链路
 有效；最大请求年龄 41.844 ms，没有不健康循环状态或驱动拒绝。规划报告

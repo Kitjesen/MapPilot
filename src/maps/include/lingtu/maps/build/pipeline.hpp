@@ -66,8 +66,8 @@ struct OctomapEditOptions {
 struct SurfaceMapOptions {
   double headroom_m{0.6};
   double radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
-  double max_hole_area_m2{::lingtu::settings::maps::maps::surface::max_hole_area_m2};
-  double max_slope{::lingtu::settings::maps::maps::surface::max_slope};
+  double max_hole_area_m2{0.16};
+  double max_slope{0.7};
 };
 
 class MapPipelineCore {

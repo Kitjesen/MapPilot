@@ -201,6 +201,8 @@ class TestMCPSkillDiscovery(unittest.TestCase):
             "get_config",
             "get_robot_position",
             "get_scene_graph",
+            "capture_camera",
+            "get_camera_status",
             "detect_objects",
             "query_memory",
             "list_tagged_locations",
@@ -308,6 +310,13 @@ class TestMCPStructuredToolResults(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "non-object JSON"):
             _text(10, '[1, 2]', output_schema={"type": "object"})
 
+    def test_image_data_url_becomes_mcp_image_content(self):
+        response = _text(11, {"success": True, "image_data_url": "data:image/jpeg;base64,aGVsbG8="})
+        result = response["result"]
+        self.assertEqual(result["structuredContent"], {"success": True})
+        self.assertEqual(result["content"][1], {"type": "image", "data": "aGVsbG8=", "mimeType": "image/jpeg"})
+        self.assertNotIn("image_data_url", result["content"][0]["text"])
+
 
 # ===========================================================================
 # 4. Calling tools through _tool_registry (same path as HTTP handler)
@@ -326,6 +335,20 @@ class TestMCPToolExecution(unittest.TestCase):
         )
         self.mod._on_odom(_odom(1.0, 2.0))
         self.mod._on_sg(_scene_graph())
+
+    def test_capture_camera_uses_gateway_camera_owner(self):
+        self.mod._all_modules["GatewayModule"] = SimpleNamespace()
+        with patch("gateway.mcp_server.camera_snapshot", return_value={"success": True, "sensor": "camera", "image_data_url": "data:image/jpeg;base64,aA=="}) as capture:
+            result = self.mod._tool_registry["capture_camera"]()
+        capture.assert_called_once_with(self.mod._all_modules["GatewayModule"])
+        self.assertTrue(result["success"])
+
+    def test_camera_status_reports_gateway_status(self):
+        self.mod._all_modules["GatewayModule"] = SimpleNamespace()
+        with patch("gateway.mcp_server.build_camera_status", return_value={"status": "stalled"}) as status:
+            result = self.mod._tool_registry["get_camera_status"]()
+        self.assertEqual(result, {"success": True, "status": {"status": "stalled"}})
+        status.assert_called_once_with(self.mod._all_modules["GatewayModule"])
 
     def _call(self, name: str, **kwargs):
         fn = self.mod._tool_registry[name]

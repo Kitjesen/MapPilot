@@ -54,6 +54,7 @@ DOCS_MARKDOWN = {
     "testing.md",
     "roadmap.md",
     "customer-deployment.md",
+    "error-codes.md",
 }
 DOCS_RESEARCH_PREFIX = "research/"
 DOCS_RESEARCH_PAPERS_PREFIX = "research/papers/"

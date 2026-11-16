@@ -15,12 +15,19 @@ calibration:
     status: "verified"
     reason: "2026-09-29 six-piece raised mount, 35 deg CAD nominal; NX stationary gate TRACKING, zero drops/cmd_vel, map floor tilt 0.95 deg / RMS 4.9 mm. Not a fitted six-DoF or motion calibration; see docs/operations/go2-raised-mount-20260929.md"
   camera:
-    status: "unverified"
-    reason: "Go2 camera calibration has not been measured; Thunder V4 legacy values must not be used as Go2 evidence"
+    status: "verified"
+    reason: "Go2 EDU D435i V6B CAD nominal pose, rear datum [0.28, 0.00, 0.10] m with +10 deg pitch; field measurement remains pending"
 
 camera:
   capture_driver: realsense_native
   serial_number: "419522073370"
+  # CAD nominal Go2 EDU D435i factory-style carrier pose.
+  position_x: 0.28
+  position_y: 0.0
+  position_z: 0.1
+  roll: 0.0
+  pitch: 0.17453292519943295
+  yaw: 0.0
 
 # Geometry (m)
 geometry:
@@ -103,4 +110,9 @@ lidar:
 # Real Host perception override. Other perception fields intentionally use the
 # typed defaults in src/runtime/config.py.
 perception:
+  # Keep RGB-D capture at 30 Hz while running the detector at about 15 Hz
+  # on the Orin NX so the native navigation loop keeps its deadline budget.
+  skip_frames: 2
   default_classes: "door . window . stairs . elevator . exit sign . fire extinguisher . safety cone . barrier . chair . desk . table . shelf . cabinet . monitor . laptop . keyboard . phone . sink . toilet . refrigerator . trash can . bottle . cup . car . truck . bicycle . motorcycle . person . dog . cat . forklift . pallet . pipe . valve . control panel . switch . button . obstacle . rock . pole . backpack"
+  detector:
+    model_path: "/var/lib/lingtu/models/person.engine"

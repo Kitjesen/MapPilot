@@ -37,7 +37,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     RECORD_SIMULATION_CLOCK,
 )
 
-from drivers.real.camera.shm import ShmFrameReader, StreamKind
+from runtime.camera_shm import ShmFrameReader, StreamKind
 from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,

@@ -3,6 +3,7 @@ import { Camera, ChevronDown, RefreshCw, LockOpen } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useWHEP } from '../hooks/useWHEP'
 import { useVideoFrame } from '../hooks/useVideoFrame'
+import { useVideoDecodeRate } from '../hooks/useVideoDecodeRate'
 import { useRotatedVideoLayout } from '../hooks/useRotatedVideoLayout'
 import { CameraHud } from './CameraHud'
 import type { SSEState } from '../types'
@@ -40,6 +41,7 @@ export function CameraFeed({
   const viewportRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const videoFrame = useVideoFrame(videoRef, whepStream, whepConnected)
+  const videoFps = useVideoDecodeRate(videoRef, whepStream, whepConnected)
   const videoLayout = useRotatedVideoLayout(
     viewportRef,
     videoRef,
@@ -120,7 +122,7 @@ export function CameraFeed({
           {cameraHealthLabel}
         </div>
 
-        <CameraHud sseState={sseState} />
+        <CameraHud sseState={sseState} videoFps={videoFps} />
 
         {estop && <div className={styles.estopOverlay}>急停激活</div>}
       </div>

@@ -23,7 +23,7 @@ from runtime.registry import register
 from runtime.stream import Out
 from runtime.yaml_helpers import load_yaml
 
-from .shm import (
+from runtime.camera_shm import (
     POSIX_SHM_DIRECTORY,
     FrameChanged,
     FrameCorrupt,

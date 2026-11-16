@@ -198,7 +198,6 @@ void testGoalDispatchWaitsForNavigation() {
   startNavigation(executor, runtime);
 
   require(runtime.activePoint().has_value(), "controller owns the active point");
-  require(&runtime.executor() == &executor, "controller operates the endpoint-owned executor");
 
   const auto result = runtime.tick(inputAt(300.0));
   require(result.ordered_intents.empty() && executor.status().state == RunState::kNavigating,

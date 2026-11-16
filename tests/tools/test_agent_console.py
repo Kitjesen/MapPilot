@@ -3,13 +3,13 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 from tools.diagnostics.agent_console import start_console
 
-from decision.llm import codex
+from decision.llm.codex_app_server import app_server
 from decision.tasks import conversation_inputs
 
 
 def test_console_serves_real_accounts_and_conversations_without_robot_writes(tmp_path, monkeypatch):
     monkeypatch.setenv("LINGTU_CONVERSATION_DB_PATH", str(tmp_path / "chat.sqlite3"))
-    monkeypatch.setattr(codex, "account", codex.CodexAccount(tmp_path / "codex.json"))
+    monkeypatch.setattr(app_server, "status", lambda: {"provider": "codex", "connected": False})
     monkeypatch.setattr(conversation_inputs, "_client", Mock(side_effect=ValueError("unconfigured")))
     host = start_console()
     try:
@@ -20,7 +20,7 @@ def test_console_serves_real_accounts_and_conversations_without_robot_writes(tmp
             options = client.get("/api/v1/agent/options")
             assert options.status_code == 200
             assert {model["provider"] for model in options.json()["models"]} == {
-                "moonshot", "qwen", "openai", "claude", "codex"}
+                "moonshot", "qwen", "openai", "claude", "codex", "grok", "acp"}
             created = client.post("/api/v1/agent/conversations", json={})
             assert created.status_code == 201
             conversation = client.get("/api/v1/agent/conversations/" + created.json()["conversation_id"])

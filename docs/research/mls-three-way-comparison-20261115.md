@@ -2,12 +2,16 @@
 
 日期：2026-11-15
 
+本页保留迁移过程中的能力对照。2026-11-16 的最新 main 四图实测、正式热查询、
+缓存恢复、几何失败点与 mapd 接线状态见 [最新同图回归](dimos-latest-repro-20261116.md)。
+
 这份矩阵把三套东西分开比较：
 
 - **原 LingTu C++**：当前正式 `PlannerArtifact`、GlobalRoute、SCAN、Follower、Driver 链路。
 - **新 LingTu Rust MLS**：当前已接入 C ABI、离线 graph、C++ 几何过滤和路线复核的候选后端。
-- **DimOS MLS**：DimOS Rust MLS 源码和已有 matched runner。DimOS `main` 最新提交为
-  `5e0ebfd422`；已有同图性能和路线数字主要来自固定的 `26144f7` matched 构建，不能混写。
+- **DimOS MLS**：DimOS Rust MLS 源码和已有 matched runner。当前 `main` 已冻结为
+  `83d807bb91bf6436a1a0e9c2a3260d96478636aa`；已有同图性能和路线数字主要来自固定的
+  `26144f7` matched 构建，不能混写。
 
 ## 完整能力矩阵
 
@@ -20,7 +24,7 @@
 | 多高度表面 | 支持同 XY 多个 Z | 支持 | 支持 | 结构已对照，楼梯/平台的统一统计仍需补更多地图 |
 | 四邻域表面连接 | C++ `SurfaceGraph` 使用带步高的邻接 | Rust 已使用四邻域和垂直步高 | DimOS 使用四邻域和步高 | 基本对齐；细节和参数仍需同图核对 |
 | 节点墙距 | 有墙距和稀疏节点 | Rust 已加入 wall-distance、NMS 和组件兜底节点 | DimOS 有墙距、NMS 和节点放置 | 节点统计已做离线对照，墙边界判定还不是逐行等价 |
-| 节点稳定 ID | C++ 图内部有索引，但没有 Rust regional lifecycle | 尚未完成稳定 CellId 生命周期 | DimOS CellId 可在区域更新中保留 | 尚未完成同一地图区域更新对照 |
+| 节点稳定 ID | C++ 图内部有索引，但没有 Rust regional lifecycle | Rust `PlannerState` 已保留未受影响 node ID | DimOS CellId 可在区域更新中保留 | 还缺同一地图的三方区域更新报告 |
 | Voronoi ownership | C++ 已有多源图结构 | Rust 已有多源 Dijkstra ownership | DimOS 已有多源 Dijkstra | Rust 结构已接通，代价和 tie-break 尚未逐项对齐 |
 | corridor | C++ 保存可查询的通道链 | Rust 已通过完整 graph ABI 输出 corridor | DimOS 保存完整 corridor chain | corridor 链已 smoke 验证；还缺过滤后 corridor 的组件统计 |
 | 边代价 | 距离、楼层变化、墙距和本地配置 | 距离、墙距、step penalty 参数已接入 | 墙距、步高、表面图代价 | 参数数值和权重尚未三方统一 |
@@ -30,21 +34,21 @@
 | 连续扫掠 | C++ `sweptRouteFree` | C++ 过滤每条 corridor | DimOS 不是同一套 LingTu swept verifier | Rust route 已共享 C++ 几何复核 |
 | 起点吸附 | C++ 有 attachment、局部连接器和终点处理 | 新 Rust graph 已有节点接入和局部修复第一版 | DimOS 有 `select_entry` 和 planner 端点处理 | arrival-box 已修复通过；复杂楼梯/多层还需重复验证 |
 | 终点吸附 | C++ 统一处理终点连接器 | Rust 使用离线 C++ 接入/复核 | DimOS 有自己的 goal entry | 三方连接器代价和失败原因未统一 |
-| 路线搜索 | C++ SurfaceGraph 搜索 + XYZ fallback | Rust graph 有离线 route search，尚未生产接管 | DimOS planner 搜索表面图 | Rust route 还没有进入正式 PlannerArtifact |
+| 路线搜索 | C++ SurfaceGraph 搜索 + XYZ fallback | Rust graph 已作为正式 PlannerArtifact 的首选候选查询 | DimOS planner 搜索表面图 | 仍保留 C++/XYZ fallback，尚未证明全链路替换 |
 | 路线平滑 | C++ `smoothRoute`，每次保留完整检查 | Rust 当前 corridor 输出和离线 route，尚未复用正式 smooth contract | DimOS 有自己的 smoother | Rust 与 C++ 平滑后路线长度尚未对照 |
 | yaw / 终端朝向 | 任务和执行层处理 | Rust graph 不负责 yaw，沿用 C++/任务层 | DimOS planner 有自己的 path/goal 表达 | 三方 yaw 语义和时间参数未统一 |
 | 动态障碍 | SCAN 和最终控制负责实时障碍 | Rust 候选图不接实时传感器，C++ query/filter 负责静态合同 | DimOS local/global runtime 分层 | Rust 与 SCAN 的动态障碍端到端未测 |
 | 禁行区 / no-go | LingTu C++ 有独立 no-go policy | Rust 图不拥有 no-go，C++ 负责 | DimOS 有自己的地图/规划约束 | 三方 no-go 输入和代价未统一 |
-| 地图保存 | C++ prepared artifact 和 `.nav/profile-*` | Rust artifact 目前离线使用 | DimOS 有 planner/map 资产和自身缓存 | Rust artifact 尚未接正式缓存恢复 |
-| prepared cache | C++ 已有保存、恢复、查询参数复用 | Rust graph ABI 已有输出，但未接正式 `PlannerArtifact` | DimOS 有构图和运行时缓存 | Rust cache roundtrip 需要在同一 graph ABI 上补测 |
-| 地图区域更新 | 当前主要整图重建 | 当前整图重建 | `update_region` 局部表面/节点/边修复 | 这是 Rust 和原 C++ 都落后 DimOS 的功能 |
+| 地图保存 | C++ prepared artifact 和 `.nav/profile-*` | Rust surface/node/edge/corridor 已写入 prepared artifact | DimOS 有 planner/map 资产和自身缓存 | 旧 cache 兼容与新格式已 smoke，缺跨版本完整报告 |
+| prepared cache | C++ 保存/恢复 Rust artifact，C++ SurfaceGraph 退兼容 | Rust graph ABI、稳定 EdgeId、格式 3 已接入 | DimOS 有构图和运行时缓存 | 仍缺同一地图三方磁盘 roundtrip 对照 |
+| 地图区域更新 | 当前 mapd 主要整图快照 | Rust 已有局部 surface、node relocation、edge/Voronoi/corridor repair；mapd 契约已定义 | `update_region` 局部表面/节点/边修复 | 生产 `mapd → PlannerState` adapter 仍缺 |
 | 取消 / 超时 | C++ 有 cancel callback 和 planner budget | Rust 离线函数没有正式 Product cancellation contract | DimOS 有自己的 worker/模块取消 | 三方取消时图和缓存状态未做同图对照 |
 | 失败诊断 | C++ 有 traversability failure、search info | Rust ABI 当前主要返回结构和错误码 | DimOS 有 planner/runtime 日志 | Rust 失败原因映射到 LingTu API 尚未完成 |
 | 并发 / 线程 | C++ PlannerSession 和 Product 生命周期 | Rust crate 纯算法，正式 worker 尚未接入 | DimOS 使用 Tokio/Rayon/module worker | 三方线程数、锁、取消、内存峰值未统一测 |
 | 内存 | C++ OctoMap、SurfaceIndex、Graph、cache | Rust graph buffers + C ABI，尚无正式内存预算 | DimOS 点云、surface、graph 和 worker | 未做同图 peak RSS/分配统计 |
 | 冷准备时间 | 公开 matched 中 LingTu 冷准备约 21.9–98.2 s，视地图而变 | 当前 Rust 对照工具总墙钟不能单独代表 Rust 速度 | DimOS matched 构图约 4.02–19.84 s | 三方仍缺同一机器、同一输入、分段计时 |
 | 热查询 | 已有 C++ prepared/session 记录 | Rust route/filter 目前是离线对照 | DimOS matched 广场热查询约 16.4 ms | Rust-only warm query 未测 |
-| 正式导航接入 | 已接 nav / SCAN / Follower / Driver | 尚未接正式 PlannerArtifact、SCAN、Follower、Driver | DimOS 接入自己的 runtime | Rust 接入支持矩阵尚未完成 |
+| 正式导航接入 | 已接 nav / SCAN / Follower / Driver | Rust 已进入 GlobalRoute/PlannerArtifact 候选查询，SCAN/Follower/Driver 仍沿用原链路 | DimOS 接入自己的 runtime | Rust 到 MuJoCo/实机仍未验收 |
 | MuJoCo | C++ 全局路线有场景门禁 | Rust MLS 还没有完整 MuJoCo 建图/定位/局部执行门禁 | DimOS 旧 runner 不是 LingTu MuJoCo 链路 | 三方动力学执行未统一 |
 | 实机 | C++ 正式 field chain，可单独做 no-motion/实机验证 | 尚未切换实机 | DimOS 有自己的 Go2/设备组合 | Rust 实机证据为空 |
 | 可视化 | LingTu Web/离线路线和点云工具 | Rust graph 可导出 corridor，但尚未接 Web artifact view | DimOS 有 surface/nodes/edges/path 可视化 | 三方可视化格式未统一 |
@@ -60,10 +64,10 @@
    planner 构建和逐边几何过滤，还不是 Rust-only surface/graph/query 时间。
 3. **过滤后 Rust graph 的组件数、端点吸附代价和路线长度。** arrival-box 已经有过滤后
    路线通过，但工具还没有把过滤后组件和路线长度全部输出到统一报告。
-4. **三方 cache restore。** C++ prepared cache 已有 smoke；Rust graph ABI 的完整
-   nodes/edges/corridor 保存和恢复还没有和 C++ profile 做同一套 disk roundtrip。
-5. **三方局部地图更新。** DimOS `update_region` 有源码依据，LingTu C++ 和 Rust
-   当前都没有完成同等的 mapd region delta 输入和局部修复实测。
+4. **三方 cache restore。** LingTu Rust graph 的 nodes/edges/corridor、稳定 EdgeId
+   和格式 3 已有 C++ smoke，仍缺与最新 DimOS 在同一输入上的磁盘 roundtrip 对照。
+5. **三方局部地图更新。** LingTu Rust core 已有局部修复和 mapd `RegionUpdate` 契约，
+   但生产 `mapd → PlannerState` 调用以及与 DimOS 的同图耗时对照仍缺。
 6. **三方动态障碍和 SCAN 执行。** MLS 只负责全局候选，SCAN、Follower、Driver 的
    动态避障和停车尚未放进同一份对照。
 7. **三方内存、并发、取消和失败诊断。** 目前没有同机 peak RSS、线程数、超时取消、
@@ -87,13 +91,11 @@ Rust MLS 只有完成下面的支持项，才从“离线候选”变成“可�
 | `MuJoCo` | 建图、保存、加载、定位、全局、局部、到达停车全链路门禁 |
 | `Field` | no-motion 连接、监督下实机路线、回滚到 C++ 后端 |
 
-目前完成到 `GeometryGate` 的离线阶段；`PlannerArtifact`、`GlobalRoute`、`ProductControl`、
-`SCAN`、`MuJoCo` 和 `Field` 仍未完成 Rust 后端接入。
-
-这句话对应本节原始对照时点。2026-11-15 后，Rust graph 已接到生产
-`PlannerArtifact` 和 `GlobalRoute` 的首选查询，正式诊断增加了 `used_rust_graph`。
-C++ geometry gate、C++ surface 查询和 C++ graph fallback 仍保留，因此本节后续的
-缓存、动态障碍、MuJoCo 和实机条目仍然是未完成项。
+当前 Rust graph 已完成 `PlannerArtifact` 和 `GlobalRoute` 的首选候选查询，正式诊断
+增加了 `used_rust_graph`。C++ GeometryGate 仍是权威准入，C++ SurfaceGraph 只保留
+兼容、离线对照和 fallback 用途。`ProductControl` 不另起一套 planner 生命周期，
+SCAN/Follower/Driver 仍接收原有全局路线。缓存和静态全局查询已经进入正式链路，
+动态障碍、MuJoCo 和实机条目仍未完成 Rust 后端验收。
 
 2026-11-15 已开始补增量生命周期第一阶段：Rust core 新增 `PlannerState`、
 `RegionBounds`、`update_region()` 和 `RegionUpdateReport`。`PlannerState` 把
@@ -101,16 +103,16 @@ occupied/free 证据、surface、graph 和配置放在同一状态中。更新�
 halo 只重提取受影响表面，合并区域外旧表面，并按相同 surface cell 复用 node ID；
 测试已经证明区域更新结果与整图 surface rebuild 一致、区域外 node ID 保持不变。
 
-这一阶段仍明确报告 `graph_rebuilt_globally = true`：节点和 edge 的图结构目前使用
-全量重建，只先建立区域输入、稳定 ID 和可验证的 fallback 边界；还没有把它写成
-已经完成 DimOS 级别的局部 edge repair。
+当前 Rust `PlannerState::update_region()` 已包含 node relocation、edge invalidation
+和 rebuild、局部 wall-distance/Voronoi/corridor 修复，并对区域外节点和边做保留。
+`graph_rebuilt_globally` 只在局部修复无法保持图连通时作为明确 fallback，不再是默认路径。
 
 ## 增量图生命周期与 MLS runtime：DimOS 为什么更成熟
 
 当前这部分的判断应明确写成：
 
 ```text
-增量图生命周期和成熟 MLS runtime：DimOS > 当前 LingTu Rust MLS
+增量图生命周期和成熟 MLS runtime：DimOS 的正式 runtime 仍领先，LingTu Rust 的局部修复算法已补齐核心路径
 ```
 
 这里比较的不是“哪个算法一定更好”，而是地图变化以后，表面、节点、边、缓存和
@@ -136,35 +138,34 @@ occupied / surface cells
 
 | 能力 | DimOS 的处理方式 | 当前 LingTu Rust MLS |
 |---|---|---|
-| Cell identity | CellId 在区域更新中保持，删除和复用有明确生命周期 | `Vec` 排序后重新编号，整图重建时 ID 可能变化 |
-| 区域更新 | `update_region` 只重提取受影响表面 | 当前 `build_artifact()` 每次处理整张输入 |
-| 节点变化 | 死节点 relocation，必要时删除或移动到邻近有效 cell | 没有 regional node relocation |
-| 边变化 | 只修复经过更新窗口、删除节点或受影响 corridor 的边 | 没有局部边修复 |
-| Dijkstra 状态 | 维护 predecessor、ownership、repair window 和局部重算 | 每次从头建立 ownership 和 predecessor |
-| corridor | 通过 predecessor chain 保存完整通道，并验证端点仍然匹配 | 当前已有完整 corridor 输出，但仍随整图重建产生 |
-| 地图输入 | planner runtime 可以收到区域地图和边界更新 | 没有 mapd cell delta / region snapshot 输入 |
+| Cell identity | CellId 在区域更新中保持，删除和复用有明确生命周期 | Rust `PlannerState` 已按 surface cell 复用稳定 node/edge ID |
+| 区域更新 | `update_region` 只重提取受影响表面 | Rust 已有 surface halo 和区域外表面合并，mapd 生产调用仍缺 |
+| 节点变化 | 死节点 relocation，必要时删除或移动到邻近有效 cell | 已有 node relocation 与删除回退 |
+| 边变化 | 只修复经过更新窗口、删除节点或受影响 corridor 的边 | 已有 edge invalidation/rebuild，局部无法保持连通时才全局 fallback |
+| Dijkstra 状态 | 维护 predecessor、ownership、repair window 和局部重算 | 已有局部 wall-distance、Voronoi ownership 和 predecessor corridor 修复 |
+| corridor | 通过 predecessor chain 保存完整通道，并验证端点仍然匹配 | 已有完整 corridor 输出和局部重建 |
+| 地图输入 | planner runtime 可以收到区域地图和边界更新 | mapd `RegionUpdate` 契约已定义，正式 nav adapter 仍缺 |
 | worker 生命周期 | 模块 worker、规划请求、地图更新和取消有明确并发边界 | Rust crate 目前是同步纯算法调用，没有正式 runtime worker |
-| 查询复用 | 已准备的图、节点和边被多个目标查询复用 | Rust graph 只能离线构建和导出，尚未接 `PlannerArtifact` cache |
+| 查询复用 | 已准备的图、节点和边被多个目标查询复用 | Rust graph 已接 `PlannerArtifact` cache 和 GlobalRoute |
 | 可观测性 | surface、nodes、node edges、path 有独立输出 | 当前主要输出 C ABI artifact 和比较 JSON |
 
 ### 当前 LingTu Rust MLS 的实际边界
 
-当前实现已经完成了纯算法图的第一版，但它仍然是：
+当前实现已经完成了 Rust 图、缓存和局部修复的第一版，正常静态查询路径是：
 
 ```text
 一次完整输入
-  → 一次 surface extraction
-  → 一次 node/edge/corridor build
-  → 一次 C ABI 输出
+  → Rust surface extraction
+  → Rust node/edge/corridor artifact
+  → PlannerArtifact/cache
+  → GlobalRoute query
+  → C++ GeometryGate
 ```
 
 它还没有完成：
 
-- `mapd` 发布区域体素增量或稳定区域快照；
-- Rust graph 的 stable CellId 和删除/复用规则；
-- 只重建受影响区域的 surface、node 和 edge；
-- corridor 穿过更新窗口时的局部失效和替换；
-- PlannerArtifact 的 Rust graph disk roundtrip；
+- `mapd` 的生产区域更新调用和 cell 坐标转换；
+- 最新 DimOS main 的同图 runner 和同口径 warm query；
 - Rust graph worker 的取消、超时、查询排队和恢复；
 - 更新期间旧图和新图的并发读写边界；
 - region update 前后与整图重建的逐项等价验证。

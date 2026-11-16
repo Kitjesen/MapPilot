@@ -1143,7 +1143,7 @@ void testFinalSafetyPreservesVerifiedBoundaryDeparture() {
   require(unverified.stopped, "ordinary motion cannot use the recovery departure exception");
   fixture.safety.verified_recovery_translation = true;
   const auto verified = fixture.evaluate({.1,0,0});
-  require(!verified.stopped && verified.reason == "scan_boundary_departure" &&
+  require(!verified.stopped && verified.reason == "aegis_exit" &&
               near(verified.cmd.vx,.1),
           "a verified collision-checked departure must remain executable");
   fixture.input.measured_velocity_valid = false;

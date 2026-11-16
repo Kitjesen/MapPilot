@@ -2302,6 +2302,56 @@ class SemanticPlannerModule(Module, layer=4):
             self.planner_status.publish("CANCELLED" if status.get("stop_confirmed") is True else "CANCELLING")
             return True
 
+    def _control_owned_instruction(self, owner_id: str, operation: str, reason: str) -> dict:
+        """Submit a pause or resume only for the Agent-owned native goal."""
+        with self._instruction_lock:
+            if not owner_id or self._instruction_owner != owner_id:
+                return {"owned": False, "accepted": False, "reason": "not_current", "operation": operation}
+            if self._instruction_cancel_requested:
+                return {"owned": True, "accepted": False, "reason": "cancel_requested", "operation": operation}
+            task = self._active_goal
+            if task is None or task.terminal:
+                return {"owned": True, "accepted": False, "reason": "task_not_running", "operation": operation}
+            if self._visual_handoff:
+                return {"owned": True, "accepted": False, "reason": "visual_task_control_unavailable", "operation": operation}
+            if operation == "pause" and task.state in {"paused", "pause_requested"}:
+                return {"owned": True, "accepted": False, "reason": "already_paused", "operation": operation,
+                        "task_id": task.task_id}
+            if operation == "pause" and task.state == "resume_requested":
+                return {"owned": True, "accepted": False, "reason": "resume_pending", "operation": operation,
+                        "task_id": task.task_id}
+            if operation == "resume" and task.state == "pause_requested":
+                return {"owned": True, "accepted": False, "reason": "pause_pending", "operation": operation,
+                        "task_id": task.task_id}
+            if operation == "resume" and task.state in {"path_active", "resume_requested", "accepted", "planning"}:
+                return {"owned": True, "accepted": False, "reason": "already_running", "operation": operation,
+                        "task_id": task.task_id}
+            goals = self._backends.get("nav.goals") if self._backends is not None else None
+            submit = getattr(goals, f"submit_{operation}", None)
+            if not callable(submit):
+                return {"owned": True, "accepted": False, "reason": "navigation_control_unavailable",
+                        "operation": operation, "task_id": task.task_id}
+            request_id = f"semantic-{operation}-{uuid.uuid4().hex}"
+            result = submit(reason or f"agent_{operation}", task_id=task.task_id, request_id=request_id)
+            if not isinstance(result, dict) or result.get("accepted") is not True:
+                return {"owned": True, "accepted": False, "reason": str(
+                    (result.get("reason") or "native_control_rejected")
+                    if isinstance(result, dict) else "native_control_rejected"),
+                    "operation": operation, "task_id": task.task_id, "request_id": request_id,
+                    "native": result}
+            task.state = f"{operation}_requested"
+            self.planner_status.publish(f"{operation.upper()}_REQUESTED")
+            return {"owned": True, "accepted": True, "operation": operation,
+                    "task_id": task.task_id, "request_id": request_id,
+                    "state": f"{operation}_requested", "execution_confirmed": False,
+                    "native": result}
+
+    def pause_owned_instruction(self, owner_id: str, reason: str = "agent_pause") -> dict:
+        return self._control_owned_instruction(owner_id, "pause", reason)
+
+    def resume_owned_instruction(self, owner_id: str, reason: str = "agent_resume") -> dict:
+        return self._control_owned_instruction(owner_id, "resume", reason)
+
     def owned_instruction_status(self, owner_id: str) -> dict:
         """Separate command ownership, native arrival and visual task success."""
         with self._instruction_lock:

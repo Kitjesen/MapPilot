@@ -32,12 +32,15 @@ pub struct IncrementalGraph {
 
 impl IncrementalGraph {
     pub fn from_cells(cells: &[SurfaceCell], config: GraphConfig) -> Self {
-        let graph = build_graph(cells, config);
+        Self::from_graph(cells, &build_graph(cells, config))
+    }
+
+    pub fn from_graph(cells: &[SurfaceCell], graph: &SurfaceGraph) -> Self {
         let mut result = Self {
             cells: cells.iter().copied().collect(),
             ..Self::default()
         };
-        for node in graph.nodes {
+        for node in &graph.nodes {
             result.node_by_cell.insert(node.cell, node.id);
             result.nodes.insert(
                 node.id,
@@ -47,7 +50,7 @@ impl IncrementalGraph {
                 },
             );
         }
-        for edge in graph.edges {
+        for edge in &graph.edges {
             let id = edge_id(edge.a, edge.b);
             result.edges.insert(
                 id,
@@ -56,7 +59,7 @@ impl IncrementalGraph {
                     from: edge.a,
                     to: edge.b,
                     cost: edge.cost,
-                    corridor: edge.corridor,
+                    corridor: edge.corridor.clone(),
                 },
             );
         }
@@ -220,4 +223,38 @@ pub struct GraphRepairReport {
 pub(crate) fn edge_id(from: StableNodeId, to: StableNodeId) -> StableEdgeId {
     let (a, b) = if from <= to { (from, to) } else { (to, from) };
     (u64::from(a) << 32) | u64::from(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restored_updates_match() {
+        let cells = (0..24)
+            .flat_map(|x| (0..3).map(move |y| SurfaceCell::new(x, y, 0)))
+            .collect::<Vec<_>>();
+        let config = GraphConfig {
+            node_spacing_cells: 2,
+            max_link_cells: 1,
+            wall_buffer_cells: 2,
+            wall_buffer_weight: 0.5,
+            ..GraphConfig::default()
+        };
+        let prepared = build_graph(&cells, config);
+        let mut rebuilt = IncrementalGraph::from_cells(&cells, config);
+        let mut restored = IncrementalGraph::from_graph(&cells, &prepared);
+        assert_eq!(restored, rebuilt);
+
+        let updated = cells
+            .into_iter()
+            .filter(|cell| *cell != SurfaceCell::new(11, 1, 0))
+            .collect::<Vec<_>>();
+        let region = RegionBounds::new(11, 11, 1, 1, 0, 0);
+        assert_eq!(
+            restored.update(&updated, region, config),
+            rebuilt.update(&updated, region, config)
+        );
+        assert_eq!(restored, rebuilt);
+    }
 }

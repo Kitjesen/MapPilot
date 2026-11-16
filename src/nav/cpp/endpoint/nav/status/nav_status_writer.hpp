@@ -214,6 +214,8 @@ struct FrameDiagnostics {
   std::uint64_t grid_rejected{0};
   std::uint64_t teleop_rejected{0};
   std::string last_error{"none"};
+  // Source-specific worker error. Cleared when the next motion snapshot succeeds.
+  std::string motion_worker_error{};
 };
 
 struct OperatorMotionAckDiagnostics {

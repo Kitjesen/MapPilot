@@ -83,6 +83,7 @@
 .reasoningActive > svg { color: var(--text); }
 .menuTrigger[aria-disabled="true"] { color: var(--text-faint); cursor: default; }
 .selectPanel { position: absolute; bottom: calc(100% + 7px); right: 0; z-index: 4; width: max-content; min-width: 188px; max-width: min(272px, calc(100vw - 32px)); max-height: min(300px, 50dvh); overflow-y: auto; scrollbar-width: thin; padding: 5px; border: 1px solid color-mix(in srgb, var(--text) 7%, transparent); border-radius: 13px; background: var(--bg-layer-1); box-shadow: 0 12px 32px #00000012, 0 2px 6px #00000006; animation: menuReveal 220ms cubic-bezier(.22, 1, .36, 1); transform-origin: bottom right; }
+.modelMenu .selectPanel { min-width: 236px; max-width: min(340px, calc(100vw - 32px)); max-height: min(380px, 60dvh); }
 .permissionMenu .selectPanel { left: 0; right: auto; }
 .menuHeading { padding: 4px 8px 6px; color: var(--text-dim); font-size: 12px; }
 .selectPanel button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 29px; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 12px; line-height: 1.35; text-align: left; cursor: pointer; transition: background-color 120ms, transform 120ms; }
@@ -92,6 +93,8 @@
 .selectPanel button:hover, .selectPanel button:focus-visible { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .selectPanel button[aria-checked="true"] { font-weight: 550; }
 .selectPanel svg { flex-shrink: 0; }
+.menuAction { border-bottom: 1px solid color-mix(in srgb, var(--text) 7%, transparent) !important; border-radius: 7px 7px 3px 3px !important; color: var(--text-dim) !important; margin-bottom: 4px; }
+.menuAction:hover, .menuAction:focus-visible { color: var(--text) !important; }
 .sessionsPanel { display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; max-height: min(42dvh, 340px); border: 0; border-radius: 20px 20px 0 0; background: transparent; overflow: hidden; }
 .sessionsHeading { display: flex; align-items: center; gap: 2px; flex-shrink: 0; padding: 5px 7px 3px 14px; }
 .sessionsHeading > strong { flex: 1; font-size: 13px; font-weight: 550; }
@@ -188,7 +191,7 @@
   .modelMenu { flex: 0 1 auto; max-width: 155px; }
   .permissionMenu { max-width: none; }
   .modelControls > .modelMenu:first-child .selectPanel { left: 0; right: auto; max-width: calc(100vw - 100px); }
-  .toolbar > .iconButton { width: 44px; height: 44px; }
+  .toolbar > .iconButton { min-height: 44px; }
   .toolbar > .sendButton { grid-row: 1; grid-column: 4; justify-self: end; }
 }
 @media (pointer: coarse) {
@@ -209,6 +212,19 @@
 @media (pointer: coarse) { .heading .botEntry, .idleHeading .botEntry { min-width: 44px; min-height: 44px; } }
 .botEntry:hover { background: var(--bg-layer-2); }
 .botEntry:has(> [data-state='working']) { animation: botPulse 2.4s ease-in-out infinite; }
+.botSwitcher { position: relative; min-width: 0; }
+.botSwitcher > summary { list-style: none; display: flex; align-items: center; gap: 5px; min-height: 32px; max-width: 150px; padding: 2px 6px 2px 3px; border-radius: 10px; color: var(--text); font-size: 12px; cursor: pointer; }
+.botSwitcher > summary::-webkit-details-marker { display: none; }
+.botSwitcher > summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.botSwitcher > summary:hover { background: var(--bg-layer-2); }
+.botSwitcherPanel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; display: flex; flex-direction: column; gap: 2px; width: min(240px, calc(100vw - 32px)); padding: 5px; border: 1px solid color-mix(in srgb, var(--text) 9%, transparent); border-radius: 13px; background: var(--bg-layer-1); box-shadow: 0 12px 32px #00000012, 0 2px 6px #00000006; }
+.botSwitcherPanel button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 5px 7px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.botSwitcherPanel button:hover, .botSwitcherPanel button:focus-visible { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.botSwitcherPanel button > span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.botSwitcherPanel button strong { font-weight: 550; }
+.botSwitcherPanel button small { overflow: hidden; color: var(--text-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.botSwitcherEdit { margin-top: 3px; border-top: 1px solid color-mix(in srgb, var(--text) 7%, transparent) !important; border-radius: 0 0 9px 9px !important; color: var(--text-dim) !important; }
+.botCapability { min-width: 0; max-width: 220px; overflow: hidden; color: var(--text-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes botPulse { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal-cyan) 14%, transparent); } }
 .unconfigured { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 @media (pointer: coarse) { .selectPanel button { min-height: 40px; } }
@@ -313,7 +329,7 @@
 .toolDetailContent h4 { margin: 0 0 5px; font-size: 12px; font-weight: 500; color: var(--text-dim); }
 .toolDirectory { margin: 6px 0; color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
 .rawToolResult summary { padding-block: 4px; font-size: 12px; color: var(--text-dim); cursor: pointer; }
-dialog.toolDetailDialog { width: min(760px, calc(100vw - 32px)); max-width: none; padding: 18px; border-radius: 16px; }
+dialog.toolDetailDialog { width: min(900px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 64px); padding: 18px; border-radius: 16px; overflow: auto; }
 .toolDetailDialog::backdrop { backdrop-filter: none; }
 .toolDialogActions { display: flex; gap: 4px; margin-left: auto; }
 .toolDetailSummary { display: flex; gap: 12px; margin-bottom: 10px; color: var(--text-dim); font-size: 12px; }
@@ -447,13 +463,25 @@ dialog.toolDetailDialog { width: min(760px, calc(100vw - 32px)); max-width: none
 }
 
 .connectionCards { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
-.connectionCard { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-layer-1); animation: conversationReveal 220ms cubic-bezier(.2,.8,.2,1); }
-.connectionLogo { display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; background: var(--bg-layer-2); font-size: 15px; font-weight: 550; }
+.connectionCard { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid #e5eaf2; border-radius: 14px; background: linear-gradient(180deg,#fff,#f8fafc); box-shadow: 0 7px 18px rgb(30 55 90 / 6%); animation: conversationReveal 220ms cubic-bezier(.2,.8,.2,1); }
+.codexUsageCard { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 7px 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--chat-link) 7%, var(--bg-layer-1)); color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.codexUsageCard strong { color: var(--text); font-weight: 550; }
+.codexPlanCard, .codexFileCard, .codexTerminalCard { display: flex; flex-direction: column; gap: 5px; margin: 7px 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--text) 4%, var(--bg-layer-1)); color: var(--text-dim); font-size: 12px; }
+.codexPlanCard strong, .codexFileCard strong, .codexTerminalCard strong { color: var(--text); font-weight: 550; }
+.codexPlanCard div, .codexFileCard div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.codexPlanCard div svg { color: var(--chat-success); flex-shrink: 0; }
+.codexFileCard div svg { color: var(--chat-link); flex-shrink: 0; }
+.codexFileCard code, .codexTerminalCard code, .codexTerminalCard pre { min-width: 0; overflow: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); }
+.codexTerminalCard pre { margin: 0; max-height: 180px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connectionLogo { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 11px; background: #fff; border: 1px solid #e1e7ef; color: #1c6fe8; font-size: 16px; font-weight: 650; box-shadow: 0 2px 8px rgb(30 55 90 / 8%); }
 .connectionCard > div { flex: 1; min-width: 0; }
 .connectionCard strong, .connectionCard small { display: block; }
-.connectionCard strong { font-size: 12px; font-weight: 500; }
+.connectionCard strong { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; }
+.connectionVerified { display: inline-grid; place-items: center; color: #2b79e8; }
 .connectionCard small { margin-top: 3px; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
 .connectionCard > button { margin: 0; font: inherit; font-size: 12px; }
+.connectionAction { min-height: 30px; padding: 6px 10px; border: 1px solid #dbe6f6; border-radius: 9px; color: #2168ce; background: #f3f7ff; cursor: pointer; }
+.connectionAction:hover { border-color: #b9d1f5; background: #eaf2ff; }
 @media (prefers-reduced-motion: reduce) { .connectionCard { animation: none; } }
 
 @media (min-width: 601px) { .expanded .toolbar { padding-left: 112px; } }

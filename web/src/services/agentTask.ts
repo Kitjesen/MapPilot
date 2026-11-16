@@ -125,12 +125,20 @@ export function presentAgentTask(status: AgentTaskStatusResponse): AgentTaskView
     }
   }
   if (navigation?.follow_task_id) {
-    const phase = String(navigation.phase ?? '').toLowerCase()
+    if (navState === 'FOLLOW_UNKNOWN') {
+      return {
+        label: '跟随状态未知', detail: '无法读取原跟随任务，尚未确认停止。',
+        tone: 'warning', terminal: false, successful: false, canCancel: true,
+      }
+    }
+    const phase = String(navState === 'CANCELLING' ? 'cancelling' : navigation.phase ?? '').toLowerCase()
     const followView = {
       selecting: ['正在选择跟随目标', '正在从当前观测中选择符合指令的人员。'],
+      awaiting_confirmation: ['等待确认跟踪人员', '在相机画面中选择人员，再确认跟踪。'],
       following: ['正在持续跟随', '跟随会持续进行，可随时取消。'],
       reacquiring: ['正在重新识别跟随目标', '目标离开视野后，正在核验重新出现的人员身份。'],
       lost: ['跟随目标暂时丢失', '系统仍在尝试重新识别目标；当前没有完成证据。'],
+      cancelling: ['正在取消跟随', '正在等待运动任务结束。'],
     }[phase]
     if (followView) {
       return {

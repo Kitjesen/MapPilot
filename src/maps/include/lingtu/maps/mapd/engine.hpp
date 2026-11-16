@@ -115,7 +115,6 @@ struct Config {
     layers::RollingOccupancyConfig value;
     return value;
   }();
-  layers::GroundSurfaceConfig ground_surface;
   BlockGridConfig accumulated;
 };
 
@@ -225,6 +224,8 @@ struct Snapshot {
   } collision;
   BlockGridSnapshot accumulated_cloud;
   layers::Grid2D occupancy;
+  // Legacy display layers remain in the snapshot for ABI compatibility. New
+  // mapd snapshots leave them empty; navigation uses occupancy and 3D layers.
   layers::Grid2D surface_projection;
   layers::GroundSurfaceResult ground_surface;
   layers::ElevationMapResult elevation;

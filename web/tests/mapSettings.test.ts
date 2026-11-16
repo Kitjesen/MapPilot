@@ -103,6 +103,7 @@ test('a recoverable draft keeps crop entry from starting scene selection', () =>
 
 test('map settings expose a separate no-go section while editing only renders its cleaning target', () => {
   const Settings = component('SettingsMenu', {
+    './agentConversation/ModelConnections': { ModelConnections: () => null },
     '../hooks/useMapSettings.ts': { useMapSettings: () => ({ request: 1, editing: true,
       setTarget() {}, map: { name: 'office', contentEpoch: 42 } }) },
     './SurfaceSettings.tsx': { SurfaceSettings: () => React.createElement('section', { 'aria-label': '补面预览设置' }) },

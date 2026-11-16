@@ -875,13 +875,14 @@ int runTests() {
     body->parts.push_back(box);
     auto body_context = context;
     body_context.body = body;
+    body_context.map_yaw = 0.7;
 
     require(body_controller.submit(request, body_context).accepted,
             "body goal was rejected");
     require(wait_body_completion().path_activated && body_requests.size() == 1U,
             "body goal did not activate");
-    require(!body_requests.front().start.yaw && !body_requests.front().goal.yaw,
-            "global request must carry XYZ only");
+    require(body_requests.front().start.yaw == 0.7 && body_requests.front().goal.yaw == 0.25,
+            "global geometry request lost the measured or terminal heading");
 
     require(body_activations.size() == 1U && body_activations.front().body == body &&
                 body_activations.front().path.size() == 2U &&
@@ -893,13 +894,14 @@ int runTests() {
     fresh_body->margin_m = 0.03;
     body_context.body = fresh_body;
     body_context.map_position = nav_kernel::Vec3{2.0, 3.0, 0.5};
+    body_context.map_yaw = -0.2;
 
     require(body_controller.replanActive(body_context).accepted,
             "body replan was rejected");
     require(wait_body_completion().path_activated && body_requests.size() == 2U,
             "body replan did not activate");
     require(body_requests.back().start.x == 2.0 &&
-                !body_requests.back().start.yaw && !body_requests.back().goal.yaw &&
+                body_requests.back().start.yaw == -0.2 && body_requests.back().goal.yaw == 0.25 &&
                 body_activations.back().body == fresh_body &&
                 body_activations.back().pose_points.empty(),
             "XYZ replan reused an old model or added mandatory heading stages");
@@ -915,8 +917,8 @@ int runTests() {
     require(replacement_completion.terminal_after_stop.has_value() &&
                 !replacement_completion.path_activated && body_activations.size() == 2U,
             "replacement body route bypassed the active task stop barrier");
-    require(!body_requests.back().goal.yaw && !body_requests.back().start.yaw,
-            "replacement global request must carry XYZ only");
+    require(!body_requests.back().goal.yaw && body_requests.back().start.yaw == -0.2,
+            "replacement global request lost the current heading or invented a terminal heading");
     replacement_completion.terminal_after_stop->commit();
     require(body_controller.activateDeferredReplacement(51.0, body_context).path_activated,
             "deferred replacement body route did not activate after stop");

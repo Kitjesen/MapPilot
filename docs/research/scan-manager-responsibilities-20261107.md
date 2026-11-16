@@ -43,16 +43,22 @@ FSM 按未来交接时刻从旧曲线取位置、速度、加速度，manager �
 | 本轮快照的失败 | 已查明的失败原因／证据 | 处理归属 |
 | --- | --- | --- |
 | `ScanArrivalDoesNotCutOffTheMovingTerminalSpline` | 带终点朝向时，仍在移动的末段进入 `aligning_goal_yaw`，tracking 失活，线速度直接变零；断言要求保持末段并按加速度减速。 | 到达／跟踪会话应核对转向接管与减速，不能只改断言。 |
-| `ScanHandlesFreshDynamicPrediction` | 测试要求 SCAN 直接生成绕预测障碍的弯线；当前候选查询明确不使用预测障碍，且初次接收的静止曲线首拍可以为零速度。 | 动态避障产品需求与当前分工需对齐；在 FinalControl 验证制动，并明确是否要求主动绕行。 |
-| `OdomPredictionTransformKeepsUnavoidableDynamicCollisionStoppedByScan` | 同样在候选层期待预测障碍否决，当前结果为 `spline_control_ready`。 | 预测障碍变换及阻止最终运动应由最终运动检查测试覆盖；候选 ready 不证明可运动。 |
-| `ConfiguredBodyGuardsBothXYZRouteAndMotionIntentWithRawGeometry` | 测试用空膨胀图加 raw Body 障碍，期待候选失败；Backend 当前明确清除候选请求的 Body/observedBody，使用双圆柱与三维膨胀占据。 | 在负责 raw Body 的最终检查层验证同一个障碍，不能用该失败证明已发送碰撞命令。 |
-| `ConfiguredBodyXYZGuideCannotTurnThroughAnOccupiedCorner` | 用 raw Body 转动扫掠复验普通候选；当前候选使用双圆柱语义，因此第 6 段的两种检查结论不同。 | 核对最终转动／运动检查与产品对整条候选的要求，保留三维障碍证据。 |
+| `ScanReceivesPrediction` | 只验证预测输入到达 SCAN；候选层不把预测障碍伪装成静态占据。 | 最终制动由 FinalControl 测试覆盖。 |
+| `FinalControlPrediction` | 最终运动层验证预测障碍、制动参数和命令限制。 | 由 FinalControl 的安全测试负责，不再由 Executor 候选测试代替。 |
+| `BodyBlocksRouteAndIntent` | 配置机体必须同时约束普通路线和 MotionIntent 候选。 | 候选规划与最终检查使用同一机体来源。 |
+| `BodyBlocksCornerTurn` | 配置机体的转角扫掠不能穿过实测占据。 | 保留三维机体和转动扫掠证据。 |
 | `ScanIgnoresTwoDimensionalTraversabilityInput` | 只在新曲线首拍断言速度大于零；静止边界首拍执行时间为零，不能由这条断言判定二维图影响了规划。 | 测试应推进执行时间，再验证正常运动和输入隔离。 |
 | `MapPlanningDoesNotConsumeOdomTransform` | 同样在首拍要求非零前进速度；其余路径／坐标断言没有在此次失败列表中。 | 分开验证坐标结果与时间推进后的运动。 |
 | `StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles` | 失败在前置断言：测试构造的轨迹实际被楼梯范围允许，没有产生它要测试的“先拒绝后恢复”条件。 | 修复场景前置条件后再评估恢复逻辑，不能据此断言恢复失败。 |
 | `ScanProductMotionLimitsKeepSustainedIntentAcrossReplans` | 前向通过；斜向到 90% 要 3.49 s，要求 ≤3 s；3 s 后速度比例为 0.7846～0.9229，要求 ≥0.95。11 次交接、无冻结帧、无失活帧。 | 存在响应未达验收目标；需要分析平滑加速和滚动重规划速度形状，未以改阈值消除。 |
 
 本轮没有修改这些 Executor 断言、到达行为或最终碰撞政策。尤其“最终控制负责”不等于“已经验证最终控制安全”：上述同场景最终控制验证不在本轮证据内。
+
+### 2026-11-15 follow-up
+
+后续复核把这些用例按职责收口。SCAN 只验证预测输入被接收、保留和正确变换，FinalControl 的预测制动由
+`testTurnUsesFinalConfiguredBraking` 覆盖。候选规划现在保留配置机体，避免规划阶段清掉机体后再由最终安全层重复否决。
+对应测试名已简化为 `ScanReceivesPrediction`、`BodyBlocksRouteAndIntent` 和 `BodyBlocksCornerTurn`。
 
 ## 速度配置澄清
 

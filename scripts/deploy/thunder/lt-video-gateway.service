@@ -1,0 +1,19 @@
+[Unit]
+Description=LingTu read-only camera video Gateway
+After=network-online.target go2rtc.service lt-camera.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sunrise
+WorkingDirectory=/home/sunrise/lingtu-src
+Environment=PYTHONPATH=/home/sunrise/lingtu-src/src
+EnvironmentFile=/etc/lingtu/video-gateway.env
+ExecStart=/home/sunrise/.venv-lingtu-gateway/bin/python -m gateway.video_probe --host 0.0.0.0 --port 5050
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

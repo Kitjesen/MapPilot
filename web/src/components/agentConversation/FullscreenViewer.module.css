@@ -1,0 +1,23 @@
+.backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgb(8 12 18 / 82%); backdrop-filter: blur(8px); }
+.viewer { display: grid; grid-template-rows: auto minmax(0, 1fr); width: min(1280px, 100%); height: min(900px, 100%); min-height: 0; overflow: hidden; border: 1px solid rgb(255 255 255 / 14%); border-radius: 18px; background: #15191f; color: #f4f7fb; box-shadow: 0 20px 70px rgb(0 0 0 / 35%); }
+.header { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 12px 8px 18px; border-bottom: 1px solid rgb(255 255 255 / 12%); }
+.title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.title span { flex-shrink: 0; color: #9da8b6; font-size: 11px; }
+.close { display: grid; place-items: center; width: 34px; height: 34px; margin-left: auto; border: 0; border-radius: 9px; color: #f4f7fb; background: transparent; cursor: pointer; }
+.close:hover { background: rgb(255 255 255 / 10%); }
+.close:focus-visible, .tableWrap:focus-visible { outline: 2px solid #8fb9ff; outline-offset: 2px; }
+.content { display: grid; min-width: 0; min-height: 0; place-items: center; overflow: auto; padding: 24px; }
+.image img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 10px; }
+.video video { width: min(1100px, 100%); max-height: 100%; background: #05070a; border-radius: 10px; }
+.map { place-items: stretch; padding: 0; }
+.table { align-items: start; }
+.tableWrap { width: 100%; max-height: 100%; overflow: auto; border: 1px solid rgb(255 255 255 / 12%); border-radius: 12px; background: #101419; }
+.tableWrap table { width: 100%; border-collapse: collapse; min-width: 560px; font-size: 13px; }
+.tableWrap th, .tableWrap td { padding: 10px 12px; border-bottom: 1px solid rgb(255 255 255 / 9%); text-align: left; vertical-align: top; }
+.tableWrap th { position: sticky; top: 0; z-index: 1; color: #dfe7f1; background: #202731; font-weight: 600; }
+.tableWrap td { color: #c7d0dc; }
+.tableWrap tr:last-child td { border-bottom: 0; }
+.empty { color: #aab4c1; font-size: 13px; }
+@media (max-width: 640px) { .backdrop { padding: 0; }.viewer { width: 100%; height: 100%; border: 0; border-radius: 0; }.content { padding: 14px; }.map { padding: 0; } }
+@media (prefers-reduced-motion: reduce) { .backdrop { backdrop-filter: none; } }

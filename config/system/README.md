@@ -294,6 +294,7 @@ Simulation supports only `standard`.
 For `tracking`, `standard` keeps the existing RGB-D perception and Follow graph;
 `camera` adds video preview over that same camera source. It does not add a
 second camera or change the selected local planner, identity checks or calibration.
+The Product explicitly selects the `bpu` pedestrian detector on the real target.
 The Product declares `optional_processes: [video]`; only the preview may degrade
 without blocking activation. RunPlan stores this as `required: false`. The real
 runner reports that failure and continues core startup; stopping and rollback

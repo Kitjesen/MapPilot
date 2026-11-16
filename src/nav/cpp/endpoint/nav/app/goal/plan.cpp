@@ -254,11 +254,13 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.start.x,
       plan_context.start.y,
       plan_context.start.z,
+      context.map_yaw,
   };
   plan_context.request.goal = {
       plan_context.goal.x,
       plan_context.goal.y,
       plan_context.goal.z,
+      target.yaw,
   };
   if (const auto current_map = actions_.current_map_identity();
       current_map.identity && current_map.identity->valid()) {

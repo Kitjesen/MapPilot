@@ -16,6 +16,19 @@ DimOS 的相关实现文件是 `surfaces.rs`、`adjacency.rs`、`nodes.rs`、`ed
 
 ## 最新结论（2026-11-15 复测）
 
+## 默认表面规则已收敛（2026-11-16）
+
+默认 Rust 和 C++ 表面生成已经切换到 DimOS 的表面规则：按列净空提取
+standable cells，对每个 Z 层单独做 L1 closing，并对新增单元检查净空和 nearby
+occupied support。表面派生不再执行 LingTu 原先的平面拟合、RMS/边界残差、洞面积
+和洞宽过滤、known-free 反证以及跨高度 band 采样。原始 occupied / known-free 仍由
+artifact 保留，供机体碰撞和运动安全层使用。旧的 observed/inferred 标签继续作为
+artifact 兼容字段存在，当前只表示原始表面与 closing 新增表面，不再触发额外筛选。
+
+`octoplanner3d_surface_smoke`、`octoplanner3d_prepared_surface_smoke` 和 Rust
+surface tests 已按这个基线通过。旧表格保留为 2026-11-15 图拓扑对照记录，不能用来
+描述 2026-11-16 之后的默认表面派生规则。
+
 现在已经把 Rust 原生 `build_graph()` 接入离线摘要 ABI，并和同一批 Rust
 surface cells 生成的 C++ `SurfaceGraph` 做了实测。Rust graph 已经从旧的
 “节点之间找最近邻”改成四邻域表面边、wall-distance 节点筛选、多源 Voronoi

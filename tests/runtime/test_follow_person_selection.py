@@ -650,6 +650,78 @@ def test_waiting_for_vlm_selection_does_not_repeat_unused_encoding():
     assert not vs._person_tracker.target_selected
 
 
+def test_camera_interruption_cancels_selection_and_resumes_on_new_frames():
+    vs, client, _started, loop, loop_thread = _vision_follow("MATCH")
+    started, cancelled, release, completed = (threading.Event() for _ in range(4))
+    calls = 0
+
+    async def chat(_messages, temperature=None):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            try:
+                while not release.is_set():
+                    await asyncio.sleep(0.001)
+            finally:
+                cancelled.set()
+        return "MATCH" if calls == 3 else "1"
+
+    client.chat = chat
+    vs._mode = "idle"
+    receipt = vs.start_follow(description="person in red")
+    source_ts = time.time()
+    goals = []
+    vs.goal_pose.subscribe(goals.append)
+    original_select = vs._run_vlm_select_sync
+
+    def select(*args):
+        try:
+            original_select(*args)
+        finally:
+            completed.set()
+
+    vs._run_vlm_select_sync = select
+
+    def observe(sequence, x):
+        vs._on_observation(_semantic_observation(
+            sequence, source_ts + sequence * 0.001,
+            [Detection3D(id="target", label="person", position=Vector3(x, 0, 0), bbox_2d=[0, 0, 16, 16])],
+            image=Image(data=_marker_crop(1, 32), format=ImageFormat.BGR),
+        ))
+
+    try:
+        observe(1, 4.0)
+        assert started.wait(timeout=1.0)
+        vs._on_observation(_semantic_observation(
+            2, 0.0, status="unavailable", reason="camera_disconnected",
+        ))
+        assert not vs._follow_select_running
+        assert cancelled.wait(timeout=1.0)
+        assert completed.wait(timeout=1.0)
+        assert not vs._person_tracker.target_selected
+        assert vs._follow_select_pending
+        assert goals == []
+
+        completed.clear()
+        observe(3, 5.0)
+        assert completed.wait(timeout=1.0)
+        assert vs._person_tracker.target_selected
+        assert vs._follow_select_method == "vlm"
+        assert goals == []
+
+        observe(4, 5.1)
+        assert vs._target_visible
+        assert len(goals) == 1
+        assert vs.get_follow_task(receipt["follow_task_id"], receipt["product_session_id"])["terminal"] is False
+        assert calls == 3
+    finally:
+        release.set()
+        completed.wait(timeout=1.0)
+        vs._cancel_tracking()
+        _close_vision_loop(loop, loop_thread)
+
+
 def test_vlm_target_feature_preparation_does_not_delay_cancel():
     started, release, cancelled = (threading.Event() for _ in range(3))
     vs, client, _started, loop, loop_thread = _vision_follow("MATCH")

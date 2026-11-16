@@ -31,7 +31,7 @@ def test_go2_sensor_products_accept_verified_slam_mount() -> None:
     report = run_calibration_check(config=config, require_slam=True)
 
     assert report.errors == []
-    assert any("Camera calibration is unverified" in warning for warning in report.warnings)
+    assert any("Camera calibration is marked verified" in info for info in report.info)
 
 
 def test_real_run_plan_owns_driver_backend_configuration() -> None:

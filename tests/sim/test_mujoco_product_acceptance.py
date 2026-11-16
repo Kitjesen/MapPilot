@@ -26,7 +26,7 @@ from sim.scripts.mujoco.evidence import (
 )
 
 import lingtu.sim.switch as sim_switch
-from drivers.real.camera.shm import ShmFrameWriter, StreamKind
+from runtime.camera_shm import ShmFrameWriter, StreamKind
 from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.assembly.graph import RuntimeGraph
 from lingtu.assembly.graph.loader import load_runtime_graph

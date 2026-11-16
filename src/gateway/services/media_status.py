@@ -33,7 +33,7 @@ def _int(value: Any, default: int = 0) -> int:
 
 def _find_camera(gw: Any) -> Any | None:
     modules = getattr(gw, "_all_modules", {}) or {}
-    return modules.get(CAMERA_ROLE)
+    return modules.get(CAMERA_ROLE) or getattr(gw, "_camera_status_probe", None)
 
 
 def _safe_health(module: Any) -> tuple[dict[str, Any], str | None]:
@@ -216,8 +216,18 @@ def build_camera_video_diagnostics(gw: Any, video: Mapping[str, Any]) -> dict[st
         and heartbeat_age is not None and 0 <= heartbeat_age <= 3.0
     )
     if not native:
-        reason = "native_video_status_not_supported"
-        pipeline_ready = None
+        if video.get("available") is False:
+            reason = str(video.get("reason") or "whep_unavailable")
+            pipeline_ready = False
+        elif camera.get("available") is True:
+            # Go2RTC exposes no versioned heartbeat file. Its HTTP stream
+            # inventory plus fresh camera frames is the strongest read-only
+            # readiness evidence available for this sidecar.
+            reason = None
+            pipeline_ready = True
+        else:
+            reason = "camera_source_not_ready"
+            pipeline_ready = None
     elif not raw:
         reason = video.get("source_reason") or "video_status_unavailable"
         pipeline_ready = False

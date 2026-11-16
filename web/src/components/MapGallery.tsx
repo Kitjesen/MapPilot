@@ -204,7 +204,7 @@ export function MapGallery({ open, entries, selectedMap, saves, loading, error, 
           <p>更新时间：{mapUpdateTime(ready?.data.built_at_ms)}</p>
           <p>{ready && `${ready.data.total_points.toLocaleString()} 个点`}{current.map?.patch_count != null && ` · ${current.map.patch_count} 个子图`}</p>
           {current.map?.activation_blockers?.map(reason => <p key={reason}>{reason}</p>)}
-          {ready?.data.cleanup_state === 'unknown' && <p>该版本未记录清洗结果。</p>}
+          {ready?.data.cleanup_state === 'unknown' && <p>该地图未记录清洗结果。</p>}
           <MapSaveHistory operations={current.operations} saves={saves} readOnly={readOnly} />
           {actions}
           {!readOnly && current.map && <div className={styles.actions}>

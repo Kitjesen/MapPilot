@@ -32,7 +32,7 @@ def call(gw, method, *args, **kwargs):
 
 
 def submit(gw, conversation_id, body):
-    tools, invoke = workbench_tools(gw)
+    tools, invoke = workbench_tools(gw, client_id=body.client_id)
     def guard(admit, tool_call_id):
         result = ControlCommandService(gw).run_motion_guarded_command("agent_tool", body, admit)
         return json.loads(result.body) if isinstance(result, JSONResponse) else result

@@ -815,13 +815,6 @@ async def put_route(gw, body: InspectionRouteRequest):
     version = await asyncio.to_thread(_map_content_epoch, gw, body.map_id)
     if isinstance(version, JSONResponse):
         return version
-    if body.map_content_epoch is not None and body.map_content_epoch != version:
-        return _error(
-            409,
-            "inspection_map_content_epoch_mismatch",
-            "route map_content_epoch does not match the current map record",
-            detail={"requested": body.map_content_epoch, "current": version},
-        )
     payload = _route_payload(body)
     payload["map_content_epoch"] = version
     try:

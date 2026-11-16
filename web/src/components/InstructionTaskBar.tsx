@@ -26,6 +26,7 @@ const ENGLISH_STAGES: Record<string, string> = {
   '正在确认目标': 'Verifying the target', '正在选择跟随目标': 'Selecting a person to follow',
   '正在持续跟随': 'Following', '正在重新识别跟随目标': 'Reacquiring the person',
   '跟随目标暂时丢失': 'Follow target lost', '正在前往目标': 'Navigating to the target',
+  '等待确认跟踪人员': 'Confirm the person to follow',
   '正在规划路线': 'Planning a route', '正在理解指令': 'Understanding the instruction',
 }
 

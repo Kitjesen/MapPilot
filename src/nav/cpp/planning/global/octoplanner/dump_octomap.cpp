@@ -16,6 +16,7 @@ struct Args {
   std::string input;
   std::string output;
   std::size_t max_points = 0;
+  bool expand = false;
 };
 
 Args parseArgs(int argc, char ** argv)
@@ -35,10 +36,12 @@ Args parseArgs(int argc, char ** argv)
       args.output = next();
     } else if (arg == "--max-points") {
       args.max_points = static_cast<std::size_t>(std::strtoull(next().c_str(), nullptr, 10));
+    } else if (arg == "--expand") {
+      args.expand = true;
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
         "usage: octoplanner3d_dump_octomap --input octomap.ot --output occupied.xyz "
-        "[--max-points 20000]");
+        "[--max-points 20000] [--expand]");
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -77,6 +80,8 @@ int main(int argc, char ** argv)
   try {
     const Args args = parseArgs(argc, argv);
     const auto tree = loadTree(args.input);
+    // Benchmarks need every occupied voxel represented by a pruned leaf.
+    if (args.expand) tree->expand();
     std::vector<octomap::point3d> points;
     points.reserve(tree->size());
     for (auto it = tree->begin_leafs(), end = tree->end_leafs(); it != end; ++it) {

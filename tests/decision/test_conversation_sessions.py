@@ -95,6 +95,36 @@ def test_metadata_list_rename_archive_and_restore(tmp_path):
     store.close()
 
 
+def test_bot_id_scopes_metadata_list_search_fork_and_share(tmp_path):
+    store = ConversationStore(tmp_path / "bot-scope.db")
+    scout = store.create("field-scout")["conversation_id"]
+    navigator = store.create("map-navigator")["conversation_id"]
+    completed_turn(store, scout, "scout-message", "inspect pump", "Inspection ready")
+    completed_turn(store, navigator, "nav-message", "inspect pump", "Navigation ready")
+
+    assert store.metadata(scout)["bot_id"] == "field-scout"
+    assert [item["conversation_id"] for item in store.list(bot_id="field-scout")["conversations"]] == [scout]
+    assert [item["conversation_id"] for item in store.search("inspect", bot_id="map-navigator")["results"]] == [navigator]
+
+    branch = store.fork(scout, store.snapshot(scout)["messages"][-1]["id"])
+    assert branch["bot_id"] == "field-scout"
+    receipt = store.create_share(scout)
+    assert store.shared(receipt["token"])["bot_id"] == "field-scout"
+    store.close()
+
+
+def test_old_conversation_schema_gets_default_bot_id(tmp_path):
+    path = tmp_path / "old-bot-id.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        db.execute("INSERT INTO conversations VALUES ('old')")
+        db.commit()
+    store = ConversationStore(path)
+    assert store.metadata("old")["bot_id"] == "lingtu-default"
+    assert store.list(bot_id="lingtu-default")["conversations"][0]["conversation_id"] == "old"
+    store.close()
+
+
 def test_old_metadata_migration_preserves_history_and_manual_title(tmp_path):
     path = tmp_path / "old.db"
     store = ConversationStore(path)
@@ -134,7 +164,7 @@ def test_share_freezes_only_terminal_public_text_and_can_be_revoked(tmp_path):
     receipt = store.create_share(cid)
     assert receipt["message_count"] == 2 and len(receipt["token"]) >= 40
     shared = store.shared(receipt["token"])
-    assert set(shared) == {"title", "created_at", "messages"}
+    assert set(shared) == {"title", "bot_id", "created_at", "messages"}
     assert all(set(message) == {"role", "text", "seq"} for message in shared["messages"])
     assert [message["role"] for message in shared["messages"]] == ["user", "assistant"]
     assert "PRIVATE_TOOL_OUTPUT" not in json.dumps(shared) and "MODEL_ITEMS" not in json.dumps(shared)

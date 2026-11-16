@@ -18,9 +18,9 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.7";
+constexpr const char* kFormat="lingtu.navigation.prepared.9";
 constexpr std::uint32_t kEndian=0x01020304U;
-struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,21> preparation; };
+struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,22> preparation; };
 
 Header readHeader(BinaryReader& in) {
   if(in.text()!=kFormat || in.value<std::uint32_t>()!=kEndian)

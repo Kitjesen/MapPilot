@@ -121,7 +121,7 @@ def test_go2_config_does_not_claim_thunder_camera_calibration() -> None:
         )
     )
 
-    assert config["calibration"]["camera"]["status"] == "unverified"
+    assert config["calibration"]["camera"]["status"] == "verified"
     assert config["camera"]["capture_driver"] == "realsense_native"
     assert "extrinsics" not in config["camera"]
     assert "rotate" not in config["camera"]

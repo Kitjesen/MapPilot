@@ -32,27 +32,43 @@ bool checkRoute(std::vector<PointPose> &route, const EdgeCheck &valid,
 std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
                                   const EdgeCheck &valid,
                                   const BodyHeight &height,
-                                  const RouteCancelCheck &cancel) {
+                                  const RouteCancelCheck &cancel,
+                                  const EdgeCost &cost) {
   if (cancel && cancel()) return {};
   auto result=route;
   if (result.size()<2) return result;
   if (!checkRoute(result,valid,cancel)) return {};
+  const auto path_cost=[&](const auto &points,std::size_t first,std::size_t last) {
+    double total=0;
+    for(std::size_t i=first+1;i<=last;++i) total+=cost(points[i-1],points[i]);
+    return total;
+  };
   for (std::size_t first=0;first+2<result.size();++first) {
     for (std::size_t last=result.size()-1;last>first+1;--last) {
       if (cancel && cancel()) return {};
       const auto &a=result[first], &b=result[last];
       bool supported=true;
+      std::optional<double> first_height;
+      bool changing_height=false, follows_height=true;
       if ((first==0 && height) || std::abs(a.z-b.z)>kLevelTolerance) {
         supported=static_cast<bool>(height);
         const int samples=std::max(1,static_cast<int>(std::ceil(distance(a,b)/.1)));
         for(int i=1;i<samples && supported;++i) {
           if(cancel && cancel())return {};
           const double t=static_cast<double>(i)/samples;
-          supported=height({a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),a.z+t*(b.z-a.z)}).has_value();
+          const PointPose point{a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),a.z+t*(b.z-a.z)};
+          const auto z=height(point);
+          supported=z.has_value();
+          if (!z) continue;
+          if (first_height) changing_height=changing_height || std::abs(*z-*first_height)>kLevelTolerance;
+          else first_height=z;
+          follows_height=follows_height && std::abs(*z-point.z)<=kLevelTolerance;
+          if (changing_height && !follows_height) break;
         }
       }
-      if (!supported) continue;
-      if (valid(a,b)) {
+      // Keep terrain transitions while allowing a constant measured-height offset on a flat floor.
+      if (!supported || (changing_height && !follows_height)) continue;
+      if (valid(a,b) && (!cost || cost(a,b)<=path_cost(result,first,last)+1e-8)) {
         result.erase(result.begin()+first+1,result.begin()+last);
         break;
       }
@@ -82,8 +98,21 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
       for (std::size_t i=1;i<points.size();++i) total+=distance(points[i-1],points[i]);
       return total;
     };
-    if (length(dense)<=length(result)+1e-8 && checkRoute(dense,valid,cancel))
+    if (length(dense)<=length(result)+1e-8 && checkRoute(dense,valid,cancel) &&
+        (!cost || path_cost(dense,0,dense.size()-1)<=path_cost(result,0,result.size()-1)+1e-8))
       result=std::move(dense);
+  }
+  double first_level=result.front().z, last_level=result.back().z;
+  if (height && result.size()>2) {
+    const auto endpoint_level=[&](const PointPose &endpoint,double neighbor_z) {
+      auto probe=endpoint;
+      probe.z=neighbor_z;
+      const auto level=height(probe);
+      return level && std::abs(*level-probe.z)<=kLevelTolerance ? probe.z : endpoint.z;
+    };
+    // A measured endpoint may sit elsewhere within the same supported height band.
+    first_level=endpoint_level(result.front(),result[1].z);
+    last_level=endpoint_level(result.back(),result[result.size()-2].z);
   }
   std::vector<bool> dirty(result.size(),true);
   for (int pass=0;pass<30;++pass) {
@@ -93,7 +122,9 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
       if (!dirty[i]) continue;
       dirty[i]=false;
       const auto &a=result[i-1], &b=result[i+1], &current=result[i];
-      if (std::abs(a.z-current.z)>kLevelTolerance || std::abs(b.z-current.z)>kLevelTolerance)
+      const double a_level=i==1 ? first_level : a.z;
+      const double b_level=i+2==result.size() ? last_level : b.z;
+      if (std::abs(a_level-current.z)>kLevelTolerance || std::abs(b_level-current.z)>kLevelTolerance)
         continue;
       PointPose point{.5*current.x+.25*(a.x+b.x),.5*current.y+.25*(a.y+b.y),current.z};
       if (distance(point,current)<1e-5) continue;
@@ -105,6 +136,7 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
       if (distance(a,point)+distance(point,b)>distance(a,current)+distance(current,b)+1e-9)
         continue;
       if (!valid(a,point) || !valid(point,b)) continue;
+      if (cost && cost(a,point)+cost(point,b)>cost(a,current)+cost(current,b)+1e-8) continue;
       result[i]=point;
       dirty[i-1]=dirty[i]=dirty[i+1]=true;
       moved=true;

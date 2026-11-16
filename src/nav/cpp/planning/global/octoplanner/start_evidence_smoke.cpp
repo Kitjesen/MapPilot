@@ -100,7 +100,12 @@ int main() try {
     noisy_departure.updateNode((x+.5)*.05,(y+.5)*.05,-.025,true);
   noisy_departure.updateInnerOccupancy();
   require(noisy_departure.write(path.string()),"could not write noisy departure fixture");
-  require(r::runPlan(path,request).ok,"missing ground observations along departure prevented planning");
+  require(!r::runPlan(path,request).ok,"unsupported departure was accepted as start tolerance");
+  for(int x=-1;x<4;++x)for(int y=-8;y<=8;++y)
+    noisy_departure.updateNode((x+.5)*.05,(y+.5)*.05,-.025,true);
+  noisy_departure.updateInnerOccupancy();
+  require(noisy_departure.write(path.string()),"could not restore departure support");
+  require(r::runPlan(path,request).ok,"observed departure support did not restore planning");
   std::filesystem::remove(path);
   std::cout << "Start evidence passed: initial saved occupancy admitted, outside walls retained, exact start and request isolation preserved\n";
   return 0;

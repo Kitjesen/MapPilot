@@ -62,6 +62,7 @@ def build_gateway_app(gw: Any):
     from gateway.routes.body import register_body_routes
     from gateway.routes.camera import register_camera_routes
     from gateway.routes.commands import register_command_routes
+    from gateway.routes.agent_workspace import register_agent_workspace_routes
     from gateway.routes.diagnostics import register_diagnostic_routes
     from gateway.routes.health import register_health_routes
     from gateway.routes.inspection import register_inspection_routes
@@ -151,6 +152,7 @@ def build_gateway_app(gw: Any):
 
     register_product_control_routes(app)
     register_command_routes(app, gw)
+    register_agent_workspace_routes(app, gw)
     register_body_routes(app, gw)
     register_navigation_routes(app, gw)
     register_navigation_diagnostic_routes(app, gw)
