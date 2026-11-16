@@ -157,10 +157,16 @@ void TestLiveSnapshot() {
   assert(engine.Submit(MakeObservation(1, 3, 0, 0, 0, {1.25F, 1.25F, .25F})).accepted());
   assert(engine.WaitUntilProcessed(1, 3, std::chrono::seconds(2)));
   const auto next = engine.GetSnapshot();
-  assert(!bit(next.collision.measured_occupied_bits, old_cell));
+  assert(bit(next.collision.measured_occupied_bits, old_cell));
   assert(!bit(next.collision.known_free_bits, old_cell));
   assert(bit(next.collision.measured_occupied_bits, new_cell));
   assert(engine.GetState().last_error.empty());
+  assert(engine.Submit(MakeObservation(1, 4, 0, 0, 0, {2.5F, .5F, .5F})).accepted());
+  assert(engine.WaitUntilProcessed(1, 4, std::chrono::seconds(2)));
+  const auto cleared = engine.GetSnapshot();
+  assert(!bit(cleared.collision.measured_occupied_bits, old_cell));
+  assert(bit(cleared.collision.known_free_bits, old_cell));
+  assert(bit(cleared.collision.measured_occupied_bits, new_cell));
   engine.Stop();
 }
 
@@ -1042,6 +1048,7 @@ void TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch() {
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   assert(engine.Submit(MakeObservation(202, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
   assert(engine.WaitUntilProcessed(202, 1, std::chrono::milliseconds(500)));
+  assert(engine.GetState().live);
   const auto generation = engine.GetState().generation;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   bool rejected = false;
@@ -1052,7 +1059,8 @@ void TestGeometryBuildDoesNotBlockLiveScansAndRejectsLateEpoch() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  assert(rejected && engine.GetState().reset_epoch == 202 && engine.GetState().live);
+  // The scan's one-second freshness may expire while the old reconstruction finishes.
+  assert(rejected && engine.GetState().reset_epoch == 202);
   assert(engine.GetState().generation == generation);
   engine.Stop();
   std::filesystem::remove_all(directory);
