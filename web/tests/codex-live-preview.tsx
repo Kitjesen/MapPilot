@@ -7,7 +7,8 @@ import '../src/App.css'
 /** Recording entry: unlike the fixture preview this page leaves window.fetch untouched. */
 export function CodexLivePreview() {
   const controller = useAgentConversation()
-  useEffect(() => { controller.setOpen(true) }, [controller.setOpen])
+  const { setOpen } = controller
+  useEffect(() => { setOpen(true) }, [setOpen])
   return <main data-live-codex-preview style={{ maxWidth: 900, margin: '32px auto', padding: '0 24px' }}>
     <header style={{ marginBottom: 24 }}>
       <p style={{ fontSize: 11, letterSpacing: '0.12em', color: 'var(--text-dim)' }}>LINGTU / CODEX LIVE</p>

@@ -6,12 +6,11 @@ export function useVideoDecodeRate(
   stream: MediaStream | null,
   enabled = true,
 ): number | null {
-  const [fps, setFps] = useState<number | null>(null)
+  const [sample, setSample] = useState<{ stream: MediaStream; fps: number } | null>(null)
 
   useEffect(() => {
     const video = videoRef.current
     if (!video || !stream || !enabled) {
-      setFps(null)
       return
     }
 
@@ -25,7 +24,7 @@ export function useVideoDecodeRate(
       frameCount += 1
       const elapsed = now - windowStart
       if (elapsed >= 1000) {
-        setFps((frameCount * 1000) / elapsed)
+        setSample({ stream, fps: (frameCount * 1000) / elapsed })
         frameCount = 0
         windowStart = now
       }
@@ -34,7 +33,6 @@ export function useVideoDecodeRate(
 
     video.srcObject = stream
     if (typeof video.requestVideoFrameCallback !== 'function') {
-      setFps(null)
       return () => {
         active = false
         if (video.srcObject === stream) video.srcObject = null
@@ -49,5 +47,5 @@ export function useVideoDecodeRate(
     }
   }, [enabled, stream, videoRef])
 
-  return fps
+  return enabled && sample?.stream === stream ? sample.fps : null
 }

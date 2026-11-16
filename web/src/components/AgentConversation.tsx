@@ -749,7 +749,6 @@ export function AgentConversation({ locale, controller: conversation, onBotChang
                 ? <ReplyText id={message.id} text={message.text} locale={locale}
                     failureReason={message.kind === 'failed' ? turnsById.get(message.turn_id)?.failure_reason || message.text : undefined} />
                 : message.role === 'tool' ? <ToolActivityGroup messages={group} onSelectModel={conversation.setModel} onOpenConnections={() => setConnectionsOpen(true)} now={conversation.snapshot?.server_time} active={turnsById.get(message.turn_id)?.state === 'running'}
-                  runningId={conversation.active && !conversation.error ? currentTool?.id : undefined}
                   awaiting={approvals.filter(approval => approval.turn_id === message.turn_id).map(approval => approval.tool_name)} /> : <>
                     {(turnsById.get(message.turn_id)?.reply_to_message_id || turnsById.get(message.turn_id)?.reply_quote) && <ReplyQuote locale={locale}
                       quote={turnsById.get(message.turn_id)?.reply_quote}

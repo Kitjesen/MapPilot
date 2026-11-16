@@ -4,6 +4,7 @@ import * as THREE from 'three'
 
 import {
   MAPPING_OBSERVATION_COLORS,
+  MAPPING_OBSERVATION_LABELS,
   mappingObservationPointAt,
   resolveMappingObservation,
 } from '../src/services/mappingObservation.ts'
@@ -155,7 +156,7 @@ test('malformed payloads, non-contract values, incorrect counts and invalid geom
 test('world lookup applies inverse yaw and never infers cells outside the rolling window', () => {
   const state = resolveMappingObservation(observationScene(undefined, { yaw: Math.PI / 2 }), { nowS: 101 })
   assert.deepEqual(mappingObservationPointAt(state, 9.75, 20.25), {
-    row: 0, col: 0, value: -1, label: '未确认 · 缺少地面依据',
+    row: 0, col: 0, value: -1, label: '未确认 · 高度范围内缺少观测',
   })
   assert.equal(mappingObservationPointAt(state, 9.75, 21.25)?.value, 100)
   assert.equal(mappingObservationPointAt(state, 9.25, 21.25)?.value, 0)
@@ -191,5 +192,6 @@ test('raw height-band occupancy must never be displayed as ground-relative obsta
   const scene = observationScene(undefined, {
     id: 'maps.occupancy', value_semantics: 'height_band_occupancy_not_traversability',
   })
-  assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'unavailable')
+  assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'ready')
+  assert.doesNotMatch(Object.values(MAPPING_OBSERVATION_LABELS).join(' '), /支撑候选|附近地面|地面依据/)
 })

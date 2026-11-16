@@ -119,7 +119,7 @@ test('mapping opens on the cumulative map and keeps the local projection explici
   assert.match(sceneSource, /mappingView === 'coverage'\) scene3DRef\.current\?\.topView\(6\)/)
   assert.match(sceneSource, /<section aria-label="建图显示图例">/)
   assert.match(sceneSource, /<summary>图例与说明<\/summary>/)
-  assert.match(sceneSource, /地面相对高度 · 不代表可通行/)
+  assert.match(sceneSource, /高度范围内占据 · 不代表可通行/)
   assert.match(sceneSource, /二维投影不是地面高度/)
   assert.match(sceneSource, /当前局部窗口 · 切换整图查看累计范围/)
   assert.match(sceneSource, /本次累计建图 · 显示经过采样/)

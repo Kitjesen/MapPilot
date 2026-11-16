@@ -1161,7 +1161,7 @@ test('images require a capable model and remain available after changing the mod
 test('the multiline composer sends Enter and preserves Shift Enter and IME composition', () => {
   const require = createRequire(import.meta.url)
   const exports: Record<string, unknown> = {}
-  const react = { useRef: () => ({ current: null }), useState: () => [false, () => {}], useEffect() {}, useLayoutEffect() {} }
+  const react = { useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {}, useLayoutEffect() {} }
   runInNewContext(compile('../src/components/AgentConversation.tsx'), { exports, require: (name: string) => {
     const dependency = conversationDependency(name)
     if (dependency) return dependency
@@ -1255,7 +1255,8 @@ test('composer menus show the selected model and reasoning without changing the 
   const html = render(null)
   assert.match(html, /<summary[^>]*aria-label="模型"[^>]*aria-haspopup="menu"/)
   assert.match(html, /role="menuitemradio" aria-checked="true"[^>]*><span>Model A<\/span>/)
-  assert.match(html, /aria-label="思考深度"/)
+  assert.match(html, /思考深度/)
+  assert.doesNotMatch(html, /aria-label="思考深度"/)
   assert.match(html, /<span>深入<\/span>/)
   assert.doesNotMatch(html, /<select/)
   const pending = render({ message_id: 'original', text: '去门口' })

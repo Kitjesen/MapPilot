@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Play, RotateCcw } from 'lucide-react'
 import { AgentConversation } from '../src/components/AgentConversation'
@@ -110,35 +110,36 @@ window.fetch = async (input, init) => {
   return reply({ detail: { reason: 'preview_only' } }, 503)
 }
 
-function FollowPreview() {
+export function FollowPreview() {
   const [current, setCurrent] = useState(1)
   const [playing, setPlaying] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const chat = useAgentConversation(undefined, true, null, 'follow-preview')
-  const refresh = useRef(chat.refresh)
-  refresh.current = chat.refresh
-  const clear = () => { timers.current.forEach(clearTimeout); timers.current = []; setPlaying(false) }
-  const show = (index: number) => {
+  const { refresh: refreshChat, setOpen } = chat
+  const refresh = useRef(refreshChat)
+  useEffect(() => { refresh.current = refreshChat }, [refreshChat])
+  const clear = useCallback(() => { timers.current.forEach(clearTimeout); timers.current = []; setPlaying(false) }, [])
+  const show = useCallback((index: number) => {
     build(index); setCurrent(index); setDismissed(false)
     void refresh.current()
-  }
-  const stop = () => {
+  }, [])
+  const stop = useCallback(() => {
     clear(); show(3)
     timers.current.push(setTimeout(() => show(4), 2400))
-  }
-  const replay = () => {
+  }, [clear, show])
+  const replay = useCallback(() => {
     clear(); setPlaying(true); show(0)
     ;[3200, 7600, 11800, 15000].forEach((delay, index) => {
       timers.current.push(setTimeout(() => { show(index + 1); if (index === 3) setPlaying(false) }, delay))
     })
-  }
-  useEffect(() => { chat.setOpen(true) }, [chat.setOpen])
+  }, [clear, show])
+  useEffect(() => { setOpen(true) }, [setOpen])
   useEffect(() => {
     changeFromChat = index => index === 3 ? stop() : (clear(), show(index))
-    if (new URLSearchParams(location.search).has('play')) replay()
+    if (new URLSearchParams(location.search).has('play')) timers.current.push(setTimeout(replay, 0))
     return () => { timers.current.forEach(clearTimeout) }
-  }, [])
+  }, [clear, show, stop, replay])
   return <main className="follow-demo">
     <header className="follow-demo-heading"><div><strong>LingTu</strong><span>对话跟随</span></div><span className="follow-demo-badge">模拟演示 · 未连接机器人</span></header>
     <nav className="follow-demo-steps" aria-label="跟随演示阶段">

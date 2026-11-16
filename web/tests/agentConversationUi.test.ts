@@ -53,7 +53,7 @@ function controller(overrides: Record<string, unknown> = {}) {
   return {
     open: true, draft: '', replyTo: '', setReplyTo() {}, editable: true, attachments: [], model: 'test', reasoning: 'default',
     permissionMode: 'default', approvalBusy: null, options: {
-      models: [{ id: 'test', label: 'Test model', reasoning: [{ id: 'default', label: '默认' }] }],
+      models: [{ id: 'test', label: 'Test model', reasoning: [{ id: 'default', label: '默认' }, { id: 'high', label: '深入' }] }],
       attachments: { accept: '.txt', max_files: 4, max_file_bytes: 1000 },
     },
     snapshot: { messages: [], turns: [], approvals: [] }, ...overrides,
@@ -247,7 +247,7 @@ test('sending and uploading are processing while connection failures stop activi
 test('suggestions fill the draft without submitting a message', () => {
   const drafts: string[] = []
   let sends = 0
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useEffect() {}, useLayoutEffect() {} })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {}, useLayoutEffect() {} })
   const tree = render({ locale: 'zh', controller: controller({ setDraft: (value: string) => drafts.push(value), send: () => { sends++ } }) })
   type Element = { type?: string; props?: { children?: unknown; onClick?: () => void } }
   function elements(node: unknown): Element[] {
@@ -323,7 +323,7 @@ test('work text follows actual tool events and terminal failure stops the tool a
   assert.doesNotMatch(processing, /<pre/)
   const failure = html({ snapshot: { messages: [start], turns: [{ turn_id: 'one', state: 'failed' }] } })
   assert.match(failure, /已发起/)
-  assert.match(failure, /本轮未完成/)
+  assert.match(failure, /本轮对话未完成/)
   assert.doesNotMatch(failure, /data-working="true"|data-running="true"/)
 })
 
@@ -427,7 +427,7 @@ test('composer offers an add menu and keeps history in the header', () => {
   assert.doesNotMatch(addMenu, /Bot 形象与角色|更多机器人设置/)
   const header = markup.match(/<header[^>]*>([\s\S]*?)<\/header>/)![1]
   assert.match(header, /aria-label="会话历史"/)
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
+  assert.match(header, /aria-label="切换 Bot"/)
   assert.doesNotMatch(markup, /aria-label="会话记录"/)
 })
 
@@ -538,8 +538,8 @@ test('the header keeps Bot beside an icon-only share entry and waits for session
   const share = header.match(/<button[^>]*aria-label="分享对话"[^>]*>([\s\S]*?)<\/button>/)![1]
   assert.match(share, /<svg/)
   assert.equal(share.replace(/<[^>]*>/g, '').trim(), '')
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
-  assert.ok(header.indexOf('打开 Bot 形象与角色') < header.indexOf('aria-label="分享对话"'))
+  assert.match(header, /aria-label="切换 Bot"/)
+  assert.ok(header.indexOf('切换 Bot') < header.indexOf('aria-label="分享对话"'))
   const waiting = html({ sessionBusy: 'two', snapshot: { ...snapshot, metadata: { ...snapshot.metadata, archived: true } } })
   assert.match(waiting, /aria-label="分享对话"[^>]*disabled=""/)
 })
@@ -681,7 +681,7 @@ test('a loaded search target receives focus and does not resume following new me
 test('only pending approvals show actions and decisions retain the approval identity', () => {
   const effects: Array<() => void> = []
   const decisions: unknown[][] = []
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
   const tree = render({ locale: 'zh', controller: controller({
     decideApproval: (...args: unknown[]) => decisions.push(args),
     snapshot: { messages: [], turns: [], approvals: [
@@ -882,7 +882,7 @@ test('new sensor monitor tool results open once without replaying history or fai
   let effects: Array<() => void> = []
   const render = component({
     useRef: (initial: unknown) => refIndex++ === 0 ? seen : { current: initial },
-    useState: () => [false, () => {}], useLayoutEffect() {},
+    useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {},
     useEffect: (effect: () => void) => effects.push(effect),
   }, {
     '../hooks/useSensorMonitor.ts': { useSensorMonitor: () => (view: string) => opened.push(view) },

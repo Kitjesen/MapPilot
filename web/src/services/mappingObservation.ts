@@ -6,9 +6,9 @@ export const MAPPING_OBSERVATION_DEFAULT_MAX_AGE_S = 5
 export type MappingObservationCell = -1 | 0 | 100
 
 export const MAPPING_OBSERVATION_LABELS: Record<MappingObservationCell, string> = {
-  [-1]: '未确认 · 缺少地面依据',
-  0: '支撑候选 · 已观测低表面',
-  100: '障碍回波 · 高于附近地面',
+  [-1]: '未确认 · 高度范围内缺少观测',
+  0: '空闲观测 · 当前高度范围',
+  100: '占据观测 · 当前高度范围',
 }
 
 export const MAPPING_OBSERVATION_COLORS: Record<MappingObservationCell, readonly [number, number, number, number]> = {
