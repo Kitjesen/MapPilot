@@ -16,6 +16,8 @@ below records its integration into a separate fixed source branch.
 `codex/converge-20261117` captures the local refinements in `4998f694` and merges
 the main/PR30/PR33 lineage at `4dd657c0`. Merge commit `5e660ce6` and its follow-up
 fixes are reviewed together in [PR #39](https://github.com/Kitjesen/MapPilot/pull/39).
+The candidate source is the final reviewed head of that PR, including the
+subsequent main integration and verified fixes recorded below.
 The original shared worktree remains a separate, ongoing development workspace.
 
 The integration fixes prepared-cache read/write alignment, preserves terminal
@@ -29,8 +31,17 @@ Local integration evidence includes Rust 79 passed/1 ignored, global planning
 994-test run passed; subsequent React/lint fixes passed the affected 60-test
 group, final lint, both TypeScript projects and the production build. Linux
 installer/preparation checks passed 18 tests and the three Bash behaviors.
-The Linux visual replay fixture passed all three tests after fixing its
-synthetic frame timestamps; production freshness checks were retained.
+Visual replay now reserves an empty capture directory for each run and checks
+the captured PNG contents and minimum frame count. This directory ownership
+provides the frame provenance independently of filesystem timestamp precision.
+
+The current Go2 driver was freshly compiled against the existing real Unitree
+SDK2 prefix `/home/thunder/.cache/unitree-sdk2-install`. All 16 non-hardware
+CTest cases passed, including isolated-domain DDS IO. The x86_64 ELF loaded
+successfully with `--help`; `ldd` resolved both CycloneDDS libraries from that
+SDK prefix, and the binary's RPATH selects the same prefix. Evidence is in
+`build/converge/go2-sdk-build.log`; the recorded source revision and reproducible
+command are in `go2-sdk-source-head.txt` and `go2-sdk-build.sh` beside it.
 
 Logs are retained under `build/converge/`, `build/converge-app-20261117/`,
 `build/global-tests-final.log` and `build/nav-portable-tests-final.log` in the
@@ -40,8 +51,8 @@ was not optimized in this integration. No Go2 target package or field motion
 is qualified by these results.
 
 The Go2 delivery path remains the existing Linux/aarch64 native build and
-release packager. Windows and WSL/x86_64 test results cannot qualify its ELF
-binaries, SDK linkage or sensors.
+release packager. Aarch64 binaries, target SDK linkage and live sensors still
+require evidence from the matching target environment.
 
 ## Completed local work
 
@@ -83,22 +94,29 @@ Local evidence:
 - [Exact package patch](../../build/go2-deploy-offline-20261116/package.patch)
 - [Package self-test output](../../build/go2-deploy-offline-20261116/package-self-test.after.log)
 
-The wider deployment test file still has four failures outside the package
-change: one retired driver diagnostic string, two references to the removed
-`endpoint/nav/app/goal/terminal.cpp`, and one previous systemd implementation
-assertion. They are recorded in the package report and remain for integration;
-the narrow pass does not clear those failures.
+The four deployment-test mismatches recorded in the initial package report
+have been reconciled with their current owners. The tests for the driver
+entrypoint, both terminal-lifecycle paths and Gateway-before-runtime readiness
+all passed in `build/converge/release-contracts-after.xml`. That run reports
+101 passed and three Windows Bash-only skips; these four tests have no skips.
+The updated assertions follow the current driver diagnostics, terminal owner
+files and ProductControl readiness order.
 
 ## Remaining build and target work
 
-This workstation's WSL environment has no aarch64 C++ toolchain/sysroot, ARM
-Rust target, Unitree SDK2 prefix or RealSense development SDK. The current MLS
-CMake Cargo invocation also assumes a native build. No cross-compilation
-framework is being introduced for this candidate; use the established NX
-native build after confirming its installed prerequisites.
+The available WSL host and Unitree SDK2 libraries are x86_64. A complete Go2
+aarch64 package still requires a matching build environment, vendor libraries
+and C++/Rust targets. The existing ARM CI artifact contains `slamd`, `slamctl`
+and `test_slam_contract`; its three selected SLAM tests passed. The complete
+Go2 ARM package remains unverified.
 
-Once integration provides a fixed, tested source revision, use a separate
-candidate checkout and the matching SDKs on NX:
+The WSL default discovery paths did not provide `realsense2`, and the package
+database had no RealSense development SDK. The full camera build still needs
+its SDK prefix. Use the established NX native build after confirming its
+installed prerequisites.
+
+Use the final reviewed PR source in a separate candidate checkout with the
+matching SDKs on NX:
 
 ```bash
 export LINGTU_DRIVER_BACKEND=go2
