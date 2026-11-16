@@ -1057,7 +1057,7 @@ void testSafetyReplanEvidenceSurvivesReadyPendingAndInitializationFailure() {
 
   fixture.planner_output.path_found = false;
   fixture.planner_output.local_path_map.clear();
-  for (const char *reason : {"local_intent_pending", "scan_initialization_failed"}) {
+  for (const char *reason : {"local_intent_pending", "aegis_init_failed"}) {
     fixture.planner_output.reason = reason;
     const auto waiting = controller.tick(fixture.input());
     const auto &retained = waiting.teleop.last_safety_replan;
@@ -1255,10 +1255,10 @@ void testRotationClearsPreviousTranslationFailureAndPath() {
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
   fixture.planner_output.active = true;
-  fixture.planner_output.reason = "scan_local_target_blocked";
+  fixture.planner_output.reason = "aegis_goal_blocked";
   TeleopTickController controller(fixture.actions, fixture.control());
   const auto blocked = controller.tick(fixture.input());
-  require(blocked.local && blocked.local->reason == "scan_local_target_blocked",
+  require(blocked.local && blocked.local->reason == "aegis_goal_blocked",
           "fixture must first report the failed translation plan");
 
   fixture.request = {0.0, 0.0, 0.35};

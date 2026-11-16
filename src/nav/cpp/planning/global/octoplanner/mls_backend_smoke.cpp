@@ -119,6 +119,32 @@ int main() try {
   require(decoded == source, "MLS artifact round trip changed data");
   require(decoded.edges.front().id != 0, "MLS artifact did not restore stable edge ID");
 
+  std::ostringstream records(std::ios::binary), fields(std::ios::binary);
+  {
+    lingtu::maps::BinaryWriter out(records), expected(fields);
+    out.vector(source.surfaces);
+    expected.value<std::uint64_t>(source.surfaces.size());
+    for (const auto& cell : source.surfaces) {
+      expected.value(cell.x); expected.value(cell.y); expected.value(cell.z);
+    }
+    out.vector(source.nodes);
+    expected.value<std::uint64_t>(source.nodes.size());
+    for (const auto& node : source.nodes) {
+      expected.value(node.id);
+      expected.value(node.cell.x); expected.value(node.cell.y); expected.value(node.cell.z);
+    }
+  }
+  require(records.str() == fields.str(), "MLS record encoding changed cache bytes");
+  bool truncated_rejected = false;
+  try {
+    auto bytes = records.str(); bytes.pop_back();
+    std::istringstream truncated(bytes, std::ios::binary);
+    lingtu::maps::BinaryReader in(truncated);
+    (void)in.vector<SurfaceCell>();
+    (void)in.vector<Node>();
+  } catch (const std::runtime_error&) { truncated_rejected = true; }
+  require(truncated_rejected, "MLS record reader accepted a truncated cache");
+
   Artifact invalid = source;
   invalid.edges[0].to = 99;
   require(!global_planner::mls::validate(invalid), "invalid node reference accepted");

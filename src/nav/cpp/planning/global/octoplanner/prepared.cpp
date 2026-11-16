@@ -21,9 +21,9 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.6";
+constexpr const char* kFormat="lingtu.navigation.prepared.8";
 constexpr std::uint32_t kEndian=0x01020304U;
-struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
+struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,24> preparation; };
 
 Header readHeader(BinaryReader& in) {
   if(in.text()!=kFormat || in.value<std::uint32_t>()!=kEndian)
@@ -99,8 +99,8 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
           step_cells,
           height_stride};
       global_planner::mls::RustGraph rust_graph;
-      rust_graph.nodes = rust_artifact->nodes;
-      rust_graph.edges = rust_artifact->edges;
+      rust_graph.nodes = std::move(rust_artifact->nodes);
+      rust_graph.edges = std::move(rust_artifact->edges);
       auto restored = std::make_shared<global_planner::mls::PreparedArtifactHandle>(
           global_planner::mls::PreparedArtifactHandle::createFromGraph(
               rust_artifact->observed, rust_artifact->inferred, rust_graph,

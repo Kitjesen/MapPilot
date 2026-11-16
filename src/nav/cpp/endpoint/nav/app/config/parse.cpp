@@ -460,7 +460,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.scan_follower.yawGain, "LINGTU_NAV_SCAN_YAW_GAIN");
   applyEnvDouble(cfg.scan_follower.maxVx, "LINGTU_NAV_SCAN_MAX_VX_MPS");
   applyEnvDouble(cfg.scan_follower.maxVy, "LINGTU_NAV_SCAN_MAX_VY_MPS");
-  applyEnvDouble(cfg.scan_follower.minVy, "LINGTU_NAV_SCAN_MIN_VY_MPS");
   applyEnvDouble(cfg.scan_follower.maxYawRateRadS,
                  "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S");
   applyEnvDouble(cfg.scan_follower.finishDistance,
@@ -616,6 +615,7 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.sensor_offset_y_m, "LINGTU_NAV_SENSOR_OFFSET_Y_M");
   applyEnvDouble(cfg.sensor_offset_z_m, "LINGTU_NAV_SENSOR_OFFSET_Z_M");
   applyEnvDouble(cfg.octoplanner_options.robot_radius, "LINGTU_NAV_OCTO_ROBOT_RADIUS_M");
+  applyEnvDouble(cfg.octoplanner_options.body_offset_m, "LINGTU_NAV_OCTO_BODY_OFFSET_M");
   applyEnvDouble(cfg.octoplanner_options.body_clearance_below_m,
                  "LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M");
   applyEnvDouble(cfg.octoplanner_options.body_clearance_above_m,
@@ -838,6 +838,8 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.teleop_planner_max_deviation_deg = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-robot-radius-m") {
       cfg.octoplanner_options.robot_radius = parseDouble(next(), arg.c_str());
+    } else if (arg == "--octo-body-offset-m") {
+      cfg.octoplanner_options.body_offset_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-body-clearance-below-m") {
       cfg.octoplanner_options.body_clearance_below_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-body-clearance-above-m") {
@@ -1058,7 +1060,6 @@ CliConfig parseArgs(int argc, char **argv) {
       !std::isfinite(cfg.scan_follower.yawGain) ||
       !std::isfinite(cfg.scan_follower.maxVx) ||
       !std::isfinite(cfg.scan_follower.maxVy) ||
-      !std::isfinite(cfg.scan_follower.minVy) || cfg.scan_follower.minVy < 0.0 ||
       !std::isfinite(cfg.scan_follower.maxYawRateRadS) ||
       !std::isfinite(cfg.scan_follower.finishDistance) ||
       !std::isfinite(cfg.recovery_blocked_interval_s) ||
@@ -1225,6 +1226,7 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.collision_clearance_above_m = std::max(0.0, cfg.collision_clearance_above_m);
   auto &octo = cfg.octoplanner_options;
   octo.robot_radius = std::max(0.0, octo.robot_radius);
+  octo.body_offset_m = std::max(0.0, octo.body_offset_m);
   octo.body_clearance_below_m = std::max(0.0, octo.body_clearance_below_m);
   octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);

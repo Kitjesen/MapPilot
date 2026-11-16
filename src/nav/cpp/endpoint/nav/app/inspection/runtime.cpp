@@ -1,4 +1,4 @@
-#include "app/inspection/inspection_runtime_controller.hpp"
+#include "app/inspection/runtime.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -205,14 +205,6 @@ void InspectionRuntimeController::clearActivePoint() noexcept {
 const std::optional<lingtu::nav::inspection::Point> &
 InspectionRuntimeController::activePoint() const noexcept {
   return active_point_;
-}
-
-lingtu::nav::inspection::Executor &InspectionRuntimeController::executor() noexcept {
-  return executor_;
-}
-
-const lingtu::nav::inspection::Executor &InspectionRuntimeController::executor() const noexcept {
-  return executor_;
 }
 
 bool InspectionRuntimeController::applyEvidenceResult(const InspectionRuntimeEvidenceResult &result,

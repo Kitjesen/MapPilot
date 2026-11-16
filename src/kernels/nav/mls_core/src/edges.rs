@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::adjacency;
 use crate::corridor;
@@ -81,7 +81,14 @@ pub(crate) fn build_graph_with_forced_nodes(
                 continue;
             }
             let key = if a < b { (a, b) } else { (b, a) };
-            let cost = distance[current] + base + distance[next];
+            let crossing = base
+                + edge_penalty(
+                    sorted[current],
+                    sorted[next],
+                    wall[current].min(wall[next]),
+                    config,
+                );
+            let cost = distance[current] + crossing + distance[next];
             let entry = boundaries
                 .entry(key)
                 .or_insert((f32::INFINITY, current, next));
@@ -91,6 +98,7 @@ pub(crate) fn build_graph_with_forced_nodes(
         }
     }
 
+    let sources: HashSet<usize> = node_cells.iter().copied().collect();
     let mut edges = Vec::with_capacity(boundaries.len());
     for ((a, b), (cost, current, next)) in boundaries {
         let (left, right) = if owner[current] == a {
@@ -98,8 +106,8 @@ pub(crate) fn build_graph_with_forced_nodes(
         } else {
             (next, current)
         };
-        let mut corridor = corridor::chain_to_source(left, &predecessor, &node_cells);
-        let tail = corridor::chain_to_source(right, &predecessor, &node_cells);
+        let mut corridor = corridor::chain_to_source(left, &predecessor, &sources);
+        let tail = corridor::chain_to_source(right, &predecessor, &sources);
         corridor.reverse();
         corridor.extend(tail);
         corridor.dedup();
@@ -114,7 +122,7 @@ pub(crate) fn build_graph_with_forced_nodes(
     SurfaceGraph { nodes, edges }
 }
 
-fn edge_penalty(a: SurfaceCell, b: SurfaceCell, wall: f32, config: GraphConfig) -> f32 {
+pub(crate) fn edge_penalty(a: SurfaceCell, b: SurfaceCell, wall: f32, config: GraphConfig) -> f32 {
     let rise = (a.z - b.z).unsigned_abs() as f32;
     let step = rise * config.step_penalty_weight.max(0.0);
     let clearance = config.wall_clearance_cells.max(0) as f32;
@@ -125,4 +133,44 @@ fn edge_penalty(a: SurfaceCell, b: SurfaceCell, wall: f32, config: GraphConfig) 
         0.0
     };
     step + wall_cost
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boundary_cost_keeps_step_and_wall_penalties() {
+        let cells = [SurfaceCell::new(0, 0, 0), SurfaceCell::new(1, 0, 1)];
+        for (step_weight, wall_weight) in [(0.0, 0.0), (5.0, 0.0), (0.0, 3.0), (5.0, 3.0)] {
+            let config = GraphConfig {
+                node_spacing_cells: 1,
+                max_link_cells: 1,
+                wall_buffer_cells: 1,
+                wall_buffer_weight: wall_weight,
+                step_penalty_weight: step_weight,
+                ..GraphConfig::default()
+            };
+            let graph = build_graph(&cells, config);
+            let expected = SurfaceGraph {
+                nodes: vec![
+                    Node {
+                        id: 0,
+                        cell: cells[0],
+                    },
+                    Node {
+                        id: 1,
+                        cell: cells[1],
+                    },
+                ],
+                edges: vec![Edge {
+                    a: 0,
+                    b: 1,
+                    cost: 2.0_f32.sqrt() + step_weight + wall_weight,
+                    corridor: cells.to_vec(),
+                }],
+            };
+            assert_eq!(graph, expected, "step={step_weight}, wall={wall_weight}");
+        }
+    }
 }

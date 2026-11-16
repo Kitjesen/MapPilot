@@ -21,6 +21,52 @@ namespace global_planner
         // OctoMap exposes point coordinates as floats; preserve inclusive
         // metric bounds when those coordinates are compared with doubles.
         constexpr double kMetricToleranceEpsilonM = 1e-6;
+        constexpr double kPi = 3.14159265358979323846;
+
+        double heading(const PointPose &from, const PointPose &to) {
+            return std::hypot(to.x-from.x, to.y-from.y)>1e-9
+                ? std::atan2(to.y-from.y, to.x-from.x) : from.yaw.value_or(to.yaw.value_or(0.0));
+        }
+
+        bool arcIntersects(const lingtu::maps::NoGoRegion &box, const PointPose &point,
+                           double offset, double radius, double below, double above,
+                           double from_yaw, double to_yaw) {
+            if (point.z+above<box.min[2] || point.z-below>box.max[2]) return false;
+            constexpr double pi=3.14159265358979323846;
+            const double turn=std::remainder(to_yaw-from_yaw,2*pi);
+            const double first=std::min(from_yaw,from_yaw+turn);
+            const double last=std::max(from_yaw,from_yaw+turn);
+            const auto test=[&](double angle) {
+                angle+=std::ceil((first-angle)/(2*pi))*2*pi;
+                if(angle>last+1e-12)return false;
+                const double x=point.x+offset*std::cos(angle), y=point.y+offset*std::sin(angle);
+                const double dx=std::max({box.min[0]-x,0.0,x-box.max[0]});
+                const double dy=std::max({box.min[1]-y,0.0,y-box.max[1]});
+                return dx*dx+dy*dy<=radius*radius;
+            };
+            if(test(first) || test(last))return true;
+            if(offset==0)return false;
+            for(int quadrant=0;quadrant<4;++quadrant)if(test(quadrant*pi/2))return true;
+            for(double x:{box.min[0],box.max[0]}) {
+                const double c=(x-point.x)/offset;
+                if(std::abs(c)<=1) {
+                    const double angle=std::acos(c);
+                    if(test(angle) || test(-angle))return true;
+                }
+                for(double y:{box.min[1],box.max[1]}) {
+                    const double angle=std::atan2(y-point.y,x-point.x);
+                    if(test(angle) || test(angle+pi))return true;
+                }
+            }
+            for(double y:{box.min[1],box.max[1]}) {
+                const double s=(y-point.y)/offset;
+                if(std::abs(s)<=1) {
+                    const double angle=std::asin(s);
+                    if(test(angle) || test(pi-angle))return true;
+                }
+            }
+            return false;
+        }
 
     }
 
@@ -42,6 +88,7 @@ namespace global_planner
         surface_closing_radius_m_ = config.surface_closing_radius_m;
         search_resolution_m_ = config.search_resolution_m;
         robot_radius_ = config.robot_radius;
+        body_offset_m_ = config.body_offset_m;
         body_clearance_below_m_ = config.body_clearance_below_m;
         body_clearance_above_m_ = config.body_clearance_above_m;
         ground_support_ = config.ground_support;
@@ -110,7 +157,7 @@ namespace global_planner
     {
         if (no_go_regions_ == regions) return;
         no_go_regions_ = std::move(regions);
-        clearMapQueryCaches();
+        body_cache_.clear();
     }
 
     bool OctoPlanner3D::noGoIntersects(const octomap::point3d &from,
@@ -163,6 +210,7 @@ namespace global_planner
         external_preblocked_cells_.clear();
         artifact_ = std::make_shared<PlannerArtifact>();
         artifact_->rust_graph = std::move(graph);
+        rebuildRustGraph(true);
         rebuildQueryOffsets();
         clearMapQueryCaches();
         rebuildExternalPreblockedCells();
@@ -175,22 +223,20 @@ namespace global_planner
             throw std::runtime_error("planner artifact is not prepared");
         }
         out.value<std::uint8_t>(1);
-        const auto surfaces = artifact_->rust_graph->surfaces();
-        const auto graph = artifact_->rust_graph->graph();
+        auto surfaces = artifact_->rust_graph->surfaces();
+        auto graph = artifact_->rust_graph->graph();
         mls::Artifact cached;
         cached.resolution_m = octree_->getResolution();
         cached.revision = artifact_->rust_graph->summary().revision;
-        cached.observed = surfaces.observed;
-        cached.inferred = surfaces.inferred;
-        cached.nodes = graph.nodes;
-        cached.edges = graph.edges;
+        cached.observed = std::move(surfaces.observed);
+        cached.inferred = std::move(surfaces.inferred);
+        cached.nodes = std::move(graph.nodes);
+        cached.edges = std::move(graph.edges);
         mls::write(out, cached);
     }
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
     {
-        occupied_blocks_.clear();
-        last_occupied_block_ = nullptr;
         endpoint_resolution_ = {};
         search_info_ = {};
         start_point_ = start;
@@ -266,7 +312,15 @@ namespace global_planner
             const octomap::point3d a(from.x, from.y, from.z);
             const octomap::point3d b(to.x, to.y, to.z);
             TraversabilityFailure failure = TraversabilityFailure::None;
-            if (i == 1 && a == octomap::point3d(
+            const double yaw=heading(from,to);
+            const double incoming=i>1?heading(route[i-2],from):from.yaw.value_or(yaw);
+            if ((from.yaw && !turnFree(from,incoming,*from.yaw,&failure)) ||
+                !turnFree(from,from.yaw.value_or(incoming),yaw,&failure) ||
+                (i+1==route.size() && to.yaw && !turnFree(to,yaw,*to.yaw,&failure))) {
+                record(failure,i-1,true);
+                return result;
+            }
+            if (i == 1 && has_start_ && a == octomap::point3d(
                     start_point_.x, start_point_.y, start_point_.z)) {
                 if (!isStartConnectionAllowed(a, b, &failure)) {
                     record(failure, i - 1, true);
@@ -274,17 +328,17 @@ namespace global_planner
                 }
                 continue;
             }
-            failure = queryWorld(a, robot_radius_, ground_support_);
+            failure = queryWorld(a, robot_radius_, ground_support_, true, yaw);
             if (failure != TraversabilityFailure::None) {
                 record(failure, i - 1, false);
                 return result;
             }
-            failure = queryWorld(b, robot_radius_, ground_support_);
+            failure = queryWorld(b, robot_radius_, ground_support_, true, yaw);
             if (failure != TraversabilityFailure::None) {
                 record(failure, i - 1, false);
                 return result;
             }
-            if (!sweptRouteFree(a, b, &failure, nullptr, true, true)) {
+            if (!sweptRouteFree(a, b, &failure, nullptr, true, true, true, yaw)) {
                 record(failure, i - 1, true);
                 return result;
             }
@@ -306,8 +360,6 @@ namespace global_planner
     {
         PoseQueryInfo info;
         if (!octree_ || !map_ready_) return info;
-        occupied_blocks_.clear();
-        last_occupied_block_ = nullptr;
         anchorPlanningLattice(anchor);
         info.ready = true;
         info.xy_resolution = planningXYResolution();
@@ -375,8 +427,10 @@ namespace global_planner
             worldToGrid(requested.x(), requested.y(), requested.z()));
         const bool physical_pose = support_height_m_ > 0.0 ||
             body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
-        if (!physical_pose || queryWorld(requested, robot_radius_, ground_support_) !=
-                TraversabilityFailure::None) {
+        const auto goal_admission=body_offset_m_>0 && !goal_point_.yaw
+            ? queryBase(requested,ground_support_)
+            : queryWorld(requested,robot_radius_,ground_support_,true,goal_point_.yaw.value_or(0.0));
+        if (!physical_pose || goal_admission != TraversabilityFailure::None) {
             const auto seed = worldToPlanningGrid(requested.x(), requested.y(), requested.z());
             GridIndex goal{};
             if (!findNearestFreeCell(seed, robot_radius_, snap_search_radius_cells_,
@@ -455,125 +509,140 @@ namespace global_planner
     {
         if (!metricConnectionWithinLimits(from,to)) return false;
         const octomap::point3d a(from.x,from.y,from.z), b(to.x,to.y,to.z);
+        const double yaw=heading(from,to);
+        if(from.yaw && !turnFree(from,*from.yaw,yaw))return false;
+        if(to.yaw && !turnFree(to,yaw,*to.yaw))return false;
         const bool start=a==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
         if (start) return isStartConnectionAllowed(a,b);
-        return (endpoints_validated ||
-            (queryWorld(a,robot_radius_,ground_support_)==TraversabilityFailure::None &&
-             queryWorld(b,robot_radius_,ground_support_)==TraversabilityFailure::None)) &&
-            sweptRouteFree(a,b,nullptr,nullptr,true,true);
+        return ((endpoints_validated && body_offset_m_==0) ||
+            (queryWorld(a,robot_radius_,ground_support_,true,yaw)==TraversabilityFailure::None &&
+             queryWorld(b,robot_radius_,ground_support_,true,yaw)==TraversabilityFailure::None)) &&
+            sweptRouteFree(a,b,nullptr,nullptr,true,true,true,yaw);
     }
 
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        EdgeCost clearance_cost;
+        if(obstacle_clearance_weight_>0 && obstacle_clearance_radius_cells_>0) {
+            clearance_cost=[&](const PointPose &from,const PointPose &to) {
+                const double length=std::hypot(to.x-from.x,to.y-from.y,to.z-from.z);
+                const double yaw=heading(from,to);
+                const int count=std::max(1,static_cast<int>(std::ceil(2*length/octree_->getResolution())));
+                double total=0;
+                for(int sample=0;sample<count;++sample) {
+                    const double fraction=(sample+.5)/count;
+                    double cost=0;
+                    for(double sign:{-1.0,1.0}) {
+                        const auto cell=worldToGrid(from.x+fraction*(to.x-from.x)+sign*body_offset_m_*std::cos(yaw),
+                            from.y+fraction*(to.y-from.y)+sign*body_offset_m_*std::sin(yaw),
+                            from.z+fraction*(to.z-from.z));
+                        cost=std::max(cost,getObstacleClearanceCost(cell));
+                    }
+                    total+=cost;
+                }
+                return length*(1+obstacle_clearance_weight_*total/count);
+            };
+        }
         if (artifact_ && artifact_->rust_graph) {
             const auto graph_started = std::chrono::steady_clock::now();
             const char *rust_failure_kind = "query";
             try {
                 const double resolution = octree_->getResolution();
-                PointPose start_floor = start_point_;
-                PointPose goal_floor = goal_point_;
-                start_floor.z -= support_height_m_;
-                goal_floor.z -= support_height_m_;
-                rust_failure_kind = "geometry";
+                mls::MetricGeometry geometry;
+                auto &metric=geometry.config;
+                metric.resolution=resolution;
+                metric.robot_radius=robot_radius_;
+                metric.body_offset=body_offset_m_;
+                metric.below=body_clearance_below_m_;
+                metric.above=body_clearance_above_m_;
+                metric.support_height=support_height_m_;
+                metric.support_tolerance=support_height_tolerance_m_;
+                metric.max_step=max_step_height_;
+                metric.max_slope=max_slope_;
+                octree_->getMetricMin(metric.min.x,metric.min.y,metric.min.z);
+                octree_->getMetricMax(metric.max.x,metric.max.y,metric.max.z);
+                metric.support_depth_cells=support_depth_cells_;
+                metric.support_patch_radius_cells=support_patch_radius_cells_;
+                metric.support_patch_min_samples=support_patch_min_samples_;
+                metric.ground_support=ground_support_;
+                metric.direct_support_only=direct_support_only_;
+                metric.actual_start=1;
+                metric.start={ {start_point_.x,start_point_.y,start_point_.z},
+                    start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
+                metric.start_exemption=static_cast<bool>(start_exemption_);
+                if(no_go_regions_)for(const auto &region:*no_go_regions_)
+                    geometry.regions.push_back({{region.min[0],region.min[1],region.min[2]},
+                        {region.max[0],region.max[1],region.max[2]}});
+                geometry.preblocked.reserve(external_preblocked_cells_.size());
+                for(const auto &cell:external_preblocked_cells_)geometry.preblocked.push_back({cell.x,cell.y,cell.z});
+                geometry.cancel=cancel_check_;
                 const auto valid = [&](const PointPose &a, const PointPose &b) {
-                    return routeConnectionFree(a, b);
+                    metric.actual_start=a.x==start_point_.x && a.y==start_point_.y && a.z==start_point_.z;
+                    return artifact_->rust_graph->checkMetricRoute({a,b},geometry).valid;
                 };
-                const auto start_cell = mls::cellFromWorld(start_floor, resolution);
-                const auto goal_cell = mls::cellFromWorld(goal_floor, resolution);
-                std::vector<mls::SurfaceCell> blocked_cells;
-                std::vector<mls::SurfaceCell> cells;
-                std::vector<PointPose> checked;
-                for (int attempt = 0; attempt < 2; ++attempt) {
-                    cells = blocked_cells.empty()
-                        ? artifact_->rust_graph->query(start_cell, goal_cell,
-                                                       snap_search_radius_cells_, max_iterations_)
-                        : artifact_->rust_graph->queryAvoiding(
-                              start_cell, goal_cell, snap_search_radius_cells_,
-                              max_iterations_, blocked_cells);
-                    std::vector<PointPose> surface_points;
-                    std::vector<mls::SurfaceCell> surface_cells;
-                    surface_points.reserve(cells.size());
-                    surface_cells.reserve(cells.size());
-                    for (const auto &cell : cells) {
-                        const PointPose point{
-                            (cell.x + .5) * resolution,
-                            (cell.y + .5) * resolution,
-                            (cell.z + .5) * resolution + support_height_m_,
-                            std::nullopt};
-                        if (!surface_points.empty() && surface_points.back().x == point.x &&
-                            surface_points.back().y == point.y &&
-                            surface_points.back().z == point.z) continue;
-                        surface_points.push_back(point);
-                        surface_cells.push_back(cell);
+                const auto world = [&](mls::SurfaceCell cell) {
+                    return PointPose{(cell.x + .5) * resolution,
+                                     (cell.y + .5) * resolution,
+                                     (cell.z + 1.0) * resolution + support_height_m_,
+                                     std::nullopt};
+                };
+                const auto query = artifact_->rust_graph->metricQuery(
+                    start_point_,goal_point_,snap_search_radius_cells_,max_iterations_,geometry);
+                using QueryStatus = mls::PreparedArtifactHandle::QueryStatus;
+                if (query.status == QueryStatus::Cancelled) {
+                    search_info_.outcome = SearchInfo::Outcome::Cancelled;
+                    return false;
+                }
+                if (query.status == QueryStatus::Budget) {
+                    search_info_.outcome = SearchInfo::Outcome::IterationLimit;
+                    return false;
+                }
+                if (query.status == QueryStatus::Exhausted) {
+                    throw std::runtime_error("Rust surface route exhausted");
+                }
+                const auto &cells = query.cells;
+                if (cells.empty()) throw std::runtime_error("Rust surface route has no stance cells");
+                std::vector<PointPose> checked{start_point_};
+                checked.reserve(cells.size() + 2);
+                for (const auto &cell : cells) {
+                    const auto point = world(cell);
+                    if (checked.back().x != point.x || checked.back().y != point.y ||
+                        checked.back().z != point.z) checked.push_back(point);
+                }
+                if (checked.back().x != goal_point_.x || checked.back().y != goal_point_.y ||
+                    checked.back().z != goal_point_.z) checked.push_back(goal_point_);
+                checked.front().yaw = start_point_.yaw;
+                checked.back().yaw = goal_point_.yaw;
+                rust_failure_kind = "geometry";
+                const auto admitted=artifact_->rust_graph->checkMetricRoute(checked,geometry);
+                if(admitted.failure_kind==mls::RustRouteCheckResult::kCancelled) {
+                    search_info_.outcome=SearchInfo::Outcome::Cancelled;
+                    return false;
+                }
+                if (!admitted.valid) {
+                    throw std::runtime_error("Rust surface route failed final geometry check");
+                }
+                auto smoothed = smoothRoute(checked, valid,
+                    [&](const PointPose &point) -> std::optional<double> {
+                        const auto ground = artifact_->rust_graph->height(
+                            point.x, point.y, point.z - support_height_m_,
+                            support_height_tolerance_m_, resolution);
+                        return ground ? std::optional<double>(*ground + support_height_m_)
+                                      : std::nullopt;
+                    }, cancel_check_, clearance_cost);
+                if (cancel_check_ && cancel_check_()) {
+                    search_info_.outcome = SearchInfo::Outcome::Cancelled;
+                    return false;
+                }
+                metric.actual_start=1;
+                if (!smoothed.empty()) {
+                    const auto result=artifact_->rust_graph->checkMetricRoute(smoothed,geometry);
+                    if(result.failure_kind==mls::RustRouteCheckResult::kCancelled) {
+                        search_info_.outcome=SearchInfo::Outcome::Cancelled;
+                        return false;
                     }
-                    if (surface_points.empty()) {
-                        throw std::runtime_error("Rust surface route has no stance cells");
-                    }
-                    std::vector<PointPose> candidate;
-                    candidate.reserve(surface_points.size() + 2);
-                    candidate.push_back(start_point_);
-                    std::optional<mls::SurfaceCell> rejected_cell;
-                    for (std::size_t i = 0; i < surface_points.size(); ++i) {
-                        const auto &point = surface_points[i];
-                        if (valid(candidate.back(), point)) candidate.push_back(point);
-                        else {
-                            rejected_cell = surface_cells[i];
-                            break;
-                        }
-                    }
-                    if (rejected_cell) {
-                        if (attempt == 0) {
-                            blocked_cells.push_back(*rejected_cell);
-                            continue;
-                        }
-                        throw std::runtime_error("Rust surface route geometry rejected after detour");
-                    }
-                    std::size_t goal_index = candidate.size();
-                    for (std::size_t i = candidate.size(); i-- > 0;) {
-                        if (valid(candidate[i], goal_point_)) {
-                            goal_index = i;
-                            break;
-                        }
-                    }
-                    PointPose resolved_goal = goal_point_;
-                    if (goal_index == candidate.size()) {
-                        if (candidate.size() <= 1) {
-                            if (attempt == 0) {
-                                blocked_cells.push_back(surface_cells.back());
-                                continue;
-                            }
-                            throw std::runtime_error("Rust surface route has no goal connector");
-                        }
-                        resolved_goal = candidate.back();
-                        if (std::hypot(resolved_goal.x - goal_point_.x,
-                                       resolved_goal.y - goal_point_.y) >
-                                terminal_goal_xy_tolerance_m_ + kMetricToleranceEpsilonM ||
-                            std::abs(resolved_goal.z - goal_point_.z) >
-                                terminal_goal_z_tolerance_m_ + kMetricToleranceEpsilonM) {
-                            if (attempt == 0) {
-                                blocked_cells.push_back(surface_cells.back());
-                                continue;
-                            }
-                            throw std::runtime_error("Rust surface route goal snap exceeds tolerance");
-                        }
-                    } else candidate.resize(goal_index + 1);
-                    if (candidate.back().x != resolved_goal.x ||
-                        candidate.back().y != resolved_goal.y ||
-                        candidate.back().z != resolved_goal.z) candidate.push_back(resolved_goal);
-                    candidate.front().yaw = start_point_.yaw;
-                    candidate.back().yaw = goal_point_.yaw;
-                    checked = candidate;
-                    auto smoothed = smoothRoute(candidate, valid,
-                        [&](const PointPose &point) -> std::optional<double> {
-                            const auto ground = artifact_->rust_graph->height(
-                                point.x, point.y, point.z - support_height_m_,
-                                support_height_tolerance_m_, octree_->getResolution());
-                            return ground ? std::optional<double>(*ground + support_height_m_)
-                                           : std::nullopt;
-                        }, cancel_check_);
-                    if (!smoothed.empty()) checked = std::move(smoothed);
-                    break;
+                    if(result.valid)checked=std::move(smoothed);
                 }
                 planner_results_ = std::move(checked);
                 search_info_.outcome = SearchInfo::Outcome::Found;
@@ -620,7 +689,7 @@ namespace global_planner
                         support_height_tolerance_m_, octree_->getResolution());
                     return ground ? std::optional<double>(*ground+support_height_m_) : std::nullopt;
                 };
-                candidate=smoothRoute(std::move(candidate),valid,height,cancel_check_);
+                candidate=smoothRoute(std::move(candidate),valid,height,cancel_check_,clearance_cost);
                 if (cancel_check_ && cancel_check_()) {
                     search_info_.outcome=SearchInfo::Outcome::Cancelled;
                     return false;
@@ -701,8 +770,11 @@ namespace global_planner
                 return failure == TraversabilityFailure::None;
             }
             TraversabilityFailure evaluated = TraversabilityFailure::None;
-            const bool traversable = isPlanningCellTraversableDetailed(
-                idx, robot_radius, ground_support, direct_support_only, support_depth_cells, &evaluated);
+            const auto point=planningPoint(idx);
+            const bool traversable = body_offset_m_>0
+                ? (evaluated=queryBase(point,ground_support))==TraversabilityFailure::None
+                : isPlanningCellTraversableDetailed(
+                    idx, robot_radius, ground_support, direct_support_only, support_depth_cells, &evaluated);
             planning_cell_cache.emplace(idx, evaluated);
             failure = evaluated;
             return traversable;
@@ -758,6 +830,10 @@ namespace global_planner
                                path.back().z-terminal.z)>1e-6)
                     path.push_back(terminal);
                 path.back().yaw=goal_point_.yaw;
+                if(body_offset_m_>0 && !validateRoute(path).valid) {
+                    search_info_.outcome=SearchInfo::Outcome::Exhausted;
+                    return false;
+                }
                 planner_results_=std::move(path);
                 search_info_.outcome = SearchInfo::Outcome::Found;
                 printf("OctoPlanner3D::startPlan found: iterations=%d waypoints=%zu\n",
@@ -818,6 +894,13 @@ namespace global_planner
 
                 auto g_it = g_score.find(nbr);
                 if (g_it == g_score.end() || tentative_g < g_it->second) {
+                const auto previous=came_from.find(current.idx);
+                if(body_offset_m_>0 && previous!=came_from.end() &&
+                    !turnFree(current_pose,heading(poseAt(previous->second),current_pose),
+                              heading(current_pose,poseAt(nbr)))) {
+                    ++rejected_sweep;
+                    continue;
+                }
                 if ((support_height_m_>0.0 && !lowest_traversable_only_) &&
                     !routeConnectionFree(current_pose,poseAt(nbr),!(current.idx==start))) {
                     ++rejected_sweep;
@@ -990,13 +1073,21 @@ namespace global_planner
         const auto cached = obstacle_clearance_costmap_.find(idx);
         if (cached != obstacle_clearance_costmap_.end()) return cached->second;
         const int radius = obstacle_clearance_radius_cells_;
+        const double r=octree_->getResolution();
+        const bool explicit_body=body_clearance_below_m_>0 || body_clearance_above_m_>0;
+        const double bottom=(idx.z+.5)*r-(explicit_body?body_clearance_below_m_:r);
+        const double top=(idx.z+.5)*r+(explicit_body?body_clearance_above_m_:r);
+        const int low=static_cast<int>(std::floor(bottom/r));
+        const int high=static_cast<int>(std::floor(top/r));
         double cost = 0.0;
+        // The support surface is below the body and must not hide a nearby wall's soft cost.
         for (int dx = -radius; dx <= radius; ++dx) {
             for (int dy = -radius; dy <= radius; ++dy) {
-                for (int dz = -radius; dz <= radius; ++dz) {
-                    const int distance2 = dx * dx + dy * dy + dz * dz;
-                    if (distance2 > radius * radius) continue;
-                    if (isOccupiedLeafCell({idx.x + dx, idx.y + dy, idx.z + dz}))
+                const int distance2 = dx * dx + dy * dy;
+                if (distance2 > radius * radius) continue;
+                for (int z=low;z<=high;++z) {
+                    if((z+1)*r<=bottom+1e-7 || z*r>=top-1e-7)continue;
+                    if (isOccupiedLeafCell({idx.x + dx, idx.y + dy, z}))
                         cost = std::max(cost, 1.0 - std::sqrt(static_cast<double>(distance2)) / (radius + 1.0));
                 }
             }
@@ -1032,14 +1123,16 @@ namespace global_planner
             return false;
         if (support_height_m_ > 0.0 || body_clearance_below_m_ > 0.0 ||
             body_clearance_above_m_ > 0.0) {
+            const double yaw=(to-from).norm()>1e-9?std::atan2(to.y()-from.y(),to.x()-from.x()):start_point_.yaw.value_or(0.0);
             const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
             // The actual start may contain the robot or incomplete ground observations.
-            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
+            if(actual_start && start_point_.yaw && !turnFree(start_point_,*start_point_.yaw,yaw,failure))return false;
+            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start,yaw);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
             if(from==to)return true;
-            const auto target=queryWorld(to,robot_radius_,ground_support_);
+            const auto target=queryWorld(to,robot_radius_,ground_support_,true,yaw);
             if(target!=TraversabilityFailure::None){if(failure)*failure=target;return false;}
-            return sweptRouteFree(from,to,failure,nullptr,true,true,!actual_start);
+            return sweptRouteFree(from,to,failure,nullptr,true,true,true,yaw);
         }
         // The legacy surface graph roots its upper body hemisphere at a
         // voxel, rather than declaring a body-centre clearance. Keep that
@@ -1058,7 +1151,7 @@ namespace global_planner
                 continue;
             }
             if (!isPlanningCellTraversableDetailed(
-                    cell, robot_radius_, ground_support_ && !actual_start, direct_support_only_, support_depth_cells_, failure))
+                    cell, robot_radius_, ground_support_, direct_support_only_, support_depth_cells_, failure))
                 return false;
         }
         return true;
@@ -1435,7 +1528,7 @@ namespace global_planner
                     if (distance == 0 && sign == -1) continue;
                     const int z = center_z + sign * distance;
                     const GridIndex below{samples[i].x, samples[i].y, z};
-                    if (isSupportCell(below) && !isOccupiedCell({below.x, below.y, z + 1})) {
+                    if (isSupportCell(below)) {
                         support_z[i] = z;
                         supported = true;
                         break;
@@ -1693,7 +1786,7 @@ namespace global_planner
         return false;
     }
 
-    void OctoPlanner3D::rebuildRustGraph()
+    void OctoPlanner3D::rebuildRustGraph(bool preserve_graph)
     {
         if (!artifact_ || !octree_ || !ground_support_ ||
             support_height_m_ <= 0.0 || lowest_traversable_only_) {
@@ -1711,7 +1804,6 @@ namespace global_planner
             const int y0 = static_cast<int>(std::lround((it.getY() - .5 * it.getSize()) / r));
             const int z0 = static_cast<int>(std::lround((it.getZ() - .5 * it.getSize()) / r));
             auto &cells = octree_->isNodeOccupied(*it) ? occupied : known_free;
-            cells.reserve(cells.size() + static_cast<std::size_t>(span * span * span));
             for (int x = x0; x < x0 + span; ++x)
                 for (int y = y0; y < y0 + span; ++y)
                     for (int z = z0; z < z0 + span; ++z) cells.push_back({x, y, z});
@@ -1727,6 +1819,10 @@ namespace global_planner
                 graph_config_.surface_max_hole_area_m2 / (r * r))),
             static_cast<float>(graph_config_.surface_max_slope),
             static_cast<float>(closing / r)};
+        if (preserve_graph) {
+            artifact_->rust_graph->setGeometry(occupied, known_free, rust_surface_config);
+            return;
+        }
         const int stride = std::max(1, static_cast<int>(std::ceil(search_resolution_m_ / r)));
         const int height_stride = max_slope_ > 0.0
             ? std::max(stride, static_cast<int>(std::ceil(1.0 / max_slope_))) : stride;
@@ -1769,7 +1865,7 @@ namespace global_planner
             points.push_back({
                 (cell.x + .5) * r,
                 (cell.y + .5) * r,
-                (cell.z + .5) * r + support_height_m_,
+                (cell.z + 1.0) * r + support_height_m_,
                 std::nullopt});
         }
         artifact_->graph=std::make_shared<SurfaceGraph>(std::move(points),r,graph_config_,
@@ -1836,13 +1932,13 @@ namespace global_planner
 
     bool OctoPlanner3D::isOccupiedCell(const GridIndex & idx) const
     {
-        const auto *node = octree_->search(gridToWorld(idx));
-        return node != nullptr && octree_->isNodeOccupied(node);
+        const auto state = cellState(idx);
+        return state == CellState::Occupied || state == CellState::OccupiedLeafCenter;
     }
 
     bool OctoPlanner3D::isOccupiedLeafCell(const GridIndex & idx) const
     {
-        return isOccupiedCell(idx) && cellState(idx) == CellState::OccupiedLeafCenter;
+        return cellState(idx) == CellState::OccupiedLeafCenter;
     }
 
     OctoPlanner3D::CellState OctoPlanner3D::cellState(const GridIndex & idx) const
@@ -1942,9 +2038,22 @@ namespace global_planner
     }
 
     OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryWorld(
-        const octomap::point3d &p, double radius, bool require_support, bool check_body) const
+        const octomap::point3d &point, double radius, bool require_support, bool check_body, double yaw) const
     {
-        if (noGoIntersects(p, p, radius)) return TraversabilityFailure::ExternalPreblockedBody;
+        if(body_offset_m_==0 || radius==0)return queryCylinder(point,radius,require_support,check_body);
+        const auto support=queryBase(point,require_support);
+        if(support!=TraversabilityFailure::None)return support;
+        const octomap::point3d offset(body_offset_m_*std::cos(yaw),body_offset_m_*std::sin(yaw),0);
+        for(double sign:{-1.0,1.0}) {
+            const auto failure=queryCylinder(point+offset*sign,radius,false,check_body,false);
+            if(failure!=TraversabilityFailure::None)return failure;
+        }
+        return TraversabilityFailure::None;
+    }
+
+    OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryBase(
+        const octomap::point3d &p, bool require_support) const
+    {
         double min_x, min_y, min_z, max_x, max_y, max_z;
         octree_->getMetricMin(min_x, min_y, min_z);
         octree_->getMetricMax(max_x, max_y, max_z);
@@ -1972,43 +2081,216 @@ namespace global_planner
                 return TraversabilityFailure::GroundSupport;
             }
         }
+        return TraversabilityFailure::None;
+    }
+
+    OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryCylinder(
+        const octomap::point3d &p, double radius, bool require_support, bool check_body, bool check_center) const
+    {
+        if (noGoIntersects(p, p, radius)) return TraversabilityFailure::ExternalPreblockedBody;
+        const auto failure=check_center?queryBase(p,require_support):TraversabilityFailure::None;
+        if(failure!=TraversabilityFailure::None)return failure;
+        const double r=octree_->getResolution();
         if (!check_body) return TraversabilityFailure::None;
         const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
         const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
         const auto low = worldToGrid(p.x() - radius, p.y() - radius, p.z() - below);
         const auto high = worldToGrid(p.x() + radius, p.y() + radius, p.z() + above);
-        for (int x = low.x; x <= high.x; ++x) {
-            const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
-            for (int y = low.y; y <= high.y; ++y) {
-                const double dy = std::max({y * r - p.y(), 0.0, p.y() - (y + 1) * r});
-                if (dx * dx + dy * dy > radius * radius + 1e-9) continue;
-                for (int z = low.z; z <= high.z; ++z) {
-                    if ((z + 1) * r <= p.z() - below + 1e-7 || z * r >= p.z() + above - 1e-7)
-                        continue;
-                    const GridIndex voxel{x, y, z};
-                    if (external_preblocked_cells_.count(voxel))
-                        return TraversabilityFailure::ExternalPreblockedBody;
-                    if (isOccupiedCell(voxel) && (!start_exemption_ ||
-                        !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
-                        return TraversabilityFailure::OccupiedBody;
+        const auto check_cells = [&](const GridIndex &lo, const GridIndex &hi, bool occupied) {
+            for (int x = lo.x; x <= hi.x; ++x) {
+                const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
+                for (int y = lo.y; y <= hi.y; ++y) {
+                    const double dy = std::max({y * r - p.y(), 0.0, p.y() - (y + 1) * r});
+                    if (dx * dx + dy * dy > radius * radius + 1e-9) continue;
+                    for (int z = lo.z; z <= hi.z; ++z) {
+                        if ((z + 1) * r <= p.z() - below + 1e-7 || z * r >= p.z() + above - 1e-7)
+                            continue;
+                        const GridIndex voxel{x, y, z};
+                        if (external_preblocked_cells_.count(voxel))
+                            return TraversabilityFailure::ExternalPreblockedBody;
+                        if ((occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
+                            !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
+                            return TraversabilityFailure::OccupiedBody;
+                    }
                 }
             }
+            return TraversabilityFailure::None;
+        };
+        octomap::OcTreeKey low_key, high_key;
+        if (external_preblocked_cells_.empty() &&
+            octree_->coordToKeyChecked(gridToWorld(low), low_key) &&
+            octree_->coordToKeyChecked(gridToWorld(high), high_key)) {
+            // Free and unknown leaves cannot collide. Occupied coarse leaves
+            // retain the same finest-cell cylinder and start-exemption checks.
+            for (auto leaf = octree_->begin_leafs_bbx(low_key, high_key),
+                      end = octree_->end_leafs_bbx(); leaf != end; ++leaf) {
+                if (!octree_->isNodeOccupied(*leaf)) continue;
+                const int span = static_cast<int>(std::lround(leaf.getSize() / r));
+                const int x = static_cast<int>(std::lround((leaf.getX() - .5 * leaf.getSize()) / r));
+                const int y = static_cast<int>(std::lround((leaf.getY() - .5 * leaf.getSize()) / r));
+                const int z = static_cast<int>(std::lround((leaf.getZ() - .5 * leaf.getSize()) / r));
+                const auto failure = check_cells(
+                    {std::max(low.x, x), std::max(low.y, y), std::max(low.z, z)},
+                    {std::min(high.x, x + span - 1), std::min(high.y, y + span - 1),
+                     std::min(high.z, z + span - 1)}, true);
+                if (failure != TraversabilityFailure::None) return failure;
+            }
+            return TraversabilityFailure::None;
         }
-        return TraversabilityFailure::None;
+        return check_cells(low, high, false);
+    }
+
+    bool OctoPlanner3D::turnFree(const PointPose &pose, double from_yaw, double to_yaw,
+                               TraversabilityFailure *failure) const
+    {
+        const PointPose point{static_cast<float>(pose.x),static_cast<float>(pose.y),static_cast<float>(pose.z)};
+        if(failure)*failure=TraversabilityFailure::None;
+        if(body_offset_m_==0 || std::abs(std::remainder(to_yaw-from_yaw,2*kPi))<1e-12)return true;
+        const double r=octree_->getResolution();
+        const bool explicit_body=body_clearance_below_m_>0 || body_clearance_above_m_>0;
+        const double below=explicit_body?body_clearance_below_m_:r;
+        const double above=explicit_body?body_clearance_above_m_:r;
+        const auto intersects=[&](const lingtu::maps::NoGoRegion &box) {
+            return arcIntersects(box,point,body_offset_m_,robot_radius_,below,above,from_yaw,to_yaw) ||
+                arcIntersects(box,point,body_offset_m_,robot_radius_,below,above,from_yaw+kPi,to_yaw+kPi);
+        };
+        if(no_go_regions_)for(const auto &box:*no_go_regions_)if(intersects(box)) {
+            if(failure)*failure=TraversabilityFailure::ExternalPreblockedBody;
+            return false;
+        }
+        const double extent=body_offset_m_+robot_radius_;
+        const auto low=worldToGrid(point.x-extent,point.y-extent,point.z-below);
+        const auto high=worldToGrid(point.x+extent,point.y+extent,point.z+above);
+        const auto check=[&](const GridIndex &lo,const GridIndex &hi,bool external) {
+            const lingtu::maps::NoGoRegion box{{},{lo.x*r,lo.y*r,lo.z*r+1e-7},
+                {(hi.x+1)*r,(hi.y+1)*r,(hi.z+1)*r-1e-7}};
+            if(!intersects(box))return true;
+            if(!external && start_exemption_ && start_exemption_(
+                    {(lo.x+.5)*r,(lo.y+.5)*r,(lo.z+.5)*r},r))return true;
+            if(failure)*failure=external?TraversabilityFailure::ExternalPreblockedBody:TraversabilityFailure::OccupiedBody;
+            return false;
+        };
+        for(auto leaf=octree_->begin_leafs_bbx(gridToWorld(low),gridToWorld(high)),
+                end=octree_->end_leafs_bbx();leaf!=end;++leaf) {
+            if(!octree_->isNodeOccupied(*leaf))continue;
+            const int span=static_cast<int>(std::lround(leaf.getSize()/r));
+            const GridIndex lo{static_cast<int>(std::lround((leaf.getX()-.5*leaf.getSize())/r)),
+                static_cast<int>(std::lround((leaf.getY()-.5*leaf.getSize())/r)),
+                static_cast<int>(std::lround((leaf.getZ()-.5*leaf.getSize())/r))};
+            const GridIndex hi{lo.x+span-1,lo.y+span-1,lo.z+span-1};
+            if(!start_exemption_) {
+                if(!check(lo,hi,false))return false;
+            } else {
+                for(int x=std::max(low.x,lo.x);x<=std::min(high.x,hi.x);++x)
+                    for(int y=std::max(low.y,lo.y);y<=std::min(high.y,hi.y);++y)
+                        for(int z=std::max(low.z,lo.z);z<=std::min(high.z,hi.z);++z)
+                            if(!check({x,y,z},{x,y,z},false))return false;
+            }
+        }
+        for(const auto &cell:external_preblocked_cells_)
+            if(cell.x>=low.x && cell.x<=high.x && cell.y>=low.y && cell.y<=high.y &&
+               cell.z>=low.z && cell.z<=high.z && !check(cell,cell,true))return false;
+        return true;
+    }
+
+    bool OctoPlanner3D::sweptBodyFree(
+        const octomap::point3d &from, const octomap::point3d &to,
+        octomap::point3d *failed_point, double yaw) const
+    {
+        const octomap::point3d offset(body_offset_m_*std::cos(yaw),body_offset_m_*std::sin(yaw),0);
+        for(double sign:{-1.0,1.0}) {
+            octomap::point3d failed;
+            if(!sweptCylinderFree(from+offset*sign,to+offset*sign,failed_point?&failed:nullptr)) {
+                if(failed_point)*failed_point=failed-offset*sign;
+                return false;
+            }
+            if(body_offset_m_==0)break;
+        }
+        return true;
+    }
+
+    bool OctoPlanner3D::sweptCylinderFree(
+        const octomap::point3d &from, const octomap::point3d &to,
+        octomap::point3d *failed_point) const
+    {
+        const double r = octree_->getResolution();
+        const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
+        const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
+        const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
+        const auto low = worldToGrid(std::min(from.x(), to.x()) - robot_radius_,
+            std::min(from.y(), to.y()) - robot_radius_, std::min(from.z(), to.z()) - below);
+        const auto high = worldToGrid(std::max(from.x(), to.x()) + robot_radius_,
+            std::max(from.y(), to.y()) + robot_radius_, std::max(from.z(), to.z()) + above);
+        const std::array<double, 3> a{from.x(), from.y(), from.z()}, b{to.x(), to.y(), to.z()};
+        const auto check_box = [&](const GridIndex &lo, const GridIndex &hi) {
+            // Match queryWorld's open vertical contact interval without adding clearance.
+            const lingtu::maps::NoGoRegion box{{},
+                {lo.x * r, lo.y * r, lo.z * r + 1e-7},
+                {(hi.x + 1) * r, (hi.y + 1) * r, (hi.z + 1) * r - 1e-7}};
+            if (std::max(from.z(), to.z()) + above <= lo.z * r + 1e-7 ||
+                std::min(from.z(), to.z()) - below >= (hi.z + 1) * r - 1e-7 ||
+                !lingtu::maps::SweptCylinderIntersectsNoGo(box, a, b, robot_radius_, below, above))
+                return true;
+            if (start_exemption_ && start_exemption_(
+                    {(lo.x + .5) * r, (lo.y + .5) * r, (lo.z + .5) * r}, r))
+                return true;
+            if (failed_point) {
+                double clear = 0.0, blocked = 1.0;
+                // Diagnostics locate a colliding pose only after the analytic test rejects the segment.
+                for (int i = 0; i < 24; ++i) {
+                    const double t = .5 * (clear + blocked);
+                    const std::array<double, 3> point{
+                        a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])};
+                    if (lingtu::maps::SweptCylinderIntersectsNoGo(box, a, point, robot_radius_, below, above))
+                        blocked = t;
+                    else clear = t;
+                }
+                *failed_point = from + (to - from) * static_cast<float>(blocked);
+            }
+            return false;
+        };
+        for (auto leaf = octree_->begin_leafs_bbx(gridToWorld(low), gridToWorld(high)),
+                  end = octree_->end_leafs_bbx(); leaf != end; ++leaf) {
+            if (!octree_->isNodeOccupied(*leaf)) continue;
+            const int span = static_cast<int>(std::lround(leaf.getSize() / r));
+            const GridIndex leaf_low{
+                static_cast<int>(std::lround((leaf.getX() - .5 * leaf.getSize()) / r)),
+                static_cast<int>(std::lround((leaf.getY() - .5 * leaf.getSize()) / r)),
+                static_cast<int>(std::lround((leaf.getZ() - .5 * leaf.getSize()) / r))};
+            const GridIndex leaf_high{leaf_low.x + span - 1, leaf_low.y + span - 1, leaf_low.z + span - 1};
+            if (!start_exemption_) {
+                if (!check_box(leaf_low, leaf_high)) return false;
+                continue;
+            }
+            // Start exemptions are defined on finest cells, including inside a pruned leaf.
+            for (int x = std::max(low.x, leaf_low.x); x <= std::min(high.x, leaf_high.x); ++x)
+                for (int y = std::max(low.y, leaf_low.y); y <= std::min(high.y, leaf_high.y); ++y)
+                    for (int z = std::max(low.z, leaf_low.z); z <= std::min(high.z, leaf_high.z); ++z)
+                        if (!check_box({x, y, z}, {x, y, z})) return false;
+        }
+        return true;
     }
 
     bool OctoPlanner3D::sweptRouteFree(
         const octomap::point3d &from, const octomap::point3d &to,
         TraversabilityFailure *failure_out, octomap::point3d *failed_point, bool check_body,
-        bool endpoints_validated, bool require_support) const
+        bool endpoints_validated, bool require_support, std::optional<double> body_yaw) const
     {
         if (failure_out) *failure_out = TraversabilityFailure::None;
-        if (noGoIntersects(from, to, robot_radius_)) {
+        const double yaw=body_yaw.value_or(std::atan2(to.y()-from.y(),to.x()-from.x()));
+        const octomap::point3d offset(body_offset_m_*std::cos(yaw),body_offset_m_*std::sin(yaw),0);
+        if (noGoIntersects(from-offset, to-offset, robot_radius_) ||
+            noGoIntersects(from+offset, to+offset, robot_radius_)) {
             if (failure_out) *failure_out = TraversabilityFailure::ExternalPreblockedBody;
             if (failed_point) *failed_point = (from + to) * .5f;
             return false;
         }
+        if (check_body && !sweptBodyFree(from, to, failed_point, yaw)) {
+            if (failure_out) *failure_out = TraversabilityFailure::OccupiedBody;
+            return false;
+        }
+        const bool sampled_body = check_body && !external_preblocked_cells_.empty();
         const double length = (to - from).norm();
         const int count = std::max(1, static_cast<int>(std::ceil(
             2.0 * length / octree_->getResolution())));
@@ -2019,7 +2301,7 @@ namespace global_planner
                 from.x() + t * (to.x() - from.x()),
                 from.y() + t * (to.y() - from.y()),
                 from.z() + t * (to.z() - from.z()));
-            const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, check_body);
+            const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, sampled_body, yaw);
             if (failure == TraversabilityFailure::None) continue;
             // A step connects two supported stances. Its body moves continuously,
             // while the observed tread height changes discontinuously. Keep the
@@ -2027,7 +2309,7 @@ namespace global_planner
             // remain the nominal standing height above either tread.
             if (failure != TraversabilityFailure::GroundSupport ||
                 std::abs(to.z() - from.z()) < 1e-7 || i == 0 || i == count ||
-                queryWorld(point, robot_radius_, false, check_body) != TraversabilityFailure::None) {
+                queryWorld(point, robot_radius_, false, sampled_body, yaw) != TraversabilityFailure::None) {
                 if (failure_out) *failure_out = failure;
                 if (failed_point) *failed_point = point;
                 return false;

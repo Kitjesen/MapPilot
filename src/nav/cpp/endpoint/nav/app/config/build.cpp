@@ -275,13 +275,11 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
 void applyPlannerGeometry(CliConfig &cfg) {
   if (cfg.local_planner_backend != nav_kernel::LocalPlannerBackend::Scan) return;
   auto &octo = cfg.octoplanner_options;
-  // Match mapd's integer-cell vertical inflation; body sweep owns turning clearance.
-  octo.robot_radius = std::max(octo.robot_radius, cfg.collision_cylinder_radius_m);
+  octo.robot_radius = cfg.collision_cylinder_radius_m;
+  octo.body_offset_m = cfg.collision_cylinder_offset_m;
   const double resolution = cfg.scan_planner.voxelResolution;
-  octo.body_clearance_below_m = std::max(octo.body_clearance_below_m,
-      std::ceil(cfg.collision_clearance_below_m / resolution) * resolution);
-  octo.body_clearance_above_m = std::max(octo.body_clearance_above_m,
-      std::ceil(cfg.collision_clearance_above_m / resolution) * resolution);
+  octo.body_clearance_below_m = std::ceil(cfg.collision_clearance_below_m / resolution) * resolution;
+  octo.body_clearance_above_m = std::ceil(cfg.collision_clearance_above_m / resolution) * resolution;
 }
 
 /// Build ExecutorConfig from parsed CLI config.

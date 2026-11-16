@@ -1,5 +1,7 @@
 #include "octoplanner3d_core.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -7,6 +9,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <streambuf>
@@ -25,9 +28,29 @@ using octoplanner3d::runtime::PlanRequest;
 using octoplanner3d::runtime::PlannerOptions;
 using octoplanner3d::runtime::Point;
 
+struct BenchmarkOptions {
+  int samples{0};
+  std::string cache_directory;
+};
+
 struct HeadlessRequest {
   std::string map_path;
   PlanRequest plan;
+  std::optional<BenchmarkOptions> benchmark;
+};
+
+struct BenchmarkResult {
+  double cold_prepare_ms{0.0};
+  double warmup_ms{0.0};
+  std::vector<double> query_ms;
+  double cache_restore_ms{0.0};
+  double restored_query_ms{0.0};
+  std::size_t prepare_count{0};
+  std::size_t cache_load_count{0};
+  std::size_t map_load_count{0};
+  std::size_t restored_prepare_count{0};
+  std::size_t restored_cache_load_count{0};
+  bool same_result{true};
 };
 
 class RedirectStdoutToStderr {
@@ -347,6 +370,7 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     return;
   }
   options.robot_radius = optionalDouble(body, "robot_radius", options.robot_radius);
+  options.body_offset_m = optionalDouble(body, "body_offset_m", options.body_offset_m);
   options.body_clearance_below_m = optionalDouble(
     body,
     "body_clearance_below_m",
@@ -458,7 +482,22 @@ HeadlessRequest parseRequest(const std::string & json)
   request.map_path = extractString(json, "map_path");
   request.plan.start = toPoint(extractNumberArray(json, "start"));
   request.plan.goal = toPoint(extractNumberArray(json, "goal"));
+  if (optionalValueCursor(json, "start_yaw")) request.plan.start.yaw = optionalDouble(json, "start_yaw", 0.0);
+  if (optionalValueCursor(json, "goal_yaw")) request.plan.goal.yaw = optionalDouble(json, "goal_yaw", 0.0);
   applyOptionsFromJson(request.plan.options, json);
+  const auto benchmark = extractObjectBody(json, "benchmark");
+  if (optionalValueCursor(json, "benchmark") != nullptr) {
+    const double samples = optionalDouble(benchmark, "samples", 20);
+    if (samples < 1 || samples > std::numeric_limits<int>::max() ||
+        std::floor(samples) != samples) {
+      throw std::runtime_error("benchmark samples must be a positive integer");
+    }
+    request.benchmark = BenchmarkOptions{
+      static_cast<int>(samples), extractString(benchmark, "cache_directory")};
+    if (request.benchmark->cache_directory.empty()) {
+      throw std::runtime_error("benchmark cache_directory must not be empty");
+    }
+  }
   if (request.map_path.empty()) {
     throw std::runtime_error("map_path must not be empty");
   }
@@ -469,6 +508,7 @@ void emitConstraints(const PlannerOptions & options)
 {
   std::cout << "\"constraints\":{"
             << "\"robot_radius\":" << options.robot_radius << ','
+            << "\"body_offset_m\":" << options.body_offset_m << ','
             << "\"body_clearance_below_m\":" << options.body_clearance_below_m << ','
             << "\"body_clearance_above_m\":" << options.body_clearance_above_m << ','
             << "\"max_iterations\":" << options.max_iterations << ','
@@ -528,7 +568,8 @@ void emitError(const std::string & message)
   std::cout << "}}" << std::endl;
 }
 
-void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
+void emitSuccess(const octoplanner3d::runtime::PlanResult & result,
+                 const std::optional<BenchmarkResult> & benchmark = {})
 {
   std::cout.precision(std::numeric_limits<double>::max_digits10);
   std::cout << "{\"planner\":\"octoplanner3d\",\"protocol_version\":1,"
@@ -568,7 +609,90 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
             << "\"goal_z_error_m\":" << result.goal_z_error_m << ','
             << "\"elapsed_ms\":" << result.elapsed_ms << ',';
   emitConstraints(result.options);
-  std::cout << "}}" << std::endl;
+  std::cout << '}';
+  if (benchmark) {
+    auto sorted = benchmark->query_ms;
+    std::sort(sorted.begin(), sorted.end());
+    const auto middle = sorted.size() / 2;
+    const double median = sorted.size() % 2 == 0
+      ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+    const auto p95 = static_cast<std::size_t>(std::ceil(sorted.size() * .95)) - 1;
+    std::cout << ",\"benchmark\":{\"samples\":" << sorted.size()
+              << ",\"cold_prepare_ms\":" << benchmark->cold_prepare_ms
+              << ",\"warmup_ms\":" << benchmark->warmup_ms
+              << ",\"warm_query_median_ms\":" << median
+              << ",\"warm_query_p95_ms\":" << sorted[p95]
+              << ",\"cache_restore_ms\":" << benchmark->cache_restore_ms
+              << ",\"restored_query_ms\":" << benchmark->restored_query_ms
+              << ",\"prepare_count\":" << benchmark->prepare_count
+              << ",\"cache_load_count\":" << benchmark->cache_load_count
+              << ",\"map_load_count\":" << benchmark->map_load_count
+              << ",\"restored_prepare_count\":" << benchmark->restored_prepare_count
+              << ",\"restored_cache_load_count\":" << benchmark->restored_cache_load_count
+              << ",\"same_result\":" << (benchmark->same_result ? "true" : "false")
+              << ",\"query_ms\":[";
+    for (std::size_t i = 0; i < benchmark->query_ms.size(); ++i) {
+      if (i > 0) std::cout << ',';
+      std::cout << benchmark->query_ms[i];
+    }
+    std::cout << "]}";
+  }
+  std::cout << '}' << std::endl;
+}
+
+bool sameResult(const octoplanner3d::runtime::PlanResult & a,
+                const octoplanner3d::runtime::PlanResult & b)
+{
+  if (a.ok != b.ok || a.reached_goal != b.reached_goal ||
+      a.failure_reason != b.failure_reason || a.path.size() != b.path.size() ||
+      a.used_rust_graph != b.used_rust_graph || a.rust_fallback != b.rust_fallback) {
+    return false;
+  }
+  for (std::size_t i = 0; i < a.path.size(); ++i) {
+    if (a.path[i].x != b.path[i].x || a.path[i].y != b.path[i].y ||
+        a.path[i].z != b.path[i].z) return false;
+  }
+  return true;
+}
+
+octoplanner3d::runtime::PlanResult runBenchmark(
+    const HeadlessRequest & request, BenchmarkResult & benchmark)
+{
+  using Clock = std::chrono::steady_clock;
+  const auto & options = *request.benchmark;
+  const std::filesystem::path cache(options.cache_directory);
+  if (std::filesystem::exists(cache) && !std::filesystem::is_empty(cache)) {
+    throw std::runtime_error("benchmark cache_directory must be empty for a cold preparation");
+  }
+  const lingtu::nav::plan::MapIdentity identity{request.map_path, 1, "map"};
+  octoplanner3d::runtime::PlannerSession session(cache);
+  auto started = Clock::now();
+  session.prepare(request.map_path, identity, request.plan.options);
+  benchmark.cold_prepare_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+  started = Clock::now();
+  auto result = session.run(request.map_path, identity, request.plan);
+  benchmark.warmup_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+  benchmark.query_ms.reserve(options.samples);
+  for (int i = 0; i < options.samples; ++i) {
+    started = Clock::now();
+    const auto next = session.run(request.map_path, identity, request.plan);
+    benchmark.query_ms.push_back(std::chrono::duration<double, std::milli>(Clock::now() - started).count());
+    benchmark.same_result = sameResult(result, next) && benchmark.same_result;
+  }
+  benchmark.prepare_count = session.prepareCount();
+  benchmark.cache_load_count = session.cacheLoadCount();
+  benchmark.map_load_count = session.mapLoadCount();
+  octoplanner3d::runtime::PlannerSession restored(cache);
+  started = Clock::now();
+  restored.prepare(request.map_path, identity, request.plan.options);
+  benchmark.cache_restore_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+  started = Clock::now();
+  const auto restored_result = restored.run(request.map_path, identity, request.plan);
+  benchmark.restored_query_ms = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+  benchmark.same_result = sameResult(result, restored_result) && benchmark.same_result;
+  benchmark.restored_prepare_count = restored.prepareCount();
+  benchmark.restored_cache_load_count = restored.cacheLoadCount();
+  return result;
 }
 
 }  // namespace
@@ -578,12 +702,18 @@ int main()
   try {
     const HeadlessRequest request = parseRequest(readStdin());
     octoplanner3d::runtime::PlanResult result;
+    std::optional<BenchmarkResult> benchmark;
     {
       RedirectStdoutToStderr redirect_logs;
-      result = octoplanner3d::runtime::runPlan(request.map_path, request.plan);
+      if (request.benchmark) {
+        benchmark.emplace();
+        result = runBenchmark(request, *benchmark);
+      } else {
+        result = octoplanner3d::runtime::runPlan(request.map_path, request.plan);
+      }
     }
 
-    emitSuccess(result);
+    emitSuccess(result, benchmark);
     return result.ok ? 0 : 2;
   } catch (const std::exception & exc) {
     emitError(exc.what());

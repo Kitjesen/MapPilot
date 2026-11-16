@@ -1,5 +1,12 @@
 # SCAN-Planner upstream
 
+## 2026-11-13: remove local minimum lateral target
+
+LingTu no longer carries the experimental `scan_follower.min_vy_mps` parameter
+or its C++ command-shaping branch. SCAN upstream has no minimum lateral speed;
+the normal follower output now goes directly through the existing acceleration
+limiter and final safety checks.
+
 ## 2026-11-11: remove performance-based motion holds
 
 Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
@@ -29,28 +36,20 @@ centers, even when mapd also supplies measured hit bounds. No switch between
 the two representations remains in the twin-cylinder path.
 
 The existing explicit multipart Body query and its measurement evidence are
-separate and unchanged. The requested lateral target minimum, final command
-checks and collision-to-replanning feedback also remain. This restores the
-cylinder map-query representation, not a byte-identical ROS runtime.
+separate and unchanged. Final command checks and collision-to-replanning
+feedback also remain. This restores the cylinder map-query representation, not
+a byte-identical ROS runtime.
 Historical experiment results remain in `artifacts/nav/cylinder-hits-20261109/`;
 restoration verification is in `artifacts/nav/cylinder-restore-20261109/`.
 
-## 2026-11-09: configured minimum nonzero lateral target
+## 2026-11-09: configured minimum nonzero lateral target (removed)
 
-Pinned SCAN `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` clips body-axis
-velocities at their maxima; it has no minimum lateral speed. At the user's
-request, LingTu's Follower adapter now applies `scan_follower.min_vy_mps`
-before its existing acceleration limiter and final collision check. The `nav`
-Product selects 0.35 m/s from Thunder CTS39 response trials; the shared default
-is zero and other Products retain it. This is local tuning, not an upstream
-default or a hardware qualification.
+This experiment applied a `scan_follower.min_vy_mps` floor before the existing
+acceleration limiter and final collision check, with a 0.35 m/s override for
+the `nav` Product. The parameter and branch were removed on 2026-11-13 because
+no current Product used them and the behavior was not part of upstream SCAN.
 
-Zero, completion and alignment targets stay zero. The floor retains direction,
-respects the current lateral/total speed caps and the endpoint braking budget
-`sqrt(2 * acceleration * remaining distance outside the finish tolerance)`,
-and cannot override an external hold or final safety stop. Acceleration, reversal and safety limiting may still
-produce commands below the target floor. It is not a minimum applied actuator
-velocity. Matched tests and simulation evidence live in
+The matched tests and simulation evidence for that superseded experiment live in
 `artifacts/nav/lateral-min-20261109/`; the preceding physical response study is
 `artifacts/nav/lateral-response-20261109/`.
 
@@ -846,7 +845,7 @@ the reference to the fallback point made a later map update unable to recover
 the requested goal.
 
 When initial trajectory generation has actually failed, the adapter reports
-`Blocked / scan_initialization_failed` until a valid trajectory or replacement
+`Blocked / aegis_init_failed` until a valid trajectory or replacement
 target exists. Timer callbacks without a new attempt retain that failure.
 `Pending` is reserved for work that has not produced a result. Existing safe
 trajectories remain available during ordinary replanning failures.
@@ -1537,12 +1536,12 @@ Matched regressions and physical trial results are retained in
 The pinned upstream remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
 LingTu's final measured-motion and candidate-command braking checks are local
 integration behavior. Candidate scale-zero refusals now report
-`scan_command_motion_blocked`; measured-motion refusals retain
-`scan_actual_motion_blocked`. Autonomy handles both with the same existing
+`aegis_cmd_blocked`; measured-motion refusals retain
+`aegis_move_blocked`. Autonomy handles both with the same existing
 pause and blocked feedback. Geometry, reaction time, limits and output commands
 are unchanged. Viewer and saved-route diagnostic callers use the same names.
-Partial candidate scaling reports `scan_command_motion_limited`; the former
-`scan_actual_motion_limited` name incorrectly described which input was scaled.
+Partial candidate scaling reports `aegis_cmd_limited`; the former
+`aegis_move_limited` name incorrectly described which input was scaled.
 The single-use measured-query lambda and its duplicate pose check were removed
 without changing short-circuit behavior. Follow-up review evidence is in
 `artifacts/nav/door-review-20261109/`.

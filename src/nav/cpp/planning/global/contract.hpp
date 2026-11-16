@@ -45,6 +45,7 @@ struct GlobalPlannerOptions {
   double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.25};
+  double body_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
   int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
@@ -106,6 +107,12 @@ struct GlobalPlanResult {
   bool reached_goal{false};
   bool used_surface_graph{false};
   bool used_rust_graph{false};
+  bool rust_fallback{false};
+  std::string rust_failure_kind{"none"};
+  std::string rust_failure{};
+  std::uint32_t rust_query_failures{0U};
+  std::uint32_t rust_geometry_rejections{0U};
+  std::uint32_t rust_other_failures{0U};
   bool cancelled{false};
   std::string failure_reason{};
   double goal_error_m{-1.0};

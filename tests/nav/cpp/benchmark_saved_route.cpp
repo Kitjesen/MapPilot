@@ -377,6 +377,7 @@ int run(int argc, char** argv) {
       << "\"robot_radius_m\":" << config.octoplanner_options.robot_radius
       << ",\"body_clearance_below_m\":" << config.octoplanner_options.body_clearance_below_m
       << ",\"body_clearance_above_m\":" << config.octoplanner_options.body_clearance_above_m
+      << ",\"body_offset_m\":" << config.octoplanner_options.body_offset_m
       << ",\"support_height_m\":" << config.octoplanner_options.support_height_m
       << ",\"collision_radius_m\":" << config.collision_cylinder_radius_m
       << ",\"collision_offset_m\":" << config.collision_cylinder_offset_m

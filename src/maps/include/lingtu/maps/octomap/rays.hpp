@@ -1,7 +1,7 @@
 #pragma once
 #include "lingtu/maps/io/scans.hpp"
 #include "lingtu/maps/io/pcd.hpp"
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 #include <octomap/OcTree.h>
 #include <array>
 #include <stdexcept>

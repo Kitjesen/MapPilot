@@ -77,8 +77,45 @@ int main() try {
     require(!session.run(map,identity,blocked).ok,"prepared edges ignored a new request policy");
     require(same(first,session.run(map,identity,request)),"removed policy remained in prepared geometry");
     const auto prepares=session.prepareCount();++identity.content_epoch;
-    require(session.run(map,identity,request).ok && session.prepareCount()==prepares+1 && session.cacheLoadCount()==2,
-            "new map version reused stale prepared geometry");
+    require(session.run(map,identity,request).ok && session.prepareCount()==prepares && session.cacheLoadCount()==2,
+            "unchanged map evidence rebuilt the graph");
+    auto closed=tree;
+    for(int x=-1;x<=1;++x)for(int y=-8;y<8;++y)for(int z=0;z<12;++z)
+      closed.setNodeValue((x+.5)*.05,(y+.5)*.05,(z+.5)*.05,closed.getClampingThresMaxLog(),true);
+    closed.updateInnerOccupancy();
+    require(closed.write(map.string()),"cannot write map edit");
+    ++identity.content_epoch;
+    require(!session.run(map,identity,request).ok && session.prepareCount()==prepares,
+            "regional wall edit was ignored or rebuilt the entire planner");
+    {
+      r::PlannerSession restored;
+      require(!restored.run(map,identity,request).ok && restored.cacheLoadCount()==1,
+              "edited cached graph lost the wall");
+      require(tree.write(map.string()),"cannot reopen map passage");
+      ++identity.content_epoch;
+      require(restored.run(map,identity,request).ok && restored.prepareCount()==1,
+              "restored graph did not incrementally reopen the passage");
+    }
+    require(session.run(map,identity,request).ok && session.prepareCount()==prepares,
+            "removed wall remained in the live graph");
+    auto cleared_floor=tree;
+    cleared_floor.updateNode(octomap::point3d(-.375,-.225,-.025),false,true);
+    cleared_floor.updateInnerOccupancy();
+    require(cleared_floor.write(map.string()),"cannot write known-free floor edit");
+    ++identity.content_epoch;
+    require(session.run(map,identity,hole).ok && session.prepareCount()==prepares,
+            "known-free edit changed the current surface-closing rules");
+    {
+      r::PlannerSession restored;
+      require(restored.run(map,identity,hole).ok && restored.cacheLoadCount()==1,
+              "cache restore changed support after a known-free edit");
+      require(tree.write(map.string()),"cannot restore unknown floor cell");
+      ++identity.content_epoch;
+      require(restored.run(map,identity,hole).ok && restored.prepareCount()==1,
+              "known-free to unknown edit changed inferred support");
+    }
+    require(session.run(map,identity,request).ok && session.prepareCount()==prepares,
+            "unknown floor restoration rebuilt the live planner");
   }
   require(bytes(map)==original,"preparation modified measured occupancy");
   std::filesystem::last_write_time(map,
@@ -93,6 +130,21 @@ int main() try {
     r::PlannerSession session;
     require(session.run(map,identity,request).ok && session.cacheLoadCount()==0,
             "truncated cache did not rebuild from the saved map");
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(directory/".nav")) {
+    auto payload = bytes(entry.path());
+    const std::string format = "lingtu.navigation.prepared.8";
+    const auto offset = payload.find(format);
+    if (offset == std::string::npos) continue;
+    payload[offset + format.size() - 1] = '6';
+    std::ofstream out(entry.path(), std::ios::binary | std::ios::trunc);
+    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    require(static_cast<bool>(out), "cannot write legacy cache fixture");
+  }
+  {
+    r::PlannerSession session;
+    require(same(first,session.run(map,identity,request)) && session.cacheLoadCount()==0,
+            "legacy boundary costs were restored instead of rebuilt");
   }
   std::filesystem::remove_all(directory);
   std::cout<<"Prepared cache passed: query-only updates, disk roundtrip, inferred support, body profiles, map versions/source stamps, policy and truncation\n";

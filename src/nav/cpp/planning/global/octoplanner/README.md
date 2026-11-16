@@ -12,19 +12,23 @@ navd
   -> system liboctomap
 ```
 
-The prepared state follows the same ownership split as the current DimOS MLS
-planner, while remaining a native C++ implementation:
+Rust owns MLS surfaces, graph search, endpoint connections and the geometry
+checks used by the normal MLS route. C++ connects OctoMap and the native process,
+and retains the older grid search and geometry implementation for fallback and comparison.
 
 ```text
 OctoMap snapshot
   -> Rust MLS            observed and inferred multi-level cells
   -> Rust graph          sparse nodes and corridor edges
   -> PlannerArtifact     one map-bound asset reused by route queries
-  -> OctoPlanner3D      endpoint attachment and route search
+  -> Rust metric query  endpoint attachment, route search and geometry
+  -> route smoothing    shortcuts use the same Rust geometry check
 ```
 
-`PlannerArtifact` owns the Rust prepared surface and graph together. A map or
-preparation-geometry change rebuilds that asset; query-only changes such as
+`PlannerArtifact` owns the Rust prepared surface and graph together. A different
+map or preparation geometry rebuilds that asset. A committed revision of the
+same map compares occupied/free/unknown evidence and updates the changed region
+inside the existing PlannerSession lock. Query-only changes such as
 goal tolerance, snap radius, iteration budget, or same-floor preference update
 the existing graph query. This avoids rebuilding static geometry for every
 goal and leaves a small boundary for a future MLS or tomography backend to
@@ -38,32 +42,77 @@ Voronoi partition, and predecessor corridors. On the fixed arrival-box map,
 with DimOS-compatible floor step conversion, the Rust native graph reports
 29 nodes, 45 edges, and 2 components. DimOS reports 29 nodes, 47 edges, and 2
 components. The former C++ graph reported 36 nodes, 43 edges, and 9
-components. Rust corridors pass the same C++ endpoint, body, support, step,
-slope, and continuous sweep checks after geometry-aware edge filtering.
+components. The native comparison tests exercise matching Rust and C++ body,
+support, step, slope, continuous sweep and no-go semantics.
 
-The production `PlannerArtifact` now holds a Rust MLS graph handle. `startPlan()` queries Rust first, converts its cells to executable
-body poses, and sends the candidate through the existing C++ metric, support,
-body, step, slope, and continuous-sweep checks. A rejected Rust route falls back
-to the 3-D grid search. The C++ `SurfaceGraph` remains only for explicit legacy
-callers. New `.6` prepared artifacts restore the Rust graph directly and skip
-normal C++ graph construction. Raw OctoMap occupancy, support lookup, and continuous world-height
-fitting remain native geometry data.
-The C++ GeometryGate remains the final motion admission boundary for robot radius,
-clearance, support, step, slope, swept collision, no-go, start, and goal checks.
-Route height fitting now also reads the Rust `height` query. When the geometry
-adapter rejects a Rust route, the request uses the existing C++ fallback or the
-outer replanning cycle. Dynamic path truncation belongs to the local execution
-layer and follows the DimOS `truncate_to_safe` boundary.
-The migration boundary and removal order are recorded in
-`docs/design/mls-rust-migration-20261115.md`.
+The production `PlannerArtifact` holds a Rust MLS graph handle. `startPlan()`
+uses its metric query. Rust connects start and goal through the prepared
+surface, searches sparse corridors, and searches surface cells for a detour
+when the sparse corridors are blocked. Connections, full candidate routes and
+smoothing use the Rust metric, body, support, sweep and no-go checker. A rejected
+turn excludes its directed incoming connection for that request, then search
+continues. This conservative exclusion can also remove the edge for a different
+arrival heading; the graph does not store a full heading state. Endpoints,
+detours and retries share the request budget,
+and cancellation returns without publishing a route. Exhausted searches can
+fall back to the 3-D grid. The C++ `SurfaceGraph` remains only for explicit legacy
+callers. New `.8` prepared artifacts restore the Rust graph directly and attach
+raw occupied/free evidence from the same OctoMap without rebuilding the graph.
+The map-bound geometry index is reused by edge checks and invalidated by updates.
+
+The sparse graph retains the four-neighbor topology of the pinned DimOS
+reference in [SURFACE_NOTICE](SURFACE_NOTICE), commit
+`26144f7fd8424bdc33ab97dcd58e9497f2d413ee`. LingTu's checked full-surface detour
+locally extends its candidate connections by enumerating independent X and Y
+offsets within the existing `horizontal_hop_cells` range. This supplies the
+`(1, 2, 1)` stair-turn connection missed in the spiral fixture. Every candidate
+passes the geometry check and the configured step, slope and wall-distance
+rules. The change adds no step or slope threshold.
+
+For taller treads, the checked detour also considers the horizontal run required
+by that height change and the existing slope limit. A two-cell rise at a 0.577
+slope needs a four-cell run; a hop derived from a one-cell rise cannot connect it.
+This required run is a minimum, not a maximum connection radius. Checked
+cross-height candidates cover the per-level hop over the full height change,
+including diagonal offsets. Flat gaps and unchecked adjacency retain their
+previous range. This is a LingTu extension;
+the pinned DimOS adjacency connects immediate XY neighbors by a step threshold.
+Route simplification retains intermediate terrain heights when a proposed
+shortcut departs from the sampled height profile, while flat-floor offsets and
+straight ramps can still simplify. Fixed-map and paired-door/stair evidence is
+recorded in `build/mls-stairs-fix-20261116/`.
+
+SCAN and the global planner derive their dual-cylinder body from the same radius,
+offset and vertical configuration. Straight segments sweep both cylinders;
+vertices and explicit endpoint headings check their circular turning sweep.
+Start occupancy exemption applies only to the initial measured footprint, never
+to no-go regions. An unsupported actual start does not exempt the rest of its
+entry segment from ground support checks.
+
+Surface Z denotes the occupied voxel's **top**, as in DimOS. Body candidates add
+the configured support height to that top; using voxel centres lowers the body
+by half a map cell. Height fitting uses the same surface-top convention.
+Smoothing preserves the existing wall-distance soft cost. It can prefer more
+room without adding a hard clearance or changing the body size.
 
 `PreparedArtifactHandle` holds a Rust-side `PlannerState` through the C ABI.
 The migration smoke test covers artifact creation, surface and graph export,
 graph-only query, limited endpoint query, regional update, stable revision, and
-destruction. Production `PlannerSession` keeps raw OctoMap occupancy as the
-geometry boundary while Rust owns surface preparation and graph queries. The
+destruction. Production `PlannerSession` owns the loaded OctoMap and updates its
+Rust artifact and query caches under the same mutex. The
 legacy C++ graph remains only for explicit compatibility callers; new prepared
 caches contain only the Rust artifact.
+
+Rust exposes metric route checks for production queries and same-input geometry
+comparison. Inputs include body-reference poses in metres, dual-cylinder radius
+and offset, vertical extent, support calibration, step/slope limits, no-go,
+initial-footprint exemption and external preblocked cells.
+`octoplanner3d_route_check_smoke` compares its results and first failing segment
+with C++ on flat ground, stairs, a thin wall, missing support and no-go regions.
+It requires raw occupied evidence. Region extraction reads surrounding context
+and complete height columns, then replaces only affected surfaces; a clipped
+high wall must not create a false surface inside the wall. This update path
+consumes committed saved-map revisions, not rolling live collision windows.
 
 `vendor/` contains only the four OctoPlanner3D files used by the product:
 the constrained planner header/source and the optional offline PCD converter

@@ -244,8 +244,6 @@ void PrintUsage() {
             << "  --max-scene-bytes N maximum serialized MapScene payload bytes\n"
             << "  --max-voxel-snapshot-points N bounded scene voxel points\n"
             << "  --voxel-snapshot-radius M local voxel scene radius\n"
-            << "  --surface-residual-m M maximum ground fit residual\n"
-            << "  --surface-min-columns N minimum distinct ground XY samples\n"
             << "  --max-voxels N     live voxel runtime hard limit\n"
             << "  --max-accumulated-cells N accumulated runtime cell hard limit\n"
             << "  --max-accumulated-blocks N accumulated runtime block hard limit\n"
@@ -271,8 +269,6 @@ Options ParseOptions(int argc, char **argv) {
   options.engine.max_range_m = static_cast<float>(EnvNumber("LINGTU_MAPD_MAX_RANGE_M", options.engine.max_range_m, ParseDouble));
   options.engine.decay_period = std::chrono::milliseconds(EnvNumber("LINGTU_MAPD_DECAY_MS", options.engine.decay_period.count(), ParseUnsigned));
   options.engine.stale_after = std::chrono::milliseconds(EnvNumber("LINGTU_MAPD_STALE_MS", options.engine.stale_after.count(), ParseUnsigned));
-  options.engine.ground_surface.max_residual_m = EnvNumber("LINGTU_MAPD_SURFACE_RESIDUAL_M", options.engine.ground_surface.max_residual_m, ParseDouble);
-  options.engine.ground_surface.min_support_columns = EnvNumber("LINGTU_MAPD_SURFACE_MIN_COLUMNS", options.engine.ground_surface.min_support_columns, ParseInt);
   options.engine.build_extended_layers = EnvEnabled("LINGTU_MAPD_EXTENDED_LAYERS", true);
   options.save.save_patches = EnvEnabled("LINGTU_MAP_SAVE_PATCHES", map_defaults::save::patches);
   auto &save_request = options.save.request_defaults;
@@ -380,10 +376,6 @@ Options ParseOptions(int argc, char **argv) {
     } else if (argument == "--voxel-snapshot-radius") {
       options.engine.voxel_snapshot_radius_m =
           static_cast<float>(ParseDouble(next(), "--voxel-snapshot-radius"));
-    } else if (argument == "--surface-residual-m") {
-      options.engine.ground_surface.max_residual_m = ParseDouble(next(), "--surface-residual-m");
-    } else if (argument == "--surface-min-columns") {
-      options.engine.ground_surface.min_support_columns = ParseInt(next(), "--surface-min-columns");
     } else if (argument == "--max-voxels") {
       options.engine.voxel.max_voxels = ParseSize(next(), "--max-voxels");
     } else if (argument == "--max-accumulated-cells") {
@@ -403,12 +395,6 @@ Options ParseOptions(int argc, char **argv) {
     } else {
       throw std::invalid_argument("unknown argument: " + argument);
     }
-  }
-  if (!(options.engine.ground_surface.max_residual_m > 0.0)) {
-    throw std::invalid_argument("surface residual must be positive");
-  }
-  if (options.engine.ground_surface.min_support_columns < 3) {
-    throw std::invalid_argument("surface min columns must be at least 3");
   }
   if (options.domain_id < 0 || options.state_hz <= 0.0 || options.cloud_hz <= 0.0 ||
       options.map_hz <= 0.0 || options.scene_hz <= 0.0 || options.status_file.empty() ||

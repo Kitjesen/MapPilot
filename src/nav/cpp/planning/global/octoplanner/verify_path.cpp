@@ -192,8 +192,13 @@ Args parseArgs(int argc, char ** argv)
         parseDouble(next(), option),
         parseDouble(next(), option)};
     }
+    else if (option == "--planning-anchor-yaw") {
+      if (!args.planning_anchor) throw std::runtime_error("planning-anchor-yaw requires planning-anchor");
+      args.planning_anchor->yaw = parseDouble(next(), option);
+    }
     else if (option == "--self-test") args.self_test = true;
     else if (option == "--robot-radius") args.config.robot_radius = parseDouble(next(), option);
+    else if (option == "--body-offset") args.config.body_offset_m = parseDouble(next(), option);
     else if (option == "--body-clearance-below")
       args.config.body_clearance_below_m = parseDouble(next(), option);
     else if (option == "--body-clearance-above")
@@ -206,6 +211,10 @@ Args parseArgs(int argc, char ** argv)
       args.config.search_resolution_m = parseDouble(next(), option);
     else if (option == "--surface-closing-radius")
       args.config.surface_closing_radius_m = parseDouble(next(), option);
+    else if (option == "--surface-max-hole-area")
+      args.config.surface_max_hole_area_m2 = parseDouble(next(), option);
+    else if (option == "--surface-max-slope")
+      args.config.surface_max_slope = parseDouble(next(), option);
     else if (option == "--support-height")
       args.config.support_height_m = parseDouble(next(), option);
     else if (option == "--support-height-tolerance")
@@ -222,8 +231,8 @@ Args parseArgs(int argc, char ** argv)
     else if (option == "--help" || option == "-h") {
       throw std::runtime_error(
         "usage: octoplanner3d_verify_path --map map.bt --path path.xyz "
-        "[--planning-anchor x y z] "
-        "[planner profile options]; path.xyz contains one 'x y z' point per line");
+        "[--planning-anchor x y z] [--planning-anchor-yaw radians] [--body-offset meters] "
+        "[planner profile options]; path.xyz contains 'x y z [yaw]' per line");
     } else {
       throw std::runtime_error("unknown argument: " + option);
     }
@@ -263,9 +272,16 @@ std::vector<PointPose> loadPath(const std::string & path)
     if (row.eof()) continue;
     PointPose point;
     std::string extra;
-    if (!(row >> point.x >> point.y >> point.z) || (row >> extra) ||
+    if (!(row >> point.x >> point.y >> point.z) ||
         !std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
       throw std::runtime_error("invalid path point at line " + std::to_string(line_number));
+    }
+    row >> std::ws;
+    if (!row.eof()) {
+      double yaw;
+      if (!(row >> yaw) || !std::isfinite(yaw) || (row >> extra))
+        throw std::runtime_error("invalid path yaw at line " + std::to_string(line_number));
+      point.yaw = yaw;
     }
     points.push_back(point);
   }
@@ -371,11 +387,16 @@ struct OctoPlannerGridQueryTest
     cells.reserve(path.size());
     for (std::size_t i = 0; i < path.size(); ++i) {
       const auto & point = path[i];
+      const auto &next=path[i+1<path.size()?i+1:i];
+      const auto &previous=path[i>0?i-1:i];
+      const double yaw=point.yaw.value_or(i+1<path.size()
+          ?std::atan2(next.y-point.y,next.x-point.x)
+          :std::atan2(point.y-previous.y,point.x-previous.x));
       const auto cell = planner.worldToPlanningGrid(point.x, point.y, point.z);
       OctoPlanner3D::TraversabilityFailure failure;
       const bool traversable=body_centre ?
         (failure=planner.queryWorld(octomap::point3d(point.x,point.y,point.z),config.robot_radius,
-            config.ground_support&&i!=0,i!=0))==
+            config.ground_support&&i!=0,i!=0,yaw))==
             OctoPlanner3D::TraversabilityFailure::None :
         planner.isPlanningCellTraversableDetailed(
             cell, config.robot_radius, config.ground_support,
@@ -415,9 +436,21 @@ struct OctoPlannerGridQueryTest
       const double rise = std::abs(to.z() - from.z());
       OctoPlanner3D::TraversabilityFailure sweep_failure;
       octomap::point3d failed_point;
+      const double yaw=std::atan2(to.y()-from.y(),to.x()-from.x());
+      const double incoming=i>0
+          ?std::atan2(path[i].y-path[i-1].y,path[i].x-path[i-1].x)
+          :path.front().yaw.value_or(planning_anchor?planning_anchor->yaw.value_or(yaw):yaw);
+      const double pose_yaw=path[i].yaw.value_or(incoming);
+      if (!planner.turnFree(path[i],incoming,pose_yaw,&sweep_failure) ||
+          !planner.turnFree(path[i],pose_yaw,yaw,&sweep_failure) ||
+          (i+2==path.size() && path.back().yaw &&
+           !planner.turnFree(path.back(),yaw,*path.back().yaw,&sweep_failure))) {
+        result.sweep_failures.push_back({i,std::string("turn_")+failureName(sweep_failure),
+            path[i],path[i+1],path[i],horizontal,rise});
+      }
       if (!planner.sweptRouteFree(
             from,
-            to, &sweep_failure, &failed_point,true,i==0)) {
+            to, &sweep_failure, &failed_point,true,i==0,true,yaw)) {
         result.sweep_failures.push_back({i, failureName(sweep_failure),
           {from.x(), from.y(), from.z()}, {to.x(), to.y(), to.z()},
           PointPose{failed_point.x(), failed_point.y(), failed_point.z()}, horizontal, rise});

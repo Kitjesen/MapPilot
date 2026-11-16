@@ -45,6 +45,7 @@ def prepare(out: Path) -> None:
         options[name.removeprefix("octoplanner3d_")] = value
     options["body_clearance_below_m"] = float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"])
     options["body_clearance_above_m"] = float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"])
+    options["body_offset_m"] = float(environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"])
     cases = [
         ("geode", "build/dataset-mapping-20261021/maps/geode",
          "build/dataset-mapping-20261021/planning/geode/local_geometry_control_native/request.json",
@@ -74,6 +75,7 @@ def prepare(out: Path) -> None:
             diagnostic_environment[key] = str(int(value)) if isinstance(value, bool) else str(value)
         diagnostic_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = str(effective["body_clearance_below_m"])
         diagnostic_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = str(effective["body_clearance_above_m"])
+        diagnostic_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] = str(effective.get("body_offset_m", 0.0))
         write_json(input_dir / f"{name}.diagnostic-environment.json", diagnostic_environment)
         differences = {key: {"diagnostic": effective.get(key), "product": value}
                        for key, value in options.items() if effective.get(key) != value}

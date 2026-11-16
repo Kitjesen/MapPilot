@@ -123,6 +123,58 @@ typedef struct LtMlsRouteCheckResult {
   LtMlsCell failed_cell;
 } LtMlsRouteCheckResult;
 
+enum { LT_MLS_ROUTE_CANCELLED = 11 };
+
+typedef struct LtMlsPoint {
+  double x;
+  double y;
+  double z;
+} LtMlsPoint;
+
+typedef struct LtMlsMetricRegion {
+  LtMlsPoint min;
+  LtMlsPoint max;
+} LtMlsMetricRegion;
+
+typedef struct LtMlsPose {
+  LtMlsPoint point;
+  double yaw;
+  uint8_t has_yaw;
+} LtMlsPose;
+
+typedef struct LtMlsMetricConfig {
+  double resolution;
+  double robot_radius;
+  double below;
+  double above;
+  double support_height;
+  double support_tolerance;
+  double max_step;
+  double max_slope;
+  LtMlsPoint min;
+  LtMlsPoint max;
+  int32_t support_depth_cells;
+  int32_t support_patch_radius_cells;
+  int32_t support_patch_min_samples;
+  uint8_t ground_support;
+  uint8_t direct_support_only;
+  uint8_t actual_start;
+  double body_offset;
+  LtMlsPose start;
+  uint8_t start_exemption;
+} LtMlsMetricConfig;
+
+typedef int32_t (*LtMlsCancelCheck)(void* context);
+typedef struct LtMlsGeometry {
+  LtMlsMetricConfig config;
+  const LtMlsMetricRegion* regions;
+  uint64_t regions_len;
+  const LtMlsCell* preblocked;
+  uint64_t preblocked_len;
+  LtMlsCancelCheck cancel;
+  void* context;
+} LtMlsGeometry;
+
 typedef struct LtMlsBuffer {
   LtMlsCell* ptr;
   uint64_t len;
@@ -187,6 +239,13 @@ int32_t lt_mls_artifact_create_from_graph(
     LtMlsArtifact** out);
 
 void lt_mls_artifact_free(LtMlsArtifact* handle);
+
+// Restore raw geometry without rebuilding the prepared surface graph.
+int32_t lt_mls_artifact_set_geometry(
+    LtMlsArtifact* handle,
+    const LtMlsCell* occupied, uint64_t occupied_len,
+    const LtMlsCell* known_free, uint64_t known_free_len,
+    const LtMlsConfig* config);
 
 int32_t lt_mls_artifact_summary(
     const LtMlsArtifact* handle,
@@ -276,12 +335,49 @@ int32_t lt_mls_artifact_query_avoiding(
     uint64_t blocked_cells_len,
     LtMlsBuffer* route);
 
+// Kinds: segment=0, actual start connector=1, actual goal connector=2,
+// cancellation poll=3. Return pass=1, blocked=0, cancelled=-1.
+typedef int32_t (*LtMlsSegmentCheck)(LtMlsCell from, LtMlsCell to,
+                                   uint32_t kind, void* context);
+
+// Status: found=0, exhausted=1, budget=2, cancelled=3; negative is ABI failure.
+int32_t lt_mls_artifact_query_checked(
+    const LtMlsArtifact* handle,
+    LtMlsCell start,
+    LtMlsCell goal,
+    int32_t max_snap_cells,
+    int32_t max_iterations,
+    LtMlsSegmentCheck check,
+    void* context,
+    LtMlsBuffer* route);
+
 int32_t lt_mls_artifact_check_route(
     const LtMlsArtifact* handle,
     const LtMlsCell* route,
     uint64_t route_len,
     const LtMlsRouteCheckConfig* config,
     LtMlsRouteCheckResult* result);
+
+// Metric PointPose route validation. Failure kinds reuse the cell checker;
+// 10 denotes outside map bounds. The handle must own raw occupied evidence.
+int32_t lt_mls_artifact_check_metric_route(
+    const LtMlsArtifact* handle,
+    const LtMlsPoint* route,
+    uint64_t route_len,
+    const LtMlsMetricConfig* config,
+    const LtMlsMetricRegion* regions,
+    uint64_t regions_len,
+    LtMlsRouteCheckResult* result);
+
+int32_t lt_mls_artifact_check_metric_poses(
+    const LtMlsArtifact* handle, const LtMlsPose* route, uint64_t route_len,
+    const LtMlsGeometry* geometry, LtMlsRouteCheckResult* result);
+
+// Same query statuses as query_checked. Geometry and turns run entirely in Rust.
+int32_t lt_mls_artifact_query_metric(
+    const LtMlsArtifact* handle, LtMlsPose start, LtMlsPose goal,
+    int32_t max_snap_cells, int32_t max_iterations,
+    const LtMlsGeometry* geometry, LtMlsBuffer* route);
 
 int32_t lt_mls_artifact_update(
     LtMlsArtifact* handle,

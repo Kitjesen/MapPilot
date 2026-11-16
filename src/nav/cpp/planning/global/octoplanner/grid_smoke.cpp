@@ -1,4 +1,5 @@
 #include "global_planner.h"
+#include "lingtu/maps/no_go.hpp"
 
 #include <iostream>
 #include <limits>
@@ -29,6 +30,46 @@ static PlannerConfig gridFixtureConfig() {
 
 struct OctoPlannerGridQueryTest
 {
+  static void supportedStartCannotAttachAcrossMissingGround() {
+    auto config = gridFixtureConfig();
+    config.robot_radius = .32;
+    config.body_clearance_below_m = .05;
+    config.body_clearance_above_m = .35;
+    config.support_height_m = .435;
+    config.support_height_tolerance_m = .1;
+    config.max_slope = .5773502691896257;
+    config.ground_support = true;
+    config.direct_support_only = true;
+    config.snap_search_radius_cells = 24;
+    config.enable_preblocked_costmap = false;
+    config.obstacle_clearance_radius_cells = 0;
+    const PointPose start{.05, .05, .485}, goal{2.25, .05, .485};
+    for (bool gap : {true, false}) {
+      auto tree = std::make_shared<octomap::OcTree>(.1);
+      tree->updateNode(octomap::point3d(-1, -1, -1), false);
+      tree->updateNode(octomap::point3d(4, 1, 1), false);
+      for (int x = -6; x <= 35; ++x) for (int y = -6; y <= 6; ++y)
+        if (!gap || x <= 5 || x >= 14)
+          tree->updateNode(octomap::point3d((x+.5)*.1, (y+.5)*.1, .05), true);
+      OctoPlanner3D planner;
+      planner.setConfig(config);
+      planner.setOctomap(tree);
+      if (!planner.poseSupportFree(start) || !planner.poseSupportFree(goal))
+        throw std::runtime_error("start-gap fixture lost its observed endpoint support");
+      if (planner.poseSupportFree({1.05, .05, .485}) == gap)
+        throw std::runtime_error("start-gap fixture has unexpected intermediate support");
+      planner.makePlan(start, goal);
+      std::vector<PointPose> path;
+      planner.getPlannerResults(path);
+      if (gap && !path.empty())
+        throw std::runtime_error("supported start attached across an 80 cm missing-ground gap");
+      if (!gap && path.empty())
+        throw std::runtime_error("continuous observed ground lost its valid start connection");
+      if (gap && planner.validateRoute({start, goal}).valid)
+        throw std::runtime_error("route validation exempted missing ground along the first connector");
+    }
+  }
+
   static void supportedRouteTurnsInsideAnLShapedFloor() {
     auto tree=std::make_shared<octomap::OcTree>(.1);
     tree->updateNode(octomap::point3d(-1.2,-1.2,-1),false);
@@ -610,6 +651,10 @@ struct OctoPlannerGridQueryTest
         for (int i = 0; i < 90; ++i) {
           const octomap::point3d p(-.9 + .021*i, -.7 + .17*(i%9), -.15 + .05*(i%8));
           const double radius = i%2 ? .43 : .25;
+          const bool exempt = i % 3 == 0;
+          planner.setStartExemption({});
+          if (exempt) planner.setStartExemption(
+              [p](const PointPose& cell, double) { return cell.x < p.x(); });
           const auto lo = planner.worldToGrid(p.x()-radius,p.y()-radius,p.z()-.1);
           const auto hi = planner.worldToGrid(p.x()+radius,p.y()+radius,p.z()+.1);
           bool occupied = false;
@@ -621,6 +666,7 @@ struct OctoPlannerGridQueryTest
               for (int z = lo.z; z <= hi.z; ++z) {
                 if ((z+1)*r <= p.z()-.1+1e-7 || z*r >= p.z()+.1-1e-7) continue;
                 const auto* node = tree->search((x+.5)*r,(y+.5)*r,(z+.5)*r);
+                if (exempt && (x+.5)*r < p.x()) continue;
                 if (node && tree->isNodeOccupied(node)) { occupied = true; break; }
               }
             }
@@ -845,13 +891,39 @@ struct OctoPlannerGridQueryTest
           const GridIndex index{x, y, z};
           const auto * node = tree->search(planner.gridToWorld(index));
           const bool occupied = node && tree->isNodeOccupied(node);
-          if (planner.isOccupiedCell(index) != occupied ||
+          const bool first_query = planner.isOccupiedCell(index);
+          if (first_query != occupied || planner.isOccupiedCell(index) != occupied ||
               planner.isOccupiedLeafCell(index) != (reference_centers.count(index) != 0)) {
             throw std::runtime_error("cached occupancy/leaf centre differs from OctoMap");
           }
         }
       }
     }
+    const GridIndex marker{256, 256, 256};
+    const GridIndex marker_block{16, 16, 16};
+    (void)planner.cellState(marker);
+    planner.preparePoseQueries({0.0, 0.0, 0.0});
+    planner.preparePoseQueries({resolution, -resolution, resolution});
+    if (planner.occupied_blocks_.count(marker_block) == 0)
+      throw std::runtime_error("pose-query anchors discarded unchanged occupancy");
+    planner.setNoGoRegions(
+        std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>());
+    if (planner.occupied_blocks_.count(marker_block) == 0)
+      throw std::runtime_error("new no-go policy discarded unchanged occupancy");
+    const PointPose free_pose{2.5 * resolution, 2.5 * resolution, 2.5 * resolution};
+    planner.makePlan(free_pose, free_pose);
+    if (planner.occupied_blocks_.count(marker_block) == 0)
+      throw std::runtime_error("route query discarded unchanged occupancy");
+
+    const GridIndex changed{0, 0, 0};
+    tree->setNodeValue(planner.gridToWorld(changed), tree->getClampingThresMinLog());
+    tree->updateInnerOccupancy();
+    planner.setOctomap(tree);
+    if (planner.occupied_blocks_.count(marker_block) != 0)
+      throw std::runtime_error("resetting the shared map retained old occupancy blocks");
+    const auto * updated = tree->search(planner.gridToWorld(changed));
+    if (!updated || tree->isNodeOccupied(updated) || planner.isOccupiedCell(changed))
+      throw std::runtime_error("resetting the shared map retained cached occupied evidence");
   }
 
   static void bodyCylinderDoesNotReachTheNextVerticalCell()
@@ -1000,6 +1072,7 @@ int main()
   try {
     global_planner::OctoPlannerGridQueryTest::supportHeightUsesActualPoseWithinVoxel();
     global_planner::OctoPlannerGridQueryTest::supportHeightUsesBothFacesOfTheOccupiedVoxel();
+    global_planner::OctoPlannerGridQueryTest::supportedStartCannotAttachAcrossMissingGround();
     global_planner::OctoPlannerGridQueryTest::supportedRouteTurnsInsideAnLShapedFloor();
     global_planner::OctoPlannerGridQueryTest::supportedRoutesDoNotRequireObservedCentreAir();
     global_planner::OctoPlannerGridQueryTest::goalSnapUsesRequestedPosition();

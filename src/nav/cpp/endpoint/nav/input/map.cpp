@@ -275,6 +275,7 @@ bool InputProjector::pollObstacles(TimingDiagnostics &timing) {
     return false;
   }
   if (!result->error.empty()) {
+    state_.frames.motion_worker_error = result->error;
     state_.frames.last_error = "motion_processing_failed: " + result->error;
     state_.last_cloud_s = 0.0;
     state_.last_cloud_receive_s = 0.0;
@@ -291,6 +292,7 @@ bool InputProjector::pollObstacles(TimingDiagnostics &timing) {
   state_.predicted_obstacle_volumes = std::move(result->predictions);
   state_.latest_dynamic_clusters = std::move(result->clusters);
   state_.motion_layer_stats = result->stats;
+  state_.frames.motion_worker_error.clear();
   state_.last_sensor_origin = result->origin;
   state_.last_cloud_s = result->stamp_s;
   // Completion time must never make a delayed observation look fresh.

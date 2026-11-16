@@ -1,5 +1,8 @@
 #pragma once
 
+// LEGACY: display-only projection retained for mapd compatibility.
+// Do not add new navigation consumers; use occupancy and SurfaceIndex instead.
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -9,7 +12,7 @@
 
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
 #include "lingtu/maps/layers/grid.hpp"
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 
 namespace lingtu::maps::layers {
 

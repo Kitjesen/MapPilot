@@ -20,9 +20,8 @@ impl PartialOrd for OrderedF32 {
 pub(crate) fn chain_to_source(
     current: usize,
     predecessor: &[usize],
-    node_cells: &[usize],
+    sources: &HashSet<usize>,
 ) -> Vec<usize> {
-    let sources: HashSet<usize> = node_cells.iter().copied().collect();
     let mut chain = Vec::new();
     let mut cursor = current;
     chain.push(cursor);
@@ -39,9 +38,28 @@ pub(crate) fn chain_to_source(
 
 #[cfg(test)]
 mod tests {
-    use super::OrderedF32;
+    use super::{chain_to_source, OrderedF32};
     use std::cmp::Reverse;
-    use std::collections::BinaryHeap;
+    use std::collections::{BinaryHeap, HashSet};
+
+    #[test]
+    fn source_chains() {
+        let predecessor = [usize::MAX, 0, 1, 2, 4, usize::MAX, 5, usize::MAX];
+        let sources = HashSet::from([0, 5]);
+        let expected = [
+            vec![0],
+            vec![1, 0],
+            vec![2, 1, 0],
+            vec![3, 2, 1, 0],
+            vec![4],
+            vec![5],
+            vec![6, 5],
+            vec![7],
+        ];
+        for (current, expected) in expected.into_iter().enumerate() {
+            assert_eq!(chain_to_source(current, &predecessor, &sources), expected);
+        }
+    }
 
     #[test]
     fn ordered_cost_is_a_min_heap_key() {

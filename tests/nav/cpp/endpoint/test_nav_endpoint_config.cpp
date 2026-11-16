@@ -1089,7 +1089,6 @@ void testScanFollowerEnvironmentReachesExecutor() {
   ScopedEnvironment yaw_gain("LINGTU_NAV_SCAN_YAW_GAIN", "1.40");
   ScopedEnvironment max_vx("LINGTU_NAV_SCAN_MAX_VX_MPS", "0.68");
   ScopedEnvironment max_vy("LINGTU_NAV_SCAN_MAX_VY_MPS", "0.32");
-  ScopedEnvironment min_vy("LINGTU_NAV_SCAN_MIN_VY_MPS", "0.25");
   ScopedEnvironment max_yaw("LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S", "0.95");
   ScopedEnvironment finish_distance("LINGTU_NAV_SCAN_FINISH_DISTANCE_M", "0.07");
 
@@ -1108,18 +1107,6 @@ void testScanFollowerEnvironmentReachesExecutor() {
           "SCAN body velocity limits must reach Executor");
   require(std::abs(executor_config.follower.spline.finishDistance - 0.07) < 1e-12,
           "SCAN finish distance must reach Executor independently");
-  require(std::abs(executor_config.follower.spline.minVy - 0.25) < 1e-12,
-          "lateral minimum must reach the follower before final safety");
-  for (const char *value : {"-0.1", "nan", "inf"}) {
-    ScopedEnvironment invalid_minimum("LINGTU_NAV_SCAN_MIN_VY_MPS", value);
-    bool rejected = false;
-    try {
-      (void)parse({"navd", "--local-planner", "scan"});
-    } catch (const std::runtime_error &) {
-      rejected = true;
-    }
-    require(rejected, "invalid lateral minimum must fail at the native boundary");
-  }
 }
 
 void testGoalHeightToleranceIsIndependentOfLocalPlanner() {
@@ -1370,8 +1357,9 @@ void testScanCollisionEnvelopeIsConfigurable() {
   require(std::abs(cfg.octoplanner_options.robot_radius - 0.41) < 1e-12,
           "global XYZ search must use corridor width without adding body length");
   require(std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.25) < 1e-12 &&
-              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.40) < 1e-12,
-          "global clearance must cover SCAN's discretely inflated vertical extent");
+              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.40) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_offset_m - 0.24) < 1e-12,
+          "global geometry must match the local grid's derived vertical extent");
   require(std::abs(planner.scan.bodyClearanceBelow - 0.22) < 1e-12,
           "SCAN lower body clearance must reach the planner");
   require(std::abs(planner.scan.bodyClearanceAbove - 0.36) < 1e-12,
@@ -1390,16 +1378,18 @@ void testScanGlobalCorridorEnvironmentAndLargerOverrides() {
   const auto cfg = parse({"navd"});
   require(std::abs(cfg.octoplanner_options.robot_radius - 0.25) < 1e-12 &&
               std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.10) < 1e-12 &&
-              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12,
-          "undersized environment values must not shrink corridor width or height");
+              std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_offset_m - 0.19) < 1e-12,
+          "global planning must derive exact local geometry from the selected platform");
 
   const auto larger = parse({"navd", "--octo-robot-radius-m", "0.70",
                             "--octo-body-clearance-below-m", "0.40",
                             "--octo-body-clearance-above-m", "0.50"});
-  require(std::abs(larger.octoplanner_options.robot_radius - 0.70) < 1e-12 &&
-              std::abs(larger.octoplanner_options.body_clearance_below_m - 0.40) < 1e-12 &&
-              std::abs(larger.octoplanner_options.body_clearance_above_m - 0.50) < 1e-12,
-          "larger explicit global clearances must remain available");
+  require(std::abs(larger.octoplanner_options.robot_radius - 0.25) < 1e-12 &&
+              std::abs(larger.octoplanner_options.body_clearance_below_m - 0.10) < 1e-12 &&
+              std::abs(larger.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12 &&
+              std::abs(larger.octoplanner_options.body_offset_m - 0.19) < 1e-12,
+          "global overrides must not create another SCAN body envelope");
 
   const auto cmu = parse({"navd", "--local-planner", "cmu", "--path-library", "fixture-paths"});
   require(std::abs(cmu.octoplanner_options.robot_radius - 0.10) < 1e-12 &&
@@ -1415,6 +1405,7 @@ void testScanGlobalCorridorUsesThunderGeometry() {
                           "--collision-clearance-below-m", "0.25",
                           "--collision-clearance-above-m", "0.35"});
   require(std::abs(cfg.octoplanner_options.robot_radius - 0.40) < 1e-12 &&
+              std::abs(cfg.octoplanner_options.body_offset_m - 0.25) < 1e-12 &&
               std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.25) < 1e-12 &&
               std::abs(cfg.octoplanner_options.body_clearance_above_m - 0.35) < 1e-12,
           "the global corridor must derive from the selected platform geometry");

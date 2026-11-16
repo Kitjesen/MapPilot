@@ -75,6 +75,7 @@ add_library(lingtu_maps STATIC
   cpp/mapd/activation.cpp
   cpp/mapd/engine.cpp
   cpp/mapd/query.cpp
+  cpp/mapd/region_update.cpp
   cpp/mapd/server.cpp
   cpp/mapd/save.cpp
   cpp/mapd/dispatch.cpp
@@ -362,12 +363,6 @@ if(BUILD_TESTING)
     lingtu_maps_mapd_engine_test
     ${_LINGTU_MAPS_TEST_DIR}/mapd_engine_test.cpp
   )
-  add_executable(lingtu_maps_surface_projection_test ${_LINGTU_MAPS_TEST_DIR}/surface_projection_test.cpp)
-  target_link_libraries(lingtu_maps_surface_projection_test PRIVATE lingtu_maps)
-  add_test(NAME lingtu_maps_surface_projection_test COMMAND lingtu_maps_surface_projection_test)
-  add_executable(lingtu_maps_ground_surface_test ${_LINGTU_MAPS_TEST_DIR}/ground_surface_test.cpp)
-  target_link_libraries(lingtu_maps_ground_surface_test PRIVATE lingtu_maps)
-  add_test(NAME lingtu_maps_ground_surface_test COMMAND lingtu_maps_ground_surface_test)
   if(octomap_FOUND)
     add_executable(lingtu_maps_surface_completion_test ${_LINGTU_MAPS_TEST_DIR}/surface_completion_test.cpp)
     target_link_libraries(lingtu_maps_surface_completion_test PRIVATE lingtu_maps_surface)
@@ -539,8 +534,6 @@ if(BUILD_TESTING)
     lingtu_maps_process_test
     lingtu_maps_block_grid_test
     lingtu_maps_mapd_engine_test
-    lingtu_maps_surface_projection_test
-    lingtu_maps_ground_surface_test
     lingtu_maps_mapd_service_dispatch_test
     lingtu_maps_mapd_save_coordinator_test
     lingtu_maps_map_activation_test

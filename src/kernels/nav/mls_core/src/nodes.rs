@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::corridor::OrderedF32;
 use crate::surfaces::{neighbors, squared_distance};
@@ -99,21 +99,29 @@ pub(crate) fn place_nodes_with_forced(
     nodes.sort_unstable();
     nodes.dedup();
 
-    let far_from_nodes = |nodes: &[usize], index: usize| {
-        nodes
-            .iter()
-            .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
-    };
-    let mut candidates: Vec<usize> = (0..cells.len())
-        .filter(|&index| wall[index] + 1e-6 >= clearance && far_from_nodes(&nodes, index))
-        .collect();
-    candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
-    for index in candidates {
-        if far_from_nodes(&nodes, index) {
-            nodes.push(index);
+    if spacing == 1 {
+        // Distinct integer XYZ cells already have squared distance at least one.
+        nodes.extend((0..cells.len()).filter(|&index| wall[index] + 1e-6 >= clearance));
+        nodes.sort_unstable();
+        nodes.dedup();
+    } else {
+        let far_from_nodes = |nodes: &[usize], index: usize| {
+            nodes
+                .iter()
+                .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
+        };
+        let mut candidates: Vec<usize> = (0..cells.len())
+            .filter(|&index| wall[index] + 1e-6 >= clearance && far_from_nodes(&nodes, index))
+            .collect();
+        candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
+        for index in candidates {
+            if far_from_nodes(&nodes, index) {
+                nodes.push(index);
+            }
         }
     }
 
+    let mut selected: HashSet<usize> = nodes.iter().copied().collect();
     let mut seen = vec![false; cells.len()];
     for seed in 0..cells.len() {
         if seen[seed] {
@@ -131,15 +139,117 @@ pub(crate) fn place_nodes_with_forced(
                 }
             }
         }
-        if !component.iter().any(|index| nodes.contains(index)) {
+        if !component.iter().any(|index| selected.contains(index)) {
             if let Some(&best) = component
                 .iter()
                 .max_by(|&&a, &&b| wall[a].total_cmp(&wall[b]).then(cells[b].cmp(&cells[a])))
             {
                 nodes.push(best);
+                selected.insert(best);
             }
         }
     }
     nodes.sort_unstable();
     nodes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn original_placement(
+        cells: &[SurfaceCell],
+        adjacency: &[Vec<(usize, f32)>],
+        wall: &[f32],
+        config: GraphConfig,
+        forced: &[SurfaceCell],
+    ) -> Vec<usize> {
+        let spacing = i64::from(config.node_spacing_cells.max(1));
+        let mut nodes = forced
+            .iter()
+            .filter_map(|cell| cells.binary_search(cell).ok())
+            .collect::<Vec<_>>();
+        nodes.sort_unstable();
+        nodes.dedup();
+        let far = |nodes: &[usize], index: usize| {
+            nodes
+                .iter()
+                .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
+        };
+        let mut candidates = (0..cells.len())
+            .filter(|&index| {
+                wall[index] + 1e-6 >= config.wall_clearance_cells.max(0) as f32
+                    && far(&nodes, index)
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
+        for index in candidates {
+            if far(&nodes, index) {
+                nodes.push(index);
+            }
+        }
+        let mut seen = vec![false; cells.len()];
+        for seed in 0..cells.len() {
+            if seen[seed] {
+                continue;
+            }
+            let mut component = Vec::new();
+            let mut stack = vec![seed];
+            seen[seed] = true;
+            while let Some(current) = stack.pop() {
+                component.push(current);
+                for &(next, _) in &adjacency[current] {
+                    if !seen[next] {
+                        seen[next] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+            if !component.iter().any(|index| nodes.contains(index)) {
+                if let Some(&best) = component
+                    .iter()
+                    .max_by(|&&a, &&b| wall[a].total_cmp(&wall[b]).then(cells[b].cmp(&cells[a])))
+                {
+                    nodes.push(best);
+                }
+            }
+        }
+        nodes.sort_unstable();
+        nodes
+    }
+
+    #[test]
+    fn placement_matches_original() {
+        for levels in [&[0][..], &[0, 1, 5][..]] {
+            let mut cells = Vec::new();
+            for x in 0..8 {
+                for y in 0..5 {
+                    for &z in levels {
+                        cells.push(SurfaceCell::new(x, y, z));
+                    }
+                }
+            }
+            cells.push(SurfaceCell::new(20, 0, 0));
+            let wall = (0..cells.len())
+                .map(|index| (index % 4) as f32)
+                .collect::<Vec<_>>();
+            let forced = [cells[0], cells[0], cells[5], SurfaceCell::new(100, 100, 0)];
+            for spacing in [1, 2, 3] {
+                for clearance in [0, 2, 9] {
+                    let config = GraphConfig {
+                        node_spacing_cells: spacing,
+                        wall_clearance_cells: clearance,
+                        max_link_cells: 1,
+                        ..GraphConfig::default()
+                    };
+                    let adjacency = crate::adjacency::build_adjacency(&cells, config);
+                    assert_eq!(
+                        place_nodes_with_forced(&cells, &adjacency, &wall, config, &forced),
+                        original_placement(&cells, &adjacency, &wall, config, &forced),
+                        "spacing={spacing} clearance={clearance} layers={levels:?}",
+                    );
+                }
+            }
+        }
+    }
 }

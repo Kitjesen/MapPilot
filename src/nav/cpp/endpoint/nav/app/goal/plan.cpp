@@ -240,11 +240,13 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.start.x,
       plan_context.start.y,
       plan_context.start.z,
+      context.map_yaw,
   };
   plan_context.request.goal = {
       plan_context.goal.x,
       plan_context.goal.y,
       plan_context.goal.z,
+      target.yaw,
   };
   plan_context.local_body = context.body;
   plan_context.request.options = is_replan ? active_planner_options_ : context.planner_options;

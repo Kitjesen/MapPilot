@@ -443,16 +443,6 @@ class SplineAlgorithm {
     output.executionFrozen = controlled.executionFrozen;
     output.finished = controlled.finished && !waitingForReduction;
     output.awaitingTrajectory = invalidatedTrajectoryId_.has_value();
-    const double remaining = std::max(0.0, output.endDistance - params.finishDistance);
-    const double minVy = std::min({scan.minVy, params.maxVy,
-        std::sqrt(2.0 * input.params.maxAccel * remaining)});
-    if (!externalHold && std::abs(output.cmd.vy) > kSpeedEpsilon &&
-        std::abs(output.cmd.vy) < minVy) {
-      // Shape the target before the acceleration ramp and final collision check.
-      output.cmd.vy = std::copysign(minVy, output.cmd.vy);
-      const double maxVx = std::sqrt(std::max(0.0, speedLimit * speedLimit - minVy * minVy));
-      output.cmd.vx = clamp(output.cmd.vx, -maxVx, maxVx);
-    }
     if (!hasMotionCommand_) {
       const auto &measured = input.measuredBodyTwist;
       if (input.measuredBodyTwistValid && std::isfinite(measured.vx) &&

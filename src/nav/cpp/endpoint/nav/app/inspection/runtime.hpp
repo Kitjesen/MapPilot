@@ -106,8 +106,6 @@ class InspectionRuntimeController {
   void clearActivePoint() noexcept;
 
   [[nodiscard]] const std::optional<lingtu::nav::inspection::Point> &activePoint() const noexcept;
-  [[nodiscard]] lingtu::nav::inspection::Executor &executor() noexcept;
-  [[nodiscard]] const lingtu::nav::inspection::Executor &executor() const noexcept;
 
  private:
   [[nodiscard]] bool applyEvidenceResult(const InspectionRuntimeEvidenceResult &result,

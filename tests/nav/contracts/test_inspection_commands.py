@@ -5,15 +5,15 @@ ROOT = Path(__file__).resolve().parents[3]
 ENDPOINT_DIR = ROOT / "src" / "nav" / "cpp" / "endpoint"
 NAV_ENDPOINT_DIR = ENDPOINT_DIR / "nav"
 INSPECTION_DIR = NAV_ENDPOINT_DIR / "app" / "inspection"
-COORDINATOR_HEADER = INSPECTION_DIR / "inspection_command_coordinator.hpp"
-COORDINATOR_SOURCE = INSPECTION_DIR / "inspection_command_coordinator.cpp"
+COORDINATOR_HEADER = INSPECTION_DIR / "commands.hpp"
+COORDINATOR_SOURCE = INSPECTION_DIR / "commands.cpp"
 COORDINATOR_TEST = (
     ROOT
     / "tests"
     / "nav"
     / "cpp"
     / "endpoint"
-    / "test_inspection_command_coordinator.cpp"
+    / "test_commands.cpp"
 )
 ENDPOINT = NAV_ENDPOINT_DIR / "main.cpp"
 ENDPOINT_LOOP = NAV_ENDPOINT_DIR / "app" / "loop.cpp"
@@ -79,14 +79,14 @@ def test_endpoint_cmake_builds_coordinator_into_navd() -> None:
     cmake = _read(ENDPOINT_CMAKE)
     navd_target = _block_after(cmake, "add_executable(navd", "target_link_libraries(navd")
 
-    assert "inspection/inspection_command_coordinator.cpp" in navd_target
+    assert "inspection/commands.cpp" in navd_target
 
 
 def test_portable_cmake_registers_command_coordinator_ctest() -> None:
     cmake = _read(NAV_TEST_CMAKE)
 
-    assert "test_inspection_command_coordinator.cpp" in cmake
-    assert "inspection/inspection_command_coordinator.cpp" in cmake
+    assert "test_commands.cpp" in cmake
+    assert "inspection/commands.cpp" in cmake
     assert re.search(r"add_test\s*\(\s*NAME\s+test_inspection_command_coordinator\b", cmake)
 
 
@@ -105,7 +105,7 @@ def test_native_endpoint_only_forwards_inspection_command_requests_to_coordinato
         "auto process_geofence_command =",
     )
 
-    assert '#include "app/inspection/inspection_command_coordinator.hpp"' in endpoint
+    assert '#include "app/inspection/commands.hpp"' in endpoint
     assert "InspectionCommandCoordinator inspection_command_coordinator" in endpoint
     assert "inspection_commands.handle" in command_block
     assert "InspectionTaskAckOutput" in endpoint
