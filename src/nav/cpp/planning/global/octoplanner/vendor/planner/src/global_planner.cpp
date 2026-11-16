@@ -22,10 +22,12 @@ namespace global_planner
         constexpr double kMetricToleranceEpsilonM = 1e-6;
 
         std::vector<mls::SurfaceCell> mapCells(
-            const octomap::OcTree &tree, bool occupied) {
+            const octomap::OcTree &tree, bool occupied,
+            const std::function<bool()> &cancel_check = {}) {
             const double resolution = tree.getResolution();
             std::vector<mls::SurfaceCell> cells;
             for (auto it = tree.begin_leafs(); it != tree.end_leafs(); ++it) {
+                if (cancel_check && cancel_check()) throw SurfaceGraph::Cancelled{};
                 if (tree.isNodeOccupied(*it) != occupied) continue;
                 const int span = static_cast<int>(std::lround(it.getSize() / resolution));
                 const int x0 = static_cast<int>(std::lround(
@@ -1021,6 +1023,16 @@ namespace global_planner
             if(actual_start&&(i==0||from==to)) {
                 const auto origin=queryWorld(from,robot_radius_,false,false);
                 if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+                if (ground_support_) {
+                    const auto support = worldToGrid(from.x(), from.y(), from.z());
+                    const auto floor = artifact_->surface->below(
+                        support.x, support.y, support.z);
+                    if (floor && !hasFootprintGroundSupport(
+                            support, robot_radius_, support_depth_cells_)) {
+                        if (failure) *failure = TraversabilityFailure::GroundSupport;
+                        return false;
+                    }
+                }
                 continue;
             }
             if (!isPlanningCellTraversableDetailed(
@@ -1730,7 +1742,8 @@ namespace global_planner
             static_cast<float>(graph_config_.surface_max_slope)};
 
         auto raw_handle = mls::PreparedArtifactHandle::create(
-            mapCells(*octree_, true), mapCells(*octree_, false),
+            mapCells(*octree_, true, cancel_check_),
+            mapCells(*octree_, false, cancel_check_),
             surface_config, rust_config, 1);
         const auto raw_surface = raw_handle.surfaces();
         artifact_->rust_surface = std::make_shared<mls::PreparedArtifactHandle>(
@@ -1839,6 +1852,9 @@ namespace global_planner
 
     bool OctoPlanner3D::isOccupiedCell(const GridIndex & idx) const
     {
+        if (artifact_ && artifact_->surface) {
+            return artifact_->surface->occupied(idx.x, idx.y, idx.z, idx.z);
+        }
         const auto state = cellState(idx);
         return state == CellState::Occupied || state == CellState::OccupiedLeafCenter;
     }
