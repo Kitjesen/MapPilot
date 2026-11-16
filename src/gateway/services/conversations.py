@@ -7,7 +7,6 @@ import json
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from decision.llm.client import LLMError
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.conversation_tools import workbench_tools
 
@@ -30,11 +29,6 @@ def call(gw, method, *args, **kwargs):
                       "turn_active", "approval_closed", "conversation_active", "conversation_archived"
                   } else 400)
         raise HTTPException(status, detail={"reason": reason}) from exc
-    except LLMError as exc:
-        reason = str(exc)
-        if reason == "login_not_found":
-            raise HTTPException(404, detail={"reason": reason}) from exc
-        raise
 
 
 def submit(gw, conversation_id, body):

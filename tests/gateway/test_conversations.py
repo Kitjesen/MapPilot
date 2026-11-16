@@ -312,8 +312,7 @@ def test_codex_routes_preserve_login_identity_and_hide_credentials(gateway, monk
     monkeypatch.setattr(app_server, "start_login", lambda: dict(state["login"]))
     def poll(login_id):
         if login_id != state["login"]["id"]:
-            from decision.llm.client import LLMError
-            raise LLMError("login_not_found")
+            raise ValueError("login_not_found")
         return dict(state["login"])
     monkeypatch.setattr(app_server, "poll_login", poll)
     monkeypatch.setattr(app_server, "cancel_login", lambda login_id: {**state["login"], "state": "cancelled"})
