@@ -178,7 +178,8 @@ class RollingOccupancyGrid final {
     std::uint16_t hits{0U};
     std::uint16_t misses{0U};
     bool observed{false};
-    bool unresolved_hit{false};
+    bool current_hit{false};
+    bool ray_free{false};
   };
 
   struct CellCoord {
@@ -247,6 +248,7 @@ class RollingOccupancyGrid final {
   RollingOccupancyConfig config_;
   double occupied_log_odds_threshold_{0.0};
   std::vector<Cell> cells_;
+  std::vector<std::size_t> current_hits_;
   std::unordered_map<std::size_t, CollisionHitBounds> hit_bounds_;
   std::vector<std::uint32_t> ray_total_counts_;
   std::vector<std::uint32_t> ray_hit_counts_;
