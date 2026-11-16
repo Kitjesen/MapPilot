@@ -76,9 +76,14 @@ def test_docs_delegate_topic_and_frame_values_to_machine_sources():
 def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
     doc = " ".join(_read("docs/simulation.md").split())
 
-    for contract in ("lingtu.control switch", "ProductControl", "native LTLIO", "control_plan",
-                     "synthetic IMU and LiDAR", "Truth odometry remains evaluation evidence"):
-        assert contract in doc
+    assert "lingtu.control switch" in doc
+    assert "synthetic IMU and LiDAR" in doc
+    assert "`env=sim`" in doc
+    assert "ProductControl" in doc
+    assert "`control_plan`" in doc
+    assert "native LTLIO" in doc
+    assert "Truth odometry remains evaluation evidence" in doc
+    assert "does not prove" in doc
 
 
 def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algorithms():
@@ -131,7 +136,7 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     real_lidar = lidar_extrinsic("go2_mid360")
     cfg_lidar = load_config(str(REPO_ROOT / "config/robots/unitree/go2/robot.yaml")).lidar
     assert (cfg_lidar.frame_id or FRAMES.lidar) in frame_id_aliases(FRAMES.lidar)
-    assert real_lidar.child in frame_id_aliases(FRAMES.lidar)
+    assert real_lidar.child == FRAMES.real_lidar
     assert cfg_lidar.offset_x == pytest.approx(real_lidar.x)
     assert cfg_lidar.offset_y == pytest.approx(real_lidar.y)
     assert cfg_lidar.offset_z == pytest.approx(real_lidar.z)
@@ -199,9 +204,13 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
 
 def test_runtime_stream_contract_language_is_not_ros2_topic_only():
     sim_contract = _read("docs/simulation.md")
+    architecture = _read("docs/architecture.md")
 
     assert "DDS / SHM adapters" in sim_contract
     assert "Typed DDS, camera SHM, and explicit compatibility seams" in sim_contract
+    assert "native runtime" in sim_contract
+    assert "ROS TF is not the Product data plane" in architecture
+    assert runtime_data_flow_topics.__doc__ == "Return unique canonical runtime stream tokens in one resolved data-flow."
 
 
 def test_runtime_contract_references_declared_topics_formats_and_artifacts():

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import struct
 import time
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -9,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
 from gateway.video_probe import create_app
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind, posix_shm_path
 
 
 @pytest.fixture
@@ -23,6 +27,21 @@ def video_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("LINGTU_MEDIA_REQUIRE_TOKEN", raising=False)
     monkeypatch.delenv("LINGTU_MEDIA_VIEWER_TOKEN", raising=False)
     return tmp_path / "video.json"
+
+
+@pytest.fixture
+def depth_shm(monkeypatch, tmp_path):
+    if os.name == "nt":
+        path = tmp_path / "depth.shm"
+        name = str(path)
+    else:
+        name = f"/lingtu_test_depth_{uuid4().hex}"
+        path = posix_shm_path(name)
+    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", name)
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_unstarted_gateway_has_no_control_routes_or_advertised_control(video_environment, monkeypatch):
@@ -127,11 +146,41 @@ def test_optional_camera_mcp_exposes_only_read_tools(video_environment, monkeypa
     assert client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "set_mode", "arguments": {}}}).json()["error"]["code"] == -32602
 
 
-def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environment, tmp_path, monkeypatch):
-    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", str(tmp_path / "missing-depth"))
+def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environment, depth_shm):
     response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
     assert response.status_code == 503
     assert response.json()["sensor"] == "depth"
+
+
+@pytest.mark.parametrize("age_s", [0, 5])
+def test_depth_snapshot_reads_fresh_shm_and_rejects_stale_frames(video_environment, depth_shm, age_s):
+    timestamp_ns = time.time_ns() - age_s * 1_000_000_000
+    with ShmFrameWriter(depth_shm, stream_kind=StreamKind.DEPTH, slot_capacity=12) as writer:
+        writer.publish(
+            timestamp_ns=timestamp_ns,
+            width=2,
+            height=2,
+            stride=6,
+            encoding="16UC1",
+            frame_id="camera_depth_link",
+            payload=struct.pack("<6H", 1000, 1500, 60000, 2000, 2500, 60000),
+            depth_scale=0.001,
+        )
+        response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
+
+    if age_s:
+        payload = response.json()
+        assert response.status_code == 503
+        assert payload["success"] is False
+        assert "stale threshold" in payload["error"]
+    else:
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-depth-width"] == "2"
+        assert response.headers["x-depth-height"] == "2"
+        assert 1.0 <= float(response.headers["x-depth-near-m"]) < float(response.headers["x-depth-far-m"]) <= 2.5
+        assert response.content.startswith(b"\xff\xd8\xff")
 
 
 def test_media_authorization_is_kept(video_environment, monkeypatch):

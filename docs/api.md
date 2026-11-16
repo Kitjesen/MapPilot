@@ -358,10 +358,32 @@ Later turns use `get_agent_status` to query the same Follow through `navigation`
 or `cancel_agent_task(run_id)` to cancel it. Ordinary conversation leaves it
 running. The direct phrases `跟随状态`, `停止跟随`, and `stop following` also work.
 Existing conversation permissions and Gateway motion admission still apply.
-This integration uses the existing conversation routes, not a second execution API.
-Model-driven execution currently uses the Agents SDK providers, including Kimi.
-The Codex App Server and ACP branches do not yet forward LingTu tool definitions
-or handlers. The explicit query/cancel phrases are handled before model dispatch.
+The conversation creates the existing Follow with `require_confirmation=true`.
+No follow waypoint may be dispatched until the operator confirms a person,
+including in Full access mode. Read-only chat cannot prepare this task; default
+chat uses the person-confirmation card instead of a second generic approval.
+
+`GET /api/v1/follow/{follow_task_id}/selection?product_session_id=...` returns a
+retained JPEG frame, its dimensions, observation sequence and candidate boxes.
+`refresh=true` captures a new matching observation and invalidates the old one.
+The configured vision LLM reviews the complete scene once per retained frame.
+Candidate `kind` is `person`, `non_person` or `unknown`; non-person boxes are
+hidden, while unknown/unreviewed candidates cannot be confirmed. Missing model
+access, timeout or malformed output never implies a positive verdict. This is
+semantic filtering, not a single-frame liveness guarantee.
+
+`POST /api/v1/follow/{follow_task_id}/confirm` takes `follow_task_id`,
+`product_session_id`, `target_id`, `observation_sequence`, `request_id` and
+`client_id`. The route applies the existing motion guard and command journal;
+VisualServo checks the exact task, retained frame, review verdict and current
+observation before binding the chosen target. The method is not an Agent/MCP
+skill: the model cannot approve its own recommendation. Existing direct Follow
+callers retain their behavior unless they request confirmation.
+Model-driven execution uses the Agents SDK providers, including Kimi.
+Codex App Server forwards registered LingTu tools through its native dynamic
+tools and the same dispatcher; real-account end-to-end verification remains
+pending. ACP does not yet forward LingTu tool definitions or handlers.
+The explicit query/cancel phrases are handled before model dispatch.
 
 Follow is an owned execution rather than a stream of anonymous visual-servo
 commands. Start it with `POST /api/v1/visual_servo` using `mode=follow` and a

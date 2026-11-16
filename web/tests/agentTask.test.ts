@@ -65,6 +65,7 @@ test('unknown, superseded and unconfirmed cancellation never present success or 
 test('Follow phases report the domain state even when its generic state is running', () => {
   const phases = [
     ['selecting', '正在选择跟随目标'],
+    ['awaiting_confirmation', '等待确认跟踪人员'],
     ['following', '正在持续跟随'],
     ['reacquiring', '正在重新识别跟随目标'],
     ['lost', '跟随目标暂时丢失'],

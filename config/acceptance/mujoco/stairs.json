@@ -1,7 +1,7 @@
 {
   "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
-  "name": "mujoco_stair_model_sequence",
-  "description": "Native nav + SCAN with measured stair map and real ONNX handoffs; MuJoCo truth localization, experimental Thunder models only.",
+  "name": "mujoco_stairs_cts_moe_v39",
+  "description": "Native nav + SCAN with the same-source stair map and unified CTS MoE v39 policy; MuJoCo truth localization and physical actuation.",
   "product_contract": {
     "product": "nav",
     "route": "standard",
@@ -45,10 +45,6 @@
         5.9,
         0.0,
         1.155
-      ],
-      "profile_sequence": [
-        "stairs_up",
-        "restore"
       ]
     },
     {
@@ -62,10 +58,6 @@
         -1.0,
         0.0,
         0.465
-      ],
-      "profile_sequence": [
-        "stairs_down",
-        "restore"
       ]
     }
   ],
@@ -82,8 +74,8 @@
   "acceptance_scope": {
     "coverage": "component",
     "claims": [
-      "native navigation goal and stair profile handoff around MuJoCo physical actuation",
-      "XYZ arrival and original loaded model restoration recorded per stair leg"
+      "native navigation goals with CTS MoE v39 MuJoCo physical actuation",
+      "XYZ arrival recorded per stair leg"
     ],
     "excluded_claims": [
       "SLAM robustness",

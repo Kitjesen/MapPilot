@@ -14,6 +14,7 @@ import numpy as np
 from perception.backends import DetectorSpec, ObservationSource
 from perception.frames import FrameDrop, FrameResult, FrameSynchronizer, SynchronizedFrame
 from perception.pipeline import PerceptionOutcome, PerceptionPipeline, PerceptionSettings
+from perception.tracking.projection import depth_scale_for_image
 from runtime.module import Module
 from runtime.msgs.geometry import PoseStamped
 from runtime.msgs.nav import NavigationState, Odometry
@@ -69,6 +70,7 @@ class PerceptionModule(Module, layer=3):
             max_map_odom_age_s=max_map_odom_age_s,
         )
         self._pipeline = PerceptionPipeline(settings, detector)
+        self._settings = settings
         self._product_session_id = str(
             product_session_id or os.getenv("LINGTU_PRODUCT_SESSION_ID", "")
         )
@@ -489,6 +491,14 @@ class PerceptionModule(Module, layer=3):
         if frame is not None:
             source_ts = frame.timestamp
             source_generation, map_id, content_epoch = frame.context_token
+        depth_scale_m = None
+        if frame is not None and status in _PUBLISHABLE_OUTCOMES:
+            try:
+                depth_scale_m = depth_scale_for_image(
+                    frame.depth, frame.intrinsics, u16_fallback=self._settings.u16_depth_scale,
+                )
+            except ValueError:
+                pass  # Failed projection evidence must not become a second publishing error.
         return SemanticObservation(
             product_session_id=self._product_session_id,
             sequence=self._observation_sequence,
@@ -501,6 +511,8 @@ class PerceptionModule(Module, layer=3):
             reason=reason,
             image=frame.color if frame is not None else None,
             depth=frame.depth if frame is not None else None,
+            depth_scale_m=depth_scale_m,
+            depth_range_m=(self._settings.min_depth, self._settings.max_depth) if depth_scale_m is not None else None,
             camera_info=frame.intrinsics if frame is not None else None,
             robot_pose=robot_pose,
             map_from_camera=frame.map_from_camera if frame is not None else None,

@@ -13,7 +13,8 @@ void require(bool condition, const char *message) {
 }
 
 PreparedPlanner wait(PlannerSelection &selection) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  // Loading the full CMU text library can exceed 10 s on a busy native Windows host.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   do {
     if (auto prepared = selection.poll()) return std::move(*prepared);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));

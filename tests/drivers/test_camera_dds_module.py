@@ -5,9 +5,9 @@ from importlib import reload
 from pathlib import Path
 
 from drivers.real.camera.dds_module import DdsCameraModule
-from runtime.camera_shm import FrameSnapshot, ShmFrameWriter, StreamKind
 from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_BACKEND_ORBBEC, CAMERA_ROLE
 from runtime.registry import clear, get, register, restore, snapshot
+from runtime.transport.camera_shm import FrameSnapshot, ShmFrameWriter, StreamKind
 from tests.drivers.test_camera_shm import write_committed_frame
 
 

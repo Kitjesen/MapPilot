@@ -47,8 +47,9 @@ Start from [runtime declarations](../config/system/README.md),
 
 ## Documentation policy
 
-The root pages form the maintained handbook and are bundled into the Web
-`/guide/`. FastAPI `/docs` remains the live OpenAPI interface. The directory
+The core handbook pages are bundled into the Web `/guide/`. Customer deployment
+and numeric error codes are maintained supporting pages linked from the handbook.
+FastAPI `/docs` remains the live OpenAPI interface. The directory
 boundaries are:
 
 | Location | Purpose | Update when |

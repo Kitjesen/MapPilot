@@ -3701,6 +3701,13 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
   input.observation.body_velocity_valid = true;
   input.observation.body_linear_velocity = {0, .35, 0};
   input.stairProfile = {StairProfile::Ascent, true, false, "actual-stair-model", "", 1.05};
+  const auto pending = executor.tick(input);
+  EXPECT_EQ(pending.reason, "local_plan_pending");
+  EXPECT_TRUE(pending.local_path_map.empty());
+  EXPECT_FALSE(pending.path_found);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.wz, 0);
   auto output = awaitScanOutput([&] { return executor.tick(input); });
   ASSERT_EQ(flight_gate.step(input.mapBody, {0, .35, 0}, true,
                             input.timestampS, input.stairProfile).phase,
@@ -3711,10 +3718,9 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
     EXPECT_FALSE(output.path_found);
   } else {
     ASSERT_EQ(output.reason, "stair_route_wait");
-    if (!output.local_path_map.empty()) {
-      ASSERT_FALSE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw))
-          << "The fixture must produce an actually rejected stair trajectory";
-    }
+    ASSERT_FALSE(output.local_path_map.empty());
+    ASSERT_FALSE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw))
+        << "The fixture must produce an actually rejected stair trajectory";
     EXPECT_TRUE(output.near_field_stop);
   }
   EXPECT_EQ(output.stairs.phase, StairPhase::Traversing);
@@ -3734,8 +3740,17 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
   input.observation = emptyScanObservation(input.timestampS, 2);
   input.observation.body_velocity_valid = true;
   input.stairProfile.stampS = input.timestampS;
-  output = awaitScanOutput([&] { return executor.tick(input); });
-  ASSERT_TRUE(output.path_found) << output.reason;
+  const auto replan_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  do {
+    output = awaitScanOutput([&] { return executor.tick(input); });
+    if (output.path_found || output.reason != "stair_route_wait") break;
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  } while (std::chrono::steady_clock::now() < replan_deadline);
+  ASSERT_TRUE(output.path_found) << output.reason << " search="
+      << output.local_planner_debug.searchReason;
   ASSERT_TRUE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw));
   ASSERT_NE(output.reason, "stair_route_wait");
   bool resumed = false;

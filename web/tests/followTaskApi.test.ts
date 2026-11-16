@@ -3,11 +3,30 @@ import test from 'node:test'
 
 import {
   cancelFollowTask,
+  confirmFollowTarget,
+  getFollowSelection,
   getFollowTask,
   sendVisualServo,
 } from '../src/services/api.ts'
 
 const originalFetch = globalThis.fetch
+
+test('person confirmation binds the displayed frame, person and Follow session', async () => {
+  const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    return Response.json({ ok: true, accepted: true })
+  }
+  const ref = { follow_task_id: 'follow-a', product_session_id: 'session-a' }
+  await getFollowSelection(ref, true)
+  await confirmFollowTarget(ref, 'person-6', 17)
+  assert.match(calls[0].url, /product_session_id=session-a&refresh=true/)
+  assert.equal(calls[1].url, '/api/v1/follow/follow-a/confirm')
+  assert.equal(calls[1].body?.follow_task_id, ref.follow_task_id)
+  assert.equal(calls[1].body?.product_session_id, ref.product_session_id)
+  assert.equal(calls[1].body?.target_id, 'person-6')
+  assert.equal(calls[1].body?.observation_sequence, 17)
+})
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch

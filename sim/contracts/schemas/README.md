@@ -48,6 +48,7 @@ models in `src/gateway/schemas.py`, and topic ownership/QoS in
 | `lingtu.sim.session-runtime.v1` | `session-runtime.v1.json` | RuntimeCoordinator, visual replay runtime | Gates, qualification, replay, SimStudio | Mutable per-run manifest v1; explicit live/replay variants; atomically replaced |
 | `lingtu.sim.truth-snapshot.v1` | `truth-snapshot.v1.json` | Coordinator projection of MuJoCo state | RobotSimUE, recording, replay | Session-bound runtime snapshot v1; sequence/generation stamped |
 | `lingtu.sim.mujoco-snapshot.v1` | `mujoco-snapshot.v1.json` | `lingtu_mujoco_snapshot` | Offline inspection/preview tools | Standalone inspection snapshot v1; no session identity |
+| `lingtu.sim.measurement-scene.v1` | `measurement-scene.v1.json` | Scene/package authors | Measurement sensor runtime | Declared thermal, acoustic and semantic properties v1 |
 
 | `lingtu.sim.measurement-scene.v1` | `measurement-scene.v1.json` | Scene authors | Measurement runtime | Explicit scene properties v1 |
 

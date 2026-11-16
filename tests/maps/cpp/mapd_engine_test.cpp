@@ -160,8 +160,10 @@ void TestLiveSnapshot() {
   assert(bit(next.collision.measured_occupied_bits, old_cell));
   assert(!bit(next.collision.known_free_bits, old_cell));
   assert(bit(next.collision.measured_occupied_bits, new_cell));
+  assert(next.live_cloud.point_count == 1U);
+  assert(std::fabs(next.live_cloud.interleaved[1] - 1.25F) < 1e-6F);
   assert(engine.GetState().last_error.empty());
-  assert(engine.Submit(MakeObservation(1, 4, 0, 0, 0, {2.5F, .5F, .5F})).accepted());
+  assert(engine.Submit(MakeObservation(1, 4, 0, 0, 0, {2.25F, .25F, .25F})).accepted());
   assert(engine.WaitUntilProcessed(1, 4, std::chrono::seconds(2)));
   const auto cleared = engine.GetSnapshot();
   assert(!bit(cleared.collision.measured_occupied_bits, old_cell));

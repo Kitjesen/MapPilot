@@ -84,6 +84,7 @@ SLAM 状态和导航输入门控中。因此，mapd 的 `TRACKING`、`live` 不�
 | `layers/block_grid.hpp` | 稀疏分块的累计 3D 占据网格，支持射线更新、ROI 快照和二进制持久化。 |
 | `legacy/ground_surface.hpp` | Legacy 局部地面聚类与平面拟合；不要为新导航代码添加调用。 |
 | `legacy/surface_projection.hpp` | Legacy 展示用支撑/障碍投影；不要为新导航代码添加调用。 |
+| `layers/surface.hpp` | 保存地图的补面预览，保留已观察地面、推断支撑及已知自由证据。原生全局导航由 Rust MLS 提取 surface、更新区域和查询路线。 |
 | `layers/grid.hpp` | `Grid2D` 及网格创建、几何比较等基础操作。 |
 | `layers/elevation.hpp` | 高程投影及其结果类型。 |
 | `layers/esdf.hpp` | 二维距离场和梯度计算，用于地图投影。 |
@@ -115,7 +116,8 @@ SLAM 状态和导航输入门控中。因此，mapd 的 `TRACKING`、`live` 不�
 | `cpp/mapd/dispatch.hpp`（内部） | 将规范 action JSON 分派到 `MapsServiceCore` 或保存协调器。 |
 
 `SnapshotDetail::kRealtime` 提供当前点云、体素点云与局部碰撞；`kComplete` 在扩展层
-开启时增加累计点云、占据投影、地面、高程和 ESDF。扩展层关闭时，点云等扩展输出
+开启时增加累计点云、占据投影、观测高程和 ESDF。实时地面投影字段保持为空。
+占据投影使用传感器高度带，观测高程记录命中的最低 Z。扩展层关闭时，点云等扩展输出
 为空，局部碰撞继续更新。快照的 ROI/点数上限限制导出内容，不代表删除了底层地图。
 配置的发布频率是调度上限，实机频率需测量 DDS 输出。
 

@@ -285,7 +285,7 @@ void TestEvidenceStates() {
   check(OccupancyState::kFree);
 }
 
-void TestLiveFrame() {
+void TestUnobservedHitIsRetained() {
   RollingOccupancyConfig config;
   config.auto_roll = false;
   RollingOccupancyGrid grid(config);
@@ -311,6 +311,9 @@ void TestLiveFrame() {
   grid.Update(Frame({1.025F, 1.025F, .525F}, 300000000, .025F, .025F, .525F));
   assert(grid.Contains(1.025, 1.025, .525));
   grid.Update(Frame({}, 400000000, .025F, .025F, .525F));
+  assert(grid.InflatedContains(1.025, 1.025, .525));
+  grid.Update(Frame({2.025F, .025F, .525F}, 500000000, .025F, .025F, .525F));
+  assert(!grid.InflatedContains(1.025, .025, .525));
   assert(grid.InflatedContains(1.025, 1.025, .525));
 }
 
@@ -1084,7 +1087,7 @@ void TestNewHitIsMeasuredEvenWithFreeSpaceHistory() {
 
 int main() {
   TestEvidenceStates();
-  TestLiveFrame();
+  TestUnobservedHitIsRetained();
   TestHitBoundsFollowTheRollingOccupancy();
   TestNewHitIsMeasuredEvenWithFreeSpaceHistory();
   TestHitInFreeSpace();

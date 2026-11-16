@@ -536,16 +536,33 @@ int main()
     displaced_start_options.snap_search_radius_cells = 6;
     const auto displaced_start_result = plan(
       map_path.string(),
-      {center(-18), center(0), center(4)},
+      {center(-18), center(0), center(2)},
       {center(18), center(0), center(1)},
       displaced_start_options);
-    // The actual pose exemption does not authorize an unsupported departure.
-    if (displaced_start_result.ok ||
-        displaced_start_result.failure_reason != "start_snap_exhausted") {
-      std::cerr << "unsupported departure bypassed ground support; reason="
+    if (!displaced_start_result.ok || !displaced_start_result.reached_goal ||
+        displaced_start_result.path.empty() ||
+        std::abs(displaced_start_result.path.front().x-center(-18)) > 1e-6 ||
+        std::abs(displaced_start_result.path.front().y-center(0)) > 1e-6 ||
+        std::abs(displaced_start_result.path.front().z-center(2)) > 1e-6) {
+      std::cerr << "actual-start exemption lost the requested departure pose; reason="
                 << displaced_start_result.failure_reason << "\n";
       return 30;
     }
+
+    const auto unsupported_departure = plan(
+      map_path.string(),
+      {center(-18), center(0), center(4)},
+      {center(18), center(0), center(1)},
+      displaced_start_options);
+    if (unsupported_departure.ok || !unsupported_departure.path.empty() ||
+        unsupported_departure.failure_reason != "start_snap_exhausted") {
+      std::cerr << "actual-start exemption crossed an unsupported height correction; reason="
+                << unsupported_departure.failure_reason << "\n";
+      return 31;
+    }
+    std::cout << "Unsupported departure: floor z=[0,.2], actual z=.9, nearest supported z=.5, "
+      "midpoint z=.7 lacks support within 2 cells, direct .6m correction exceeds max step .45m, reason="
+      << unsupported_departure.failure_reason << "\n";
 
     auto supported_layer_options = testOptions();
     supported_layer_options.snap_search_radius_cells = 6;

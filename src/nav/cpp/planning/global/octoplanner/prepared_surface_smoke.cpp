@@ -296,8 +296,6 @@ int main() try {
   require(!route.empty(), "open map did not produce a route");
   require(planner.searchInfo().used_rust_graph && !planner.searchInfo().rust_fallback,
           "open map did not use the checked Rust route");
-  require(planner.searchInfo().used_rust_graph || planner.searchInfo().rust_fallback,
-          "body-centre request bypassed the prepared Rust artifact");
   require(std::hypot(route.front().x - start.x, route.front().y - start.y,
                      route.front().z - start.z) < 1e-6,
           "prepared route moved the actual start");

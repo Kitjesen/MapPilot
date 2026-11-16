@@ -87,7 +87,6 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_simulation_clock,
 )
 
-from runtime.camera_shm import ShmFrameWriter, StreamKind
 from drivers.sim.mujoco.runtime import (
     DEFAULT_MID360_PATTERN,
     DEFAULT_MID360_SAMPLES_PER_FRAME,
@@ -112,6 +111,7 @@ from runtime.msgs.geometry import Quaternion, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE, Imu, LivoxPointFrame
 from runtime.tf.frames import topic_default_frame_id
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
 
 _PROCESS_NAME = "mujoco_feeder"
 _READINESS_NAME = "mujoco_feeder.ready.json"

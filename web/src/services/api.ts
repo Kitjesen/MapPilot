@@ -951,6 +951,7 @@ export interface FollowSelection {
   confirmed_target_id?: string
   terminal?: boolean
   reason?: string | null
+  state?: string
   observation_sequence?: number
   source_ts?: number
   width?: number

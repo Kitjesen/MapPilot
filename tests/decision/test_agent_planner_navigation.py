@@ -116,7 +116,7 @@ def test_conversation_follow_returns_after_follow_admission_without_semantic_pla
 
 @pytest.mark.parametrize("description,loaded,reason", [
     ("person in red", False, "visual_servo_unavailable"),
-    ("我", True, "follow_target_ambiguous"),
+    ("", True, "follow_target_required"),
 ])
 def test_rejected_follow_never_claims_persistent_ownership(agent, description, loaded, reason):
     from decision.modules.visual_servo import VisualServoModule

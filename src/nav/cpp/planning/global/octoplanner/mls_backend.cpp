@@ -713,26 +713,13 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
   out.value(artifact.resolution_m);
   out.value(artifact.revision);
 
-  out.value<std::uint64_t>(artifact.observed.size());
-  for (const auto& cell : artifact.observed) {
-    out.value(cell.x);
-    out.value(cell.y);
-    out.value(cell.z);
-  }
-  out.value<std::uint64_t>(artifact.inferred.size());
-  for (const auto& cell : artifact.inferred) {
-    out.value(cell.x);
-    out.value(cell.y);
-    out.value(cell.z);
-  }
-
-  out.value<std::uint64_t>(artifact.nodes.size());
-  for (const auto& node : artifact.nodes) {
-    out.value(node.id);
-    out.value(node.cell.x);
-    out.value(node.cell.y);
-    out.value(node.cell.z);
-  }
+  static_assert(sizeof(SurfaceCell) == 12 && offsetof(SurfaceCell, x) == 0 &&
+                offsetof(SurfaceCell, y) == 4 && offsetof(SurfaceCell, z) == 8);
+  static_assert(sizeof(Node) == 16 && offsetof(Node, id) == 0 &&
+                offsetof(Node, cell) == 4);
+  out.vector(artifact.observed);
+  out.vector(artifact.inferred);
+  out.vector(artifact.nodes);
 
   out.value<std::uint64_t>(artifact.edges.size());
   for (const auto& edge : artifact.edges) {

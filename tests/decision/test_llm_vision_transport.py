@@ -534,7 +534,8 @@ def test_kimi_rejects_then_retries_one_confirmed_person(transport):
     servo = VisualServoModule()
     servo.on_system_modules({"LLMModule": module})
     servo._latest_bgr = np.zeros((64, 64, 3), dtype=np.uint8)
-    servo._latest_bgr_ts = servo._latest_detection_ts = 100.0
+    servo._latest_bgr_ts = 1.0
+    servo._latest_detection_ts = 1.0
     servo._on_servo_target("follow:purple jacket and yellow hat")
     done = threading.Event()
     select = servo._run_vlm_select_sync

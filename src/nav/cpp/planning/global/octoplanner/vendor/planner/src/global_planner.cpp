@@ -210,8 +210,8 @@ namespace global_planner
         if (!artifact_ || !artifact_->rust_graph || !octree_) {
             throw std::runtime_error("planner artifact is not prepared");
         }
-        const auto surfaces = artifact_->rust_graph->surfaces();
-        const auto graph = artifact_->rust_graph->graph();
+        auto surfaces = artifact_->rust_graph->surfaces();
+        auto graph = artifact_->rust_graph->graph();
         mls::Artifact cached;
         cached.resolution_m = octree_->getResolution();
         cached.revision = artifact_->rust_graph->summary().revision;

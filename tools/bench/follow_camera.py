@@ -24,12 +24,12 @@ import numpy as np
 
 from decision.modules.visual_servo import VisualServoModule
 from drivers.real.camera.dds_module import DdsCameraModule
-from runtime.camera_shm import ShmFrameWriter, StreamKind
 from perception.backends import RgbdObservationSource
 from perception.module import PerceptionModule
 from perception.pipeline import PerceptionSettings
 from runtime.msgs.geometry import Pose, Vector3
 from runtime.msgs.nav import NavigationState, Odometry
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
 
 
 class ControlledDetector:

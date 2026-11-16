@@ -42,6 +42,7 @@ export function useVideoDecodeRate(
     callbackId = video.requestVideoFrameCallback(observe)
     return () => {
       active = false
+      setSample(null)
       if (callbackId !== null) video.cancelVideoFrameCallback(callbackId)
       if (video.srcObject === stream) video.srcObject = null
     }

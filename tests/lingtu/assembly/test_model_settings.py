@@ -73,8 +73,11 @@ def test_model_defaults_follow_final_backend_and_yield_to_explicit_fields(model_
     models = yaml.safe_load((model_graph_root / "models.yaml").read_text(encoding="utf-8"))
     graph = load_runtime_graph(model_graph_root)
     qwen = _compile(graph, "tracking", overrides={"llm": "qwen"})
-    for key in ("model", "base_url", "api_key_env", "timeout_sec"):
+    for key in ("model", "base_url", "api_key_env"):
         assert qwen.host_config[f"llm_{key}"] == models["qwen"][key]
+    assert qwen.host_config["llm_timeout_sec"] == graph.products["tracking"]["host"]["llm_timeout_sec"]
+    graph.products["tracking"]["host"].pop("llm_timeout_sec")
+    assert _compile(graph, "tracking", overrides={"llm": "qwen"}).host_config["llm_timeout_sec"] == models["qwen"]["timeout_sec"]
 
     graph.products["tracking"]["host"]["llm_model"] = "product-model"
     assert _compile(graph, "tracking").host_config["llm_model"] == "product-model"

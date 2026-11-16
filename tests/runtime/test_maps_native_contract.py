@@ -215,14 +215,16 @@ def test_gateway_map_routes_use_typed_maps_boundary() -> None:
         node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_map_pcd"
     )
     pcd_source = ast.unparse(pcd_handler)
-    assert "stream_map_artifact" in pcd_source
-    stream_handler = next(node for node in ast.walk(tree)
-                          if isinstance(node, ast.AsyncFunctionDef) and node.name == "stream_map_artifact")
+    assert "stream_map_artifact(name, 'source_pointcloud', 'map.pcd')" in pcd_source
+    stream_handler = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == "stream_map_artifact"
+    )
     stream_source = ast.unparse(stream_handler)
     assert "open_artifact" in stream_source
-    assert "_artifact_response" in stream_source
-    response_handler = next(node for node in ast.walk(tree)
-                            if isinstance(node, ast.FunctionDef) and node.name == "_artifact_response")
+    assert "_artifact_response(artifact, filename)" in stream_source
+    response_handler = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_artifact_response"
+    )
     assert "StreamingResponse" in ast.unparse(response_handler)
     assert "_mapd_http_request" not in pcd_source
     assert "artifact_path" not in pcd_source

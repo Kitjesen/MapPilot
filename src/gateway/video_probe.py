@@ -22,12 +22,11 @@ from gateway.media_access import MediaAccessMiddleware
 from gateway.routes.camera import register_camera_routes
 from gateway.routes.video import register_video_routes
 from gateway.services.app_bootstrap import build_app_bootstrap, build_app_capabilities
-from gateway.services.readiness import build_readiness_snapshot
 from gateway.services.media_status import build_camera_status
+from gateway.services.readiness import build_readiness_snapshot
 from gateway.services.robot_tools import camera_snapshot
 from gateway.services.state_snapshot import build_state_snapshot
 from runtime.contracts import CAMERA_ROLE
-
 
 _CAMERA_MCP_TOOLS = [
     {
@@ -83,7 +82,7 @@ def _depth_preview(gateway: GatewayModule) -> dict[str, Any]:
     import cv2
     import numpy as np
 
-    from runtime.camera_shm import ShmFrameReader, posix_shm_path
+    from runtime.transport.camera_shm import ShmFrameReader, posix_shm_path
 
     path = os.environ.get("LINGTU_CAMERA_DEPTH_SHM", "/lingtu_camera_depth")
     with ShmFrameReader(posix_shm_path(path), max_age_s=2.0) as reader:

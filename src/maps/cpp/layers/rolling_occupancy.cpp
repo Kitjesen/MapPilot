@@ -1096,7 +1096,8 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     const std::uint32_t total = ray_total_counts_[physical];
     const bool hit = hits >= total - hits;
     Cell& cell = cells_[physical];
-    // Unobserved hits persist; only a ray through this cell can clear them.
+    // A new endpoint blocks immediately. Only a measured ray through this cell
+    // can resolve it; a scan looking elsewhere supplies no clearing evidence.
     cell.unresolved_hit = hits > 0U;
     cell.ray_free = hits == 0U;
     cell.observed = true;

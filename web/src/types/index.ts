@@ -1871,7 +1871,7 @@ export interface OccupancyMapSceneLayer extends MapSceneLayer {
   origin: [number, number, number]
   yaw: number
   encoding: 'int8'
-  value_semantics: 'height_band_occupancy_not_traversability'
+  value_semantics: 'height_band_occupancy_not_traversability' | 'ground_relative_surface_not_traversability'
   scope: 'rolling_window'
   unknown_count: number
   free_count: number

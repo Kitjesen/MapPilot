@@ -33,7 +33,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_camera_rgb,
 )
 
-from runtime.camera_shm import StreamKind as OutputKind
+from runtime.transport.camera_shm import StreamKind as OutputKind
 
 
 @dataclass(frozen=True)

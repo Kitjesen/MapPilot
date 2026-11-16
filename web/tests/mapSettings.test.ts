@@ -17,6 +17,7 @@ function component(file: string, mocks: Record<string, unknown> = {}) {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText, { exports, document: { body: {} }, window: { addEventListener() {}, removeEventListener() {} }, require: (name: string) => {
     if (name in mocks) return mocks[name]
+    if (name === './agentConversation/ModelConnections') return { ModelConnections: () => null }
     if (name.endsWith('.css')) return { default: {} }
     return require(name)
   } })

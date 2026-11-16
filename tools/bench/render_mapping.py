@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.font_manager import FontProperties, findfont
+from matplotlib.font_manager import findfont
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.mplot3d import proj3d
@@ -157,10 +157,10 @@ def load_plan(path: Path | None) -> tuple[np.ndarray, dict[str, Any]]:
     return (points if reached else np.empty((0, 3))), info
 
 
-def _style() -> str:
-    family = FontProperties(fname=findfont("Arial")).get_name()
+def _style() -> None:
+    findfont("Arial", fallback_to_default=False)
     plt.rcParams.update({
-        "font.family": family, "font.size": 10,
+        "font.family": "Arial", "font.size": 10,
         "axes.titlesize": 10, "axes.labelsize": 10,
         "xtick.labelsize": 10, "ytick.labelsize": 10,
         "legend.fontsize": 10, "figure.titlesize": 10,
@@ -170,7 +170,6 @@ def _style() -> str:
         "grid.color": "#dbe0e5", "grid.linewidth": 0.5,
         "savefig.facecolor": "white",
     })
-    return family
 
 
 def trajectory_focus_bounds(trajectory: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -204,7 +203,7 @@ def render(
     cloud, cloud_info = load_cloud_sample(cloud_path, max_points)
     trajectory = load_trajectory(trajectory_path)
     route, plan_info = load_plan(planning_result)
-    font_family = _style()
+    _style()
     output_dir.mkdir(parents=True, exist_ok=True)
     display = {"mode": "full_map", "source_data_changed": False}
     if focus_trajectory:
@@ -302,7 +301,7 @@ def render(
         "trajectory": str(trajectory_path.resolve()),
         "planning_result": str(planning_result.resolve()) if planning_result else None,
         "title": title,
-        "font": {"family": font_family, "size_pt": 10},
+        "font": {"family": "Arial", "size_pt": 10},
         "cloud": cloud_info,
         "display_view": display,
         "trajectory_reference": "dataset IMU pose; not robot motion execution",

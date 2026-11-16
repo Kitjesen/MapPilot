@@ -79,7 +79,7 @@ export function ToolActivityGroup({ messages, active, awaiting, now, onSelectMod
   let completedCount = 0
   let failedCount = 0
   let runningCount = 0
-  let pendingCount = 0
+  let startedCount = 0
   let keepVisible = active || messages.length <= 3
   for (const message of messages) {
     try {
@@ -91,7 +91,7 @@ export function ToolActivityGroup({ messages, active, awaiting, now, onSelectMod
       const started = state === 'started' || state === 'running' || state === 'awaiting'
       if (failed) failedCount += 1
       else if (started && active) runningCount += 1
-      else if (started) pendingCount += 1
+      else if (started) startedCount += 1
       else completedCount += 1
       keepVisible ||= message.kind === 'web_search' || message.kind === 'web_extract' || result?.confirmation_required === true
       // Errors and map-preview actions remain visible without opening the history.
@@ -103,7 +103,7 @@ export function ToolActivityGroup({ messages, active, awaiting, now, onSelectMod
   </li>)}</ol>
   if (keepVisible) return rows
   const summaryStatus = failedCount > 0 ? `${failedCount} 个失败` : runningCount > 0 ? `${runningCount} 个进行中`
-    : pendingCount > 0 ? `${pendingCount} 个已发起` : `${completedCount} 个已完成`
+    : startedCount > 0 ? `${startedCount} 个已发起` : `${completedCount} 个已完成`
   return <details className={styles.toolGroup} onKeyDown={event => {
     if (event.key === 'Escape' && event.currentTarget.open) {
       event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false
@@ -136,10 +136,10 @@ export function ToolActivity({ message, active = true, awaiting = [], now, onSel
   const failed = activity === 'failed' || Boolean(result.error) || result.success === false || result.ok === false || result.accepted === false || (exitCode != null && exitCode !== 0)
   const reason = result.error ?? result.reason
   const waiting = active && (activity === 'awaiting' || (started && awaiting.includes(name)))
-  const elapsed = message.metadata?.duration_ms ?? (started && now != null && message.metadata?.started_at != null ? Math.max(0, (now - message.metadata.started_at) * 1000) : undefined)
+  const elapsed = message.metadata?.duration_ms ?? (started && active && now != null && message.metadata?.started_at != null ? Math.max(0, (now - message.metadata.started_at) * 1000) : undefined)
   const state = activity === 'cancelled' ? 'cancelled' : failed ? 'failed' : waiting ? 'awaiting'
-    : started ? (active ? 'running' : 'pending') : 'completed'
-  const status = { cancelled: '已中断', failed: '未完成', awaiting: '待确认', running: '调用中', pending: '已发起', completed: '已返回' }[state]
+    : started ? (active ? 'running' : 'started') : 'completed'
+  const status = { cancelled: '已中断', failed: '未完成', awaiting: '待确认', running: '调用中', started: '已发起', completed: '已返回' }[state]
   const recipe = Boolean(result.preview_request)
   const codexMethod = (message.metadata as (ConversationMessage['metadata'] & { method?: string }) | undefined)?.method
   const usage = message.kind === 'codex_event' && codexMethod === 'turn/usage/updated'

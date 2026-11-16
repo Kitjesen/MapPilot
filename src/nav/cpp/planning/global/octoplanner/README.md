@@ -54,11 +54,15 @@ turn excludes its directed incoming connection for that request, then search
 continues. This conservative exclusion can also remove the edge for a different
 arrival heading; the graph does not store a full heading state. Endpoints,
 detours and retries share the request budget,
-and cancellation returns without publishing a route. Exhausted searches can
-fall back to the 3-D grid. The C++ `SurfaceGraph` remains only for explicit legacy
-callers. New `.8` prepared artifacts restore the Rust graph directly and attach
+and cancellation returns without publishing a route. Exhaustion and errors
+return from that same backend; a second C++ search no longer hides its result.
+The old grid remains available for requests without a prepared MLS artifact.
+The standalone C++ `SurfaceGraph` is linked only by its regression target.
+New `.9` prepared artifacts restore the Rust graph directly and attach
 raw occupied/free evidence from the same OctoMap without rebuilding the graph.
 The map-bound geometry index is reused by edge checks and invalidated by updates.
+Incremental graph state is initialized on the first source update from the saved
+graph, preserving node IDs without a second graph build during preparation.
 
 The sparse graph retains the four-neighbor topology of the pinned DimOS
 reference in [SURFACE_NOTICE](SURFACE_NOTICE), commit
@@ -100,7 +104,7 @@ The migration smoke test covers artifact creation, surface and graph export,
 graph-only query, limited endpoint query, regional update, stable revision, and
 destruction. Production `PlannerSession` owns the loaded OctoMap and updates its
 Rust artifact and query caches under the same mutex. The
-legacy C++ graph remains only for explicit compatibility callers; new prepared
+standalone C++ graph remains available for regression comparisons; new prepared
 caches contain only the Rust artifact.
 
 Rust exposes metric route checks for production queries and same-input geometry

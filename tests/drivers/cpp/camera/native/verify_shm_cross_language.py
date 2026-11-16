@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from runtime.camera_shm import ShmFrameReader, StreamKind, posix_shm_path
+from runtime.transport.camera_shm import ShmFrameReader, StreamKind, posix_shm_path
 
 
 def main() -> int:

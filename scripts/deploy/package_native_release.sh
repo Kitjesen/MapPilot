@@ -853,6 +853,21 @@ FAKE_MV
     "Standard install prefix is missing executable: ${install_prefix}/bin/realsense_capture" \
     <<<"${realsense_missing_output}"
   install -m 0755 /dev/null "${install_prefix}/bin/realsense_capture"
+  if realsense_missing_output="$(
+    LINGTU_CAMERA_DRIVER=realsense_native \
+      LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+      SOURCE_DATE_EPOCH=1704067200 \
+      bash "${BASH_SOURCE[0]}" v0.0.2 "${test_root}/output-realsense-missing-sdk" 2>&1
+  )"; then
+    echo "packager accepted a RealSense release without librealsense2" >&2
+    return 1
+  fi
+  grep -Fq "Standard install prefix is missing the RealSense SDK runtime" \
+    <<<"${realsense_missing_output}"
+  install -m 0644 /dev/null "${test_root}/realsense-sdk-runtime"
+  ln -s "${test_root}/realsense-sdk-runtime" "${install_prefix}/lib/librealsense2.so.2.55"
   LINGTU_CAMERA_DRIVER=realsense_native \
     LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
@@ -864,11 +879,13 @@ FAKE_MV
   grep -Fq 'lingtu-0.0.2-aarch64-native-release/bin/realsense_capture' <<<"${realsense_listing}"
   grep -Fq 'lingtu-0.0.2-aarch64-native-release/build/realsense_native/realsense_capture' \
     <<<"${realsense_listing}"
+  grep -Fq 'lingtu-0.0.2-aarch64-native-release/lib/librealsense2.so.2.55' \
+    <<<"${realsense_listing}"
   if grep -Eq '(orbbec_capture|libOrbbecSDK|depthengine)' <<<"${realsense_listing}"; then
     echo "RealSense release unexpectedly requires Orbbec runtime artifacts" >&2
     return 1
   fi
-  echo "RealSense capture selection and missing-capture checks passed"
+  echo "RealSense capture selection and missing-capture/SDK checks passed"
   echo "package_native_release self-test passed"
 }
 
@@ -1161,6 +1178,9 @@ if [[ "${CAMERA_DRIVER}" == orbbec_native ]]; then
     echo "Standard install prefix is missing Orbbec depthengine" >&2
     exit 1
   fi
+elif [[ -z "$(find -L "${INSTALL_PREFIX}/lib" -maxdepth 1 -type f -name 'librealsense2.so*' -print -quit)" ]]; then
+  echo "Standard install prefix is missing the RealSense SDK runtime: ${INSTALL_PREFIX}/lib/librealsense2.so*" >&2
+  exit 1
 fi
 for profile in "${CMU_PATH_PROFILES[@]}"; do
   for relative in "${CMU_PATH_FILES[@]}"; do

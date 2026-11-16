@@ -22,5 +22,13 @@ Stageshow gate: film.mjs does not recognize this ordinary product-component tree
 as a Stage (`no visible stages`). It did not produce a passing gate; the custom
 browser capture supplies the interaction evidence instead.
 
-Not checked: real model interpretation, live perception, robot movement or NX
-deployment. Proactive loss notifications are not simulated as implemented.
+Person selection now uses MOT17-09 frame 0 and the saved real Kimi K3 review in
+`fixtures/follow-review.json`: 8 proposals, candidate 8 rejected as an advertising
+portrait, 1–7 retained. The recorded call took 25.41 seconds. The preview replays
+that result; it does not call a model. Confirmation and cancellation are fixtures.
+`build/check-follow-selection.mjs` checks selection, disabled unselected confirm,
+poster removal, confirmation, cancellation, frame alignment and narrow layout.
+
+Not checked: live perception, robot movement or NX deployment. Proactive loss
+notifications are not simulated as implemented. One reviewed frame is not a
+general detector-accuracy or liveness evaluation.

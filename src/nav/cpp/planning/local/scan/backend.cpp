@@ -327,10 +327,14 @@ class Backend::Impl {
     }
 
     const auto gridStarted = std::chrono::steady_clock::now();
-    auto collisionRequest = input;
-    collisionRequest.body.reset();
-    collisionRequest.observedBody.reset();
-    Grid grid(params_, collisionRequest);
+    // Candidate search and execution must use the same configured body. The
+    // final controller still repeats the sweep with the live observation, but
+    // planning without the configured footprint can publish a route that the
+    // next safety check must immediately reject. Live roll/pitch belongs to
+    // final command checks, not the footprint assumed along a future spline.
+    auto planningInput = input;
+    planningInput.observedBody.reset();
+    Grid grid(params_, planningInput);
     gridMap_->setPredictionMode(executionFeedback_ && input.environment.predictions.count > 0);
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
@@ -341,7 +345,7 @@ class Backend::Impl {
 
     bool bodyCollision = false;
     if (input.body && input.environment.collision.measuredOccupiedStorage) {
-      Grid bodyGrid(params_, input);
+      Grid bodyGrid(params_, planningInput);
       if (bodyGrid.valid()) {
         for (int index = 1; index < route->count; ++index) {
           const Vec3 &start = route->points[index - 1];

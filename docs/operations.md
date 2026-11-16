@@ -95,7 +95,8 @@ control-thread work duration and it does not directly set `overrun_ms`. A slow
 worker result becomes a motion concern when the resulting obstacle or collision
 input also becomes stale. The control loop health fields and the input gate are
 therefore reported as separate issues.
-Native release packaging uses `scripts/deploy/package_native_release.sh`.
+Native release packaging uses `scripts/deploy/package_native_release.sh`; see
+[Deployment](../scripts/deploy/README.md) for matching target build inputs.
 
 ## Build, save, and reload a map
 

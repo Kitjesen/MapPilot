@@ -21,9 +21,7 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.registry import register
 from runtime.stream import Out
-from runtime.yaml_helpers import load_yaml
-
-from runtime.camera_shm import (
+from runtime.transport.camera_shm import (
     POSIX_SHM_DIRECTORY,
     FrameChanged,
     FrameCorrupt,
@@ -35,6 +33,7 @@ from runtime.camera_shm import (
     StreamKind,
     posix_shm_path,
 )
+from runtime.yaml_helpers import load_yaml
 
 logger = logging.getLogger(__name__)
 

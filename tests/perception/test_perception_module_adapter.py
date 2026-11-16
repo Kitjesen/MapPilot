@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 
 import perception.module as perception_module
 from perception.frames import FrameDrop
 from perception.module import PerceptionModule
+from perception.pipeline import PerceptionSettings
 from runtime.msgs.geometry import PoseStamped
 from runtime.msgs.nav import NavigationState
 from runtime.msgs.semantic import SceneGraph
@@ -169,7 +171,7 @@ def _module(monkeypatch: Any, pipeline: _Pipeline) -> PerceptionModule:
         lambda _settings, _detector: pipeline,
     )
     return PerceptionModule(
-        settings=object(),
+        settings=PerceptionSettings(),
         detector=SimpleNamespace(name="fake"),
         camera_to_body=np.eye(4),
         skip_frames=1,
@@ -186,6 +188,25 @@ def _wait_until(predicate: Any, timeout_s: float = 1.0) -> None:
             return
         time.sleep(0.005)
     raise AssertionError("condition was not reached before timeout")
+
+
+@pytest.mark.parametrize("image_format,camera_scale,expected", [
+    (ImageFormat.DEPTH_U16, 1., .001),
+    (ImageFormat.DEPTH_U16, .00025, .00025),
+    (ImageFormat.DEPTH_F32, .001, 1.),
+])
+def test_observation_carries_the_same_resolved_depth_units_as_projection(monkeypatch, image_format, camera_scale, expected):
+    module = _module(monkeypatch, _Pipeline())
+    frame = module._synchronizer.push_color(SimpleNamespace(ts=7., timestamp=7.))[0]
+    frame.depth = Image(np.ones((4, 4), dtype=np.float32 if image_format is ImageFormat.DEPTH_F32 else np.uint16),
+                        image_format, ts=7.)
+    frame.intrinsics.depth_scale = camera_scale
+    view = module._new_observation(status="positive", reason="", frame=frame)
+    assert view.depth is frame.depth and view.image is frame.color
+    assert view.depth_scale_m == expected
+    assert view.depth_range_m == (.3, 6.)
+    failed = module._new_observation(status="failed", reason="projection_error", frame=frame)
+    assert failed.depth_scale_m is None and failed.depth_range_m is None
 
 
 def test_module_keeps_the_host_builder_contract(monkeypatch: Any) -> None:

@@ -3108,14 +3108,11 @@ mod tests {
                 }
             }
             if pass == 0 {
-                handle
-                    .state
-                    .update_region(
-                        RegionBounds::new(0, 0, 0, 0, 8, 14),
-                        &[SurfaceCell::new(0, 0, 12)],
-                        &[],
-                    )
-                    .unwrap();
+                handle.state.update_region(
+                    RegionBounds::new(0, 0, 0, 0, 8, 14),
+                    &[SurfaceCell::new(0, 0, 12)],
+                    &[],
+                ).unwrap();
             }
         }
     }
@@ -3867,9 +3864,7 @@ mod tests {
                 surface_config,
                 GraphConfig::default(),
             );
-            state
-                .update_region(RegionBounds::new(12, 12, 2, 2, z, z), &[], &[])
-                .unwrap();
+            state.update_region(RegionBounds::new(12, 12, 2, 2, z, z), &[], &[]).unwrap();
             let full =
                 extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
             assert_eq!(
@@ -3900,13 +3895,11 @@ mod tests {
         let mut state =
             PlannerState::new(occupied, Vec::new(), surface_config, GraphConfig::default());
         for cell in [SurfaceCell::new(8, 4, 0), SurfaceCell::new(14, 7, 12)] {
-            state
-                .update_region(
-                    RegionBounds::new(cell.x, cell.x, cell.y, cell.y, cell.z, cell.z),
-                    &[],
-                    &[],
-                )
-                .unwrap();
+            state.update_region(
+                RegionBounds::new(cell.x, cell.x, cell.y, cell.y, cell.z, cell.z),
+                &[],
+                &[],
+            ).unwrap();
             let full =
                 extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
             assert_eq!(state.artifact().surface, full);
@@ -3968,9 +3961,8 @@ mod tests {
         let mut state = PlannerState::from_graph(cells.clone(), Vec::new(), graph, config);
         assert!(state.incremental_graph.is_none());
         state.set_geometry(cells, Vec::new(), SurfaceConfig::default());
-        state
-            .update_region(RegionBounds::new(11, 11, 1, 1, 0, 0), &[], &[])
-            .unwrap();
+        state.update_region(RegionBounds::new(11, 11, 1, 1, 0, 0), &[], &[]).unwrap();
+        assert!(state.incremental_graph.is_some());
         for node in &state.artifact.graph.nodes {
             if let Some(&id) = original_ids.get(&node.cell) {
                 assert_eq!(node.id, id);

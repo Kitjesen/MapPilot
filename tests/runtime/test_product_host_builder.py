@@ -360,7 +360,7 @@ def test_inspection_product_only_loads_declared_semantic_planning_modules() -> N
         ("sim", "doso/thunder_v4", {"backend": "mujoco"}),
     ),
 )
-def test_tracking_product_builds_only_the_person_following_host(
+def test_tracking_product_builds_person_following_and_conversation(
     env: str,
     robot: str | None,
     env_config: dict[str, str] | None,
@@ -390,6 +390,7 @@ def test_tracking_product_builds_only_the_person_following_host(
         "camera",
         "PerceptionModule",
         "VisualServoModule",
+        "AgentPlannerModule",
         "GatewayModule",
         "AgentPlannerModule",
         "host.bus",
@@ -426,5 +427,6 @@ def test_tracking_product_builds_only_the_person_following_host(
         "VisualServoModule.goal_cancel->nav.goals.visual_cancel_request",
         "nav.goals.goal_status->VisualServoModule.goal_status",
         "VisualServoModule.servo_status->GatewayModule.visual_servo_status",
+        "AgentPlannerModule.agent_message->GatewayModule.agent_message",
     } <= wires
     assert "camera.color_image->VisualServoModule.color_image" not in wires

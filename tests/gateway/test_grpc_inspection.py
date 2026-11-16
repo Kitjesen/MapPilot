@@ -109,7 +109,7 @@ def test_native_rejection_keeps_recording_rollback(monkeypatch):
     assert gateway._recording.stops[0]["expected_session_id"].startswith("recording-")
 
 
-def test_invalid_binding_and_canonical_route_epoch_do_not_start_owner(monkeypatch):
+def test_invalid_binding_does_not_start_owner_and_route_refreshes_map_metadata(monkeypatch):
     client, native = _client(monkeypatch)
     gateway = client.app.state.gateway
     with client, serve(gateway) as channel:

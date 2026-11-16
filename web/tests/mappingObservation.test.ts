@@ -188,10 +188,16 @@ test('Three raster preserves each source cell without a subcell pattern and keep
 })
 
 
-test('raw height-band occupancy must never be displayed as ground-relative obstacles', () => {
-  const scene = observationScene(undefined, {
-    id: 'maps.occupancy', value_semantics: 'height_band_occupancy_not_traversability',
+test('production raw height-band occupancy remains visible with exact occupancy labels', () => {
+  const scene = observationScene()
+  const state = resolveMappingObservation(scene, { nowS: 101 })
+  assert.equal(state.status, 'ready')
+  assert.equal(mappingObservationPointAt(state, 10.75, 20.25)?.label, '空闲观测 · 当前高度范围')
+  assert.equal(mappingObservationPointAt(state, 11.25, 20.25)?.label, '占据观测 · 当前高度范围')
+  assert.doesNotMatch(state.message, /支撑|地面相对|通行/)
+  const surface = observationScene(undefined, {
+    id: 'maps.surface_projection', value_semantics: 'ground_relative_surface_not_traversability',
   })
-  assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'ready')
+  assert.equal(resolveMappingObservation(surface, { nowS: 101 }).status, 'unavailable')
   assert.doesNotMatch(Object.values(MAPPING_OBSERVATION_LABELS).join(' '), /支撑候选|附近地面|地面依据/)
 })

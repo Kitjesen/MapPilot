@@ -50,42 +50,45 @@ Rebuild/deploy mapd and navd together when changing this DDS type.
 
 ### Live collision evidence
 
-`RollingOccupancyGrid` combines unresolved endpoints with historical
-probabilistic occupancy before inflation. `unresolved_hit` blocks immediately,
-even when older free-space probability dominates, and remains until a later
-ray crosses that cell without an endpoint or the configured decay/window policy
-removes the cell. A scan looking elsewhere does not clear the hit or update its
-probability. An empty or fully filtered scan also preserves hits. Mapd reports a
-fully filtered observation through its existing input-error path and retains
+`RollingOccupancyGrid` combines unresolved measured endpoints with historical
+probabilistic occupancy before inflation. `unresolved_hit` blocks a new endpoint
+immediately, even when older free-space probability dominates. It stays occupied
+until a measured free ray crosses that cell or the configured decay/reset/window
+policy clears it. A scan looking elsewhere supplies no clearing evidence and
+does not update that cell's probability. Mapd's `live_cloud` continues to contain
+only the latest processed scan. An empty or fully filtered scan retains the
+collision evidence. Mapd reports a fully filtered observation through its
+existing input-error path and retains
 the last successfully processed snapshot and observation time.
 
 `ray_free` records a ray observation with no endpoint in the cell. Only this
 evidence, together with non-occupied probability, can publish known-free or
-remove a surface voxel. Missing observations cannot authorize surface cleanup.
+remove a surface voxel. Unknown cells remain distinct from ray-confirmed free.
 `StateAt`, `Contains`, dense snapshots, observed-cell chunks and the packed
-collision bits share `StateFor`: unresolved or historical occupied, ray-confirmed
-free, otherwise unknown. Exploration and mapd projections consume that same
-state. `OccupancyProbability` and snapshot log odds retain the numerical history;
-a low probability alone does not make the published evidence free.
+collision bits share `StateFor`, publishing unresolved or historical occupied,
+ray-confirmed free, and unknown. Exploration and mapd projections consume that
+same state. `OccupancyProbability` and snapshot log odds retain the numerical
+history. Low probability alone does not make the published evidence free.
 
-This separation follows the current-frame hit set in DimOS
+DimOS separates its current-frame hit set in
 [`emit_points` and `Mapper::integrate`](https://github.com/dimensionalOS/dimos/tree/83d807bb91bf6436a1a0e9c2a3260d96478636aa/dimos/mapping/ray_tracing/rust/src).
-LingTu retains its SCAN-derived probability fusion and inflation, rather than
-copying DimOS health counters, normal-based clearing, or neighbor filtering.
+LingTu's occupied-only live collision queries require unresolved measured hits
+to survive unrelated scans. `test_live_obstacle_braking` reproduces the failure
+when a low-probability endpoint expires on the next unrelated scan, and verifies
+retention and actual ray clearing in all four translation directions.
+LingTu retains its SCAN-derived probability fusion and inflation.
 DimOS's production ingest skips empty extracted clouds. Its live-point union
 only bypasses neighbor filtering for not-yet-healthy points; LingTu deliberately
-keeps every unresolved endpoint instead of copying that isolated-point policy.
-Retaining unresolved hits is a LingTu correction, not DimOS or SCAN default behavior.
+keeps every measured endpoint.
 Mapd owns evidence lifetime; SCAN consumes the published collision map. No live
 region feed to the global planner is introduced here.
 
-The component regressions cover unresolved-hit retention, unchanged probability,
-unknown versus observed-free, retained confirmed obstacles, rolling/reset,
-shared inflation and actual mapd snapshots. The unchanged four-direction SCAN
-braking regression failed when the next scan looked elsewhere before this fix;
-it now requires a real clearing ray before the new obstacle leaves the sweep.
-This candidate still needs recorded/simulated sparse-return navigation evidence
-before field deployment; it does not solve persistently occluded historical hits.
+The component regressions cover first-hit retention, unchanged probability,
+unknown versus observed-free, actual ray clearing, decay, rolling/reset, shared
+inflation and actual mapd snapshots. A weak obstacle seen only once remains in
+the braking sweep across unrelated scans. The four-direction braking regression
+uses the real SCAN Grid query. Field sparse-return behavior still needs evidence
+from the selected robot.
 
 Saving a map:
 

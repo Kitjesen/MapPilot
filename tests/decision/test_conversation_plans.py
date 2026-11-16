@@ -23,15 +23,23 @@ def test_real_sdk_plan_finalizes_the_same_stream_message_and_remains_shareable(a
 
     monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
     cid = agent.create_conversation()["conversation_id"]
-    turn = submit(agent, cid, "plan-request", "只给方案，先不要执行。", permission_mode="read_only",
-                  motion_guard=lambda *args: admissions.append(args))
+    receipt = agent.submit_conversation_message(
+        cid, "plan-request", "只给方案，先不要执行。", permission_mode="read_only",
+        motion_guard=lambda *args: admissions.append(args))
+    # This tests durable plan output, not SDK cold-start latency.
+    future = agent._conversation_turn_futures.get(receipt["turn_id"])
+    if future is not None:
+        future.result(timeout=15)
+    turn = agent.get_conversation_turn(cid, receipt["turn_id"])
     snapshot = agent.get_conversation(cid)
     answers = [row for row in snapshot["messages"] if row["role"] == "assistant"]
     assert turn["state"] == "completed" and turn["kind"] == "plan"
     assert len(answers) == 1 and answers[0]["kind"] == "plan"
-    assert answers[0]["metadata"]["status"] == "completed"
-    assert answers[0]["metadata"]["plan"] == plan
-    assert answers[0]["metadata"]["model_metrics"]["model_responses"] == 1
+    metadata = answers[0]["metadata"]
+    assert metadata["status"] == "completed" and metadata["plan"] == plan
+    assert metadata["activity_type"] == "model" and metadata["activity_state"] == "completed"
+    assert metadata["model_metrics"]["elapsed_ms"] >= 0
+    assert metadata["model_metrics"]["model_responses"] == 1
     assert answers[0]["id"] == events[0]["id"] == events[-1]["id"]
     assert events[0]["metadata"]["status"] == "streaming"
     assert events[-1]["metadata"]["plan"] == plan and events[-1]["revision"] > events[0]["revision"]

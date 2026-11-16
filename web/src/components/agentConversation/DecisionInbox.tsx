@@ -19,7 +19,7 @@ export function DecisionInbox({ decisions, onDecide }: {
   )
   const open = decisions.filter(decision => !state[decision.id]?.answered && !state[decision.id]?.gone).length
   const decide = (decision: DecisionInboxItem, answer: 'primary' | 'secondary') => {
-    setState(current => ({ ...current, [decision.id]: { ...current[decision.id], answered: answer === 'primary' ? decision.primary : decision.secondary } }))
+    setState(current => ({ ...current, [decision.id]: { ...(current[decision.id] ?? { open: true }), answered: answer === 'primary' ? decision.primary : decision.secondary } }))
     onDecide?.(decision, answer)
     window.setTimeout(() => setState(current => ({ ...current, [decision.id]: { ...current[decision.id], gone: true } })), 560)
   }

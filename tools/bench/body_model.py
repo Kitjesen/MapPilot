@@ -189,13 +189,13 @@ class BodyModel:
         """Return all imported robot collision primitives in world coordinates."""
         self._pose(pose)
         kinds = {
-            mujoco.mjtGeom.mjGEOM_BOX: "box",
-            mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder",
-            mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
+            int(mujoco.mjtGeom.mjGEOM_BOX): "box",
+            int(mujoco.mjtGeom.mjGEOM_CYLINDER): "cylinder",
+            int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere",
         }
         return [{
             "link": self._links[geom_id],
-            "type": kinds[self.model.geom_type[geom_id]],
+            "type": kinds[int(self.model.geom_type[geom_id])],
             "center": self.data.geom_xpos[geom_id].tolist(),
             "rotation": self.data.geom_xmat[geom_id].reshape(3, 3).tolist(),
             "size": self.model.geom_size[geom_id].tolist(),

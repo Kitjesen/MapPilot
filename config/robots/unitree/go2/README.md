@@ -2096,8 +2096,10 @@ Go2 原生驱动接管控制时，先确认 `SportClient::StopMove()`，再用
 `ObstaclesAvoidClient::SwitchGet / SwitchSet(false)` 关闭原厂避障并回读确认。
 原厂已关闭时只查询，不重复设置；常规控制和 readiness 刷新不再查询此接口。
 停止并释放控制或断线后的重新接管会重新确认，覆盖机器狗重启后开关恢复的情况。
-查询、设置或回读失败会保持未就绪并按驱动现有重连间隔重试，不向 SportClient
-转发非零速度。日志确认项为 `Go2 factory avoidance disabled (confirmed)`。
+查询、设置或回读失败会保持未就绪并按驱动现有重连间隔重试。
+2026-11-17 按操作者选择，原厂避障配置状态与机身倾斜用于诊断，速度命令的接受结果由
+SportClient 返回值决定。配置 RPC 失败继续保留错误和零输出处理。
+日志确认项为 `Go2 factory avoidance disabled (confirmed)`。
 
 这是 LingTu 驱动的接管默认行为，不是修改 Unitree 固件的永久启动设置；
 未启动 LingTu、或使用厂商应用重新打开开关时，不能假定原厂避障仍关闭。

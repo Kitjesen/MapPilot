@@ -111,17 +111,27 @@ class CodexAppServer:
             return
         self._respond(request_id, error={"code": -32601, "message": "LingTu does not expose this App Server request"})
 
-    def _take(self, timeout: float = 30.0, approval_handler: Callable[[dict], str] | None = None) -> dict:
-        try:
-            message = self._messages.get(timeout=timeout)
-        except queue.Empty:
-            raise LLMError("Codex App Server 请求超时。") from None
-        if message.get("_eof"):
-            raise LLMError("Codex App Server 提前退出。")
-        if message.get("method") and message.get("id") is not None:
-            self._handle_server_request(message, approval_handler)
-            return self._take(timeout, approval_handler)
-        return message
+    def _take(self, timeout: float = 30.0, approval_handler: Callable[[dict], str] | None = None,
+              stop: threading.Event | None = None) -> dict:
+        deadline = time.monotonic() + timeout
+        while True:
+            if stop is not None and stop.is_set():
+                raise LLMError("Codex turn 已取消。")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LLMError("Codex App Server 请求超时。")
+            try:
+                message = self._messages.get(timeout=min(remaining, 0.1) if stop is not None else remaining)
+            except queue.Empty:
+                continue
+            if message.get("_eof"):
+                raise LLMError("Codex App Server 提前退出。")
+            if message.get("method") and message.get("id") is not None:
+                if message["method"] == "item/tool/call" and stop is not None:
+                    return message
+                self._handle_server_request(message, approval_handler)
+                continue
+            return message
 
     def _request(self, method: str, params: dict, timeout: float = 30.0) -> dict:
         with self._rpc_lock:
@@ -147,7 +157,12 @@ class CodexAppServer:
 
     def status(self) -> dict:
         with self._rpc_lock:
-            result = self._account()
+            try:
+                result = self._account()
+            except LLMError as exc:
+                return {"provider": "codex", "connected": False, "available": False,
+                        "inference_verified": False, "auth_mode": "app_server",
+                        "reason": "codex_unavailable", "error": str(exc)}
             return {"provider": "codex", "connected": self._account_connected(result),
                     "inference_verified": False, "auth_mode": "app_server",
                     "codex_home": result.get("codexHome") or self.codex_home or None}
@@ -200,6 +215,16 @@ class CodexAppServer:
         inputs: list[dict] = []
         temporary: list[str] = []
         for message in messages:
+            if message.get("type") == "function_call":
+                inputs.append({"type": "text", "text":
+                    f"assistant tool {message['name']} ({message['call_id']}): {message['arguments']}"})
+                continue
+            if message.get("type") == "function_call_output":
+                output = message["output"]
+                content = output if isinstance(output, list) else [{"type": "text", "text": str(output)}]
+                message = {"role": f"tool {message['call_id']}", "content": [
+                    {"type": "input_image", "image_url": part["image_url"]}
+                    if part.get("type") == "image" else part for part in content]}
             content = message.get("content", "")
             if not isinstance(content, list):
                 if content:
@@ -225,17 +250,28 @@ class CodexAppServer:
 
     def chat(self, messages: list[dict], *, model: str, cwd: str | None = None,
              permission_mode: str = "default",
+             reasoning: str = "default",
              on_event: Callable[[dict], None] | None = None,
-             approval_handler: Callable[[dict], str] | None = None) -> str:
+             approval_handler: Callable[[dict], str] | None = None,
+             tools: list[dict] | None = None, instructions: str = "",
+             invoke_tool: Callable[[str, dict, str], dict] | None = None,
+             stop: threading.Event | None = None) -> str:
         with self._rpc_lock:
             if not self._account_connected(self._account()):
                 raise LLMError("请先在 Codex App Server 中登录 ChatGPT。")
             writable = permission_mode == "full_access"
             approval_policy = "never" if writable else "on-request"
+            registered = {tool["name"] for tool in tools or []}
+            stop = stop or threading.Event()
             thread = self._request("thread/start", {
                 "cwd": cwd or str(Path.cwd()), "model": model,
                 "approvalPolicy": approval_policy, "sandbox": "workspace-write" if permission_mode != "read_only" else "read-only",
                 "ephemeral": True, "threadSource": "lingtu",
+                "baseInstructions": instructions or None,
+                "dynamicTools": [{"type": "function", "name": tool["name"],
+                                  "description": tool.get("description", ""),
+                                  "inputSchema": tool.get("parameters", {"type": "object"})}
+                                 for tool in tools or []],
             })
             thread_id = (thread.get("thread") or {}).get("id")
             if not isinstance(thread_id, str) or not thread_id:
@@ -245,21 +281,45 @@ class CodexAppServer:
             inputs, temporary = self._input(messages)
             self._write({"jsonrpc": "2.0", "id": request_id, "method": "turn/start", "params": {
                 "threadId": thread_id, "input": inputs, "approvalPolicy": approval_policy,
+                "effort": "medium" if reasoning == "default" else reasoning,
                 "sandbox": "workspace-write" if permission_mode != "read_only" else "read-only",
             }})
             started = False
+            turn_id = None
+            results: dict[str, tuple[str, dict, dict]] = {}
             chunks: list[str] = []
             try:
                 while True:
-                    message = self._take(120.0, approval_handler)
-                    if message.get("id") == request_id:
+                    message = self._take(120.0, approval_handler, stop)
+                    if message.get("id") == request_id and not message.get("method"):
                         if "error" in message:
                             raise LLMError(str(message["error"].get("message", "Codex turn 启动失败")))
                         started = True
+                        turn_id = ((message.get("result") or {}).get("turn") or {}).get("id")
                         continue
                     method = message.get("method")
                     params = message.get("params") or {}
-                    if method == "item/agentMessage/delta":
+                    if method == "item/tool/call":
+                        name, arguments, call_id = params.get("tool"), params.get("arguments"), params.get("callId")
+                        try:
+                            if params.get("threadId") != thread_id or name not in registered or invoke_tool is None:
+                                raise ValueError("Tool is not registered for this conversation turn")
+                            if not isinstance(arguments, dict) or not isinstance(call_id, str) or not call_id:
+                                raise ValueError("Invalid dynamic tool call")
+                            if call_id in results:
+                                old_name, old_arguments, response = results[call_id]
+                                if name != old_name or arguments != old_arguments:
+                                    raise ValueError("Conflicting dynamic tool call ID")
+                            else:
+                                try:
+                                    response = invoke_tool(name, arguments, call_id)
+                                except Exception as exc:
+                                    response = {"success": False, "contentItems": [{"type": "inputText", "text": str(exc)}]}
+                                results[call_id] = (name, arguments, response)
+                        except Exception as exc:
+                            response = {"success": False, "contentItems": [{"type": "inputText", "text": str(exc)}]}
+                        self._respond(message["id"], response)
+                    elif method == "item/agentMessage/delta" and params.get("threadId", thread_id) == thread_id:
                         delta = params.get("delta")
                         if isinstance(delta, str):
                             chunks.append(delta)
@@ -279,12 +339,19 @@ class CodexAppServer:
                         return "".join(chunks)
                     elif method == "account/updated" and not started:
                         continue
-                    elif on_event and method in {
+                    elif on_event and params.get("threadId", thread_id) == thread_id and method in {
                         "item/started", "item/completed", "turn/started", "turn/plan/updated",
                         "thread/status/changed", "mcpServer/startupStatus/updated",
                     }:
                         on_event({"type": "codex_event", "method": method, "params": params})
             finally:
+                if stop.is_set():
+                    if turn_id:
+                        self._next_id += 1
+                        self._write({"jsonrpc": "2.0", "id": self._next_id, "method": "turn/interrupt",
+                                     "params": {"threadId": thread_id, "turnId": turn_id}})
+                    elif self._process is not None and self._process.poll() is None:
+                        self._process.terminate()
                 for path in temporary:
                     Path(path).unlink(missing_ok=True)
 

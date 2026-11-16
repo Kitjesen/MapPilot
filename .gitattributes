@@ -2,6 +2,7 @@
 scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
 tests/native/recording/*.sh text eol=lf
+tests/scripts/deploy/*.sh text eol=lf
 scripts/lingtu text eol=lf
 # Review evidence pins bind exact bytes across Windows and Linux checkouts.
 sim/packages/robots/doso/thunder_v4/robot.package.yaml text eol=lf

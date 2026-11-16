@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_semantic_planner_readme_describes_pure_module_orchestration() -> None:
     readme = (ROOT / "src" / "decision" / "README.md").read_text(encoding="utf-8")
 
-    assert "Semantic planning is pure Python Module orchestration" in readme
+    assert "Python semantic decision layer" in readme
+    assert "The Host assembly creates these Modules" in readme
+    assert "Native navigation remains the authority for geometry and motion" in readme
 
 
 def test_exploration_readme_keeps_ros2_bridge_as_compatibility_only() -> None:

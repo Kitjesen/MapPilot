@@ -14,6 +14,16 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+@pytest.fixture
+def arial_font():
+    from matplotlib.font_manager import findfont
+
+    try:
+        findfont("Arial", fallback_to_default=False)
+    except ValueError:
+        pytest.skip("Arial is required for publication rendering at 10 pt")
+
+
 def binary_cloud(path: Path) -> None:
     """Write a tiny synthetic parser fixture, never dataset evidence."""
     values = np.zeros(9, dtype=[("intensity", "<f4"), ("z", "<f8"), ("x", "<f4"), ("y", "<f4")])
@@ -66,14 +76,14 @@ def test_plan_failure_never_displays_a_stale_route(tmp_path):
     np.testing.assert_array_equal(MODULE.load_plan(result)[0], [[0, 0, 0], [1, 2, 3]])
 
 
-def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_path):
+def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_path, arial_font):
     map_dir = tmp_path / "synthetic-map"
     map_dir.mkdir()
     binary_cloud(map_dir / "map.pcd")
     trajectory = tmp_path / "estimated.map.tum"
     trajectory.write_text("1 0 0 0 0 0 0 1\n2 1 2 3 0 0 0 1\n", encoding="ascii")
     report = MODULE.render(map_dir, trajectory, tmp_path / "figures", "Synthetic rendering test only", max_points=3)
-    assert report["font"] == {"family": MODULE.plt.rcParams["font.family"][0], "size_pt": 10}
+    assert report["font"] == {"family": "Arial", "size_pt": 10}
     assert report["execution_validated"] is False
     assert report["planning"]["status"] == "not_run"
     assert len(report["files"]) == 6
@@ -81,7 +91,7 @@ def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_p
     assert (tmp_path / "figures/figures.json").is_file()
 
 
-def test_focus_is_a_declared_display_crop_and_does_not_overwrite_full_evidence(tmp_path):
+def test_focus_is_a_declared_display_crop_and_does_not_overwrite_full_evidence(tmp_path, arial_font):
     map_dir = tmp_path / "synthetic-map"
     map_dir.mkdir()
     binary_cloud(map_dir / "map.pcd")

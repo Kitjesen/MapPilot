@@ -433,7 +433,10 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
     assert len(observed) == 1
     assert observed[0].source == "mapd"
     assert observed[0].sequence == 7
-    assert len(observed[0].layers) == 6
+    assert {layer["id"] for layer in observed[0].layers} == {
+        "maps.live_cloud", "maps.voxel_cloud", "maps.accumulated_cloud",
+        "maps.occupancy", "maps.elevation", "maps.esdf",
+    }
     assert observed[0].layers[0]["point_count"] == 1
     occupancy = next(
         layer
@@ -441,9 +444,6 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
         if layer["id"] == "maps.occupancy"
     )
     assert occupancy["grid"].shape == (1, 2)
-    assert {"maps.surface_projection", "maps.ground_height"}.isdisjoint(
-        layer["id"] for layer in observed[0].layers
-    )
     health = bus.health()["map_scene"]
     assert health["cursor"] == ["mapd-boot", 7]
     assert health["generation"] == 5

@@ -33,6 +33,10 @@ maps:
     radius_m: 0.25
     z_up_m: 0.10
     z_down_m: 0.10
+  surface:
+    # Build-time defaults for saved-map surface preview; native navigation owns Rust surfaces.
+    max_hole_area_m2: 0.16
+    max_slope: 0.7
   capacity:
     cloud_bytes: 16777216
     point_fields: 16

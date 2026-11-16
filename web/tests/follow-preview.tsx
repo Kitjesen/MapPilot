@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Play, RotateCcw } from 'lucide-react'
 import { AgentConversation } from '../src/components/AgentConversation'
@@ -6,17 +6,20 @@ import { InstructionTaskBar } from '../src/components/InstructionTaskBar'
 import { useAgentConversation } from '../src/hooks/useAgentConversation'
 import type { ConversationSnapshot } from '../src/services/agentConversation'
 import type { AgentTaskStatusResponse } from '../src/types'
+import peopleImage from './fixtures/follow-people.jpg'
+import reviewedPeople from './fixtures/follow-review.json'
 import '../src/App.css'
 import './follow-preview.css'
 
 // Preview transport is deliberately closed: no request reaches a Host or model.
 const cid = 'follow-preview'
 const runId = 'demo-follow-run'
-const instruction = '跟随穿红色上衣的人'
-const steps = ['选人', '跟随', '目标丢失', '取消中', '已取消']
+const instruction = '选择画面中的人员跟随'
+const steps = ['选人确认', '跟随', '目标丢失', '取消中', '已取消']
 let snapshot: ConversationSnapshot
 let changeFromChat: (step: number) => void = () => {}
-let step = 1
+let step = 0
+let confirmedTarget = ''
 let sequence = 0
 
 function status(index: number): AgentTaskStatusResponse {
@@ -27,7 +30,7 @@ function status(index: number): AgentTaskStatusResponse {
     navigation: {
       follow_task_id: 'demo-follow-1', product_session_id: 'demo-session',
       state: index === 4 ? 'cancelled' : index === 3 ? 'cancelling' : 'running',
-      phase: ['selecting', 'following', 'lost', 'cancelling', 'cancelled'][index],
+      phase: ['awaiting_confirmation', 'following', 'lost', 'cancelling', 'cancelled'][index],
       terminal: index === 4, success: false, reason: index === 2 ? 'target_lost' : '',
     },
   }
@@ -49,14 +52,15 @@ function build(index: number) {
     history_cursor: null, active_run: { run_id: runId, instruction } }
   message('start', 'user', instruction)
   message('start', 'tool', JSON.stringify({ accepted: true, phase: 'selecting', execution_confirmed: false,
+    confirmation_required: true, product_session_id: 'demo-session',
     follow_task_id: 'demo-follow-1', run_id: runId }), 'follow_person')
-  message('start', 'assistant', '请求已受理，正在选择符合描述的人员。')
+  message('start', 'assistant', '请在画面中选人，确认后开始跟踪。')
   if (index >= 1) {
     message('query', 'user', '跟随状态')
     message('query', 'tool', JSON.stringify(status(index === 2 ? 2 : 1)), 'get_agent_status')
     message('query', 'assistant', index === 2
       ? '跟随目标暂时丢失，正在尝试重新识别。'
-      : '正在跟随穿红色上衣的人。你可以继续聊天，任务会保持运行。')
+      : '正在跟随已确认的人员。你可以继续聊天，任务会保持运行。')
   }
   if (index >= 3) {
     message('stop', 'user', '停止跟随')
@@ -70,7 +74,7 @@ function build(index: number) {
       finished_at: rows.at(-1)!.created_at ?? undefined })
   }
 }
-build(1)
+build(0)
 
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, location.origin)
@@ -78,6 +82,29 @@ window.fetch = async (input, init) => {
   const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
   const reply = (value: unknown, code = 200) => new Response(JSON.stringify(value),
     { status: code, headers: { 'Content-Type': 'application/json' } })
+  if (path.startsWith('/api/v1/follow/')) {
+    const task = { found: true, follow_task_id: 'demo-follow-1', product_session_id: 'demo-session',
+      confirmation_required: step === 0, confirmed_target_id: confirmedTarget || (step > 0 ? '6' : ''),
+      state: step === 4 ? 'cancelled' : step === 3 ? 'cancelling' : 'running', terminal: step === 4 }
+    if (path.endsWith('/selection')) return reply(step === 0 ? { ...task,
+      observation_sequence: 1, width: 1920, height: 1080, image: peopleImage, review_state: 'ready',
+      candidates: reviewedPeople.candidates.map(candidate => ({ ...candidate,
+        ...reviewedPeople.review[candidate.target_id as keyof typeof reviewedPeople.review] })),
+    } : task)
+    if (path.endsWith('/confirm')) {
+      const body = JSON.parse(String(init?.body || '{}'))
+      const verdict = reviewedPeople.review[body.target_id as keyof typeof reviewedPeople.review]
+      const accepted = step === 0 && verdict?.kind === 'person' && body.observation_sequence === 1
+      if (accepted) { confirmedTarget = body.target_id; changeFromChat(1) }
+      return reply({ ...task, ok: accepted, accepted, status: accepted ? 'accepted' : 'rejected',
+        confirmation_required: !accepted, reason: accepted ? 'target_confirmed' : 'person_not_verified' })
+    }
+    if (path.endsWith('/cancel')) {
+      changeFromChat(4)
+      return reply({ ...task, ok: true, accepted: true, status: 'accepted', terminal: true, state: 'cancelled' })
+    }
+    return reply(task)
+  }
   if (path === '/api/v1/agent/options') return reply({ available: true, provider: 'preview', default_model: 'kimi-k3',
     default_reasoning: 'default', default_permission_mode: 'full_access', permission_modes: ['read_only', 'default', 'full_access'],
     models: [{ id: 'kimi-k3', label: 'Kimi K3', configured: true, provider: 'moonshot',
@@ -111,14 +138,14 @@ window.fetch = async (input, init) => {
 }
 
 export function FollowPreview() {
-  const [current, setCurrent] = useState(1)
+  const [current, setCurrent] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const chat = useAgentConversation(undefined, true, null, 'follow-preview')
-  const { refresh: refreshChat, setOpen } = chat
-  const refresh = useRef(refreshChat)
-  useEffect(() => { refresh.current = refreshChat }, [refreshChat])
+  const { refresh: refreshConversation, setOpen } = chat
+  const refresh = useRef(refreshConversation)
+  useLayoutEffect(() => { refresh.current = refreshConversation }, [refreshConversation])
   const clear = useCallback(() => { timers.current.forEach(clearTimeout); timers.current = []; setPlaying(false) }, [])
   const show = useCallback((index: number) => {
     build(index); setCurrent(index); setDismissed(false)
@@ -137,9 +164,12 @@ export function FollowPreview() {
   useEffect(() => { setOpen(true) }, [setOpen])
   useEffect(() => {
     changeFromChat = index => index === 3 ? stop() : (clear(), show(index))
-    if (new URLSearchParams(location.search).has('play')) timers.current.push(setTimeout(replay, 0))
-    return () => { timers.current.forEach(clearTimeout) }
-  }, [clear, show, stop, replay])
+    const autoplay = new URLSearchParams(location.search).has('play') ? requestAnimationFrame(replay) : null
+    return () => {
+      if (autoplay !== null) cancelAnimationFrame(autoplay)
+      timers.current.forEach(clearTimeout)
+    }
+  }, [clear, replay, show, stop])
   return <main className="follow-demo">
     <header className="follow-demo-heading"><div><strong>LingTu</strong><span>对话跟随</span></div><span className="follow-demo-badge">模拟演示 · 未连接机器人</span></header>
     <nav className="follow-demo-steps" aria-label="跟随演示阶段">
@@ -155,9 +185,9 @@ export function FollowPreview() {
           status: status(current), statusSource: 'poll', cancelRequested: current === 3, cancelError: '', pollError: '' },
           receipt: null, sending: false, error: '', adopt: () => {}, submit: async () => {},
           cancel: async () => stop(), dismiss: () => setDismissed(true) }} />
-      <AgentConversation locale="zh" controller={chat} />
+      <AgentConversation key={current} locale="zh" controller={chat} />
     </div>
-    <footer>正式聊天组件与任务条 · 回执为演示数据</footer>
+    <footer>MOT17 样例画面 · Kimi 复核结果 · 控制回执为演示数据</footer>
   </main>
 }
 createRoot(document.getElementById('root')!).render(<FollowPreview />)

@@ -1,0 +1,118 @@
+{
+  "model": "kimi-k3",
+  "dataset": "MOT17-09",
+  "frame": 0,
+  "robot_motion": false,
+  "elapsed_s": 25.41,
+  "raw": [
+    "[\n{\"target_id\": \"1\", \"kind\": \"person\", \"reason\": \"Woman in green walking on the mall floor, feet in contact with ground, consistent scale and depth.\"},\n{\"target_id\": \"2\", \"kind\": \"person\", \"reason\": \"Figure standing inside the Vodafone store among shelves, real depth and grounding.\"},\n{\"target_id\": \"3\", \"kind\": \"person\", \"reason\": \"Partially visible person at left image edge, body cropped by frame but grounded and physically present.\"},\n{\"target_id\": \"4\", \"kind\": \"person\", \"reason\": \"Small child standing/walking on the recessed floor in front of the Woolworths entrance, real 3D presence with ground contact.\"},\n{\"target_id\": \"5\", \"kind\": \"person\", \"reason\": \"Child standing near the service counter inside the store, grounded with plausible scale.\"},\n{\"target_id\": \"6\", \"kind\": \"person\", \"reason\": \"Woman carrying a pink bag standing at the storefront recess, grounded and occluding the wall behind.\"},\n{\"target_id\": \"7\", \"kind\": \"person\", \"reason\": \"Partially cropped person in blue shirt at right edge, physically present in the walkway.\"},\n{\"target_id\": \"8\", \"kind\": \"non_person\", \"reason\": \"Face displayed on the large digital advertising screen on the wall, flat surface with bezel and ad content.\"}\n]"
+  ],
+  "review": {
+    "1": {
+      "kind": "person",
+      "reason": "Woman in green walking on the mall floor, feet in contact with ground, consistent scale and depth."
+    },
+    "2": {
+      "kind": "person",
+      "reason": "Figure standing inside the Vodafone store among shelves, real depth and grounding."
+    },
+    "3": {
+      "kind": "person",
+      "reason": "Partially visible person at left image edge, body cropped by frame but grounded and physically present."
+    },
+    "4": {
+      "kind": "person",
+      "reason": "Small child standing/walking on the recessed floor in front of the Woolworths entrance, real 3D presence with ground contact."
+    },
+    "5": {
+      "kind": "person",
+      "reason": "Child standing near the service counter inside the store, grounded with plausible scale."
+    },
+    "6": {
+      "kind": "person",
+      "reason": "Woman carrying a pink bag standing at the storefront recess, grounded and occluding the wall behind."
+    },
+    "7": {
+      "kind": "person",
+      "reason": "Partially cropped person in blue shirt at right edge, physically present in the walkway."
+    },
+    "8": {
+      "kind": "non_person",
+      "reason": "Face displayed on the large digital advertising screen on the wall, flat surface with bezel and ad content."
+    }
+  },
+  "candidates": [
+    {
+      "target_id": "1",
+      "bbox": [
+        1695.273,
+        389.705,
+        1864.775,
+        729.108
+      ]
+    },
+    {
+      "target_id": "2",
+      "bbox": [
+        256.327,
+        455.97,
+        354.88,
+        705.967
+      ]
+    },
+    {
+      "target_id": "3",
+      "bbox": [
+        0.0,
+        262.325,
+        111.965,
+        904.198
+      ]
+    },
+    {
+      "target_id": "4",
+      "bbox": [
+        1254.209,
+        536.572,
+        1314.423,
+        658.822
+      ]
+    },
+    {
+      "target_id": "5",
+      "bbox": [
+        114.74,
+        511.602,
+        194.355,
+        746.468
+      ]
+    },
+    {
+      "target_id": "6",
+      "bbox": [
+        1286.97,
+        462.72,
+        1358.973,
+        658.427
+      ]
+    },
+    {
+      "target_id": "7",
+      "bbox": [
+        1883.022,
+        369.889,
+        1920.0,
+        579.264
+      ]
+    },
+    {
+      "target_id": "8",
+      "bbox": [
+        1275.412,
+        362.817,
+        1336.755,
+        475.362
+      ]
+    }
+  ]
+}

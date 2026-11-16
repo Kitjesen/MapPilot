@@ -93,6 +93,14 @@ int main() try {
   const auto departure_result=r::runPlan(path,request);
   require(departure_result.ok && std::abs(departure_result.path.front().x+.02)<1e-6,
           "missing ground observation at the actual start prevented departure");
+  auto exact_departure=request;
+  exact_departure.start.x=.025;
+  exact_departure.options.snap_search_radius_cells=0;
+  const auto exact_result=r::runPlan(path,exact_departure);
+  require(exact_result.ok && !exact_result.path.empty() &&
+              std::abs(exact_result.path.front().x-.025)<1e-6 &&
+              std::abs(exact_result.path.front().z-.35)<1e-6,
+          "supported exact start with zero snap radius could not depart");
   octomap::OcTree noisy_departure(.05);
   noisy_departure.updateNode(-.5,-.5,-.1,false);
   noisy_departure.updateNode(1.5,.5,.8,false);
@@ -100,7 +108,16 @@ int main() try {
     noisy_departure.updateNode((x+.5)*.05,(y+.5)*.05,-.025,true);
   noisy_departure.updateInnerOccupancy();
   require(noisy_departure.write(path.string()),"could not write noisy departure fixture");
-  require(!r::runPlan(path,request).ok,"unsupported departure was accepted as start tolerance");
+  const auto missing_entry=r::runPlan(path,request);
+  require(!missing_entry.ok && missing_entry.path.empty(),
+          "actual-start exemption crossed missing ground ahead of the robot");
+  double min_x,min_y,min_z,max_x,max_y,max_z;
+  noisy_departure.getMetricMin(min_x,min_y,min_z);
+  noisy_departure.getMetricMax(max_x,max_y,max_z);
+  std::cout << "Departure gap: map bounds [" << min_x << ',' << min_y << ',' << min_z
+      << "] to [" << max_x << ',' << max_y << ',' << max_z << "], "
+      "start=(-.02,.025,.35), first observed floor x=.2..25, entry to centre=.245m, reason="
+      << missing_entry.failure_reason << '\n';
   for(int x=-1;x<4;++x)for(int y=-8;y<=8;++y)
     noisy_departure.updateNode((x+.5)*.05,(y+.5)*.05,-.025,true);
   noisy_departure.updateInnerOccupancy();

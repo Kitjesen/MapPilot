@@ -231,8 +231,7 @@ ranking. Saved-ray maps and modeled-free PCD maps are distinct evidence sources.
 
 Retain the data tables, exact source reports and plotting program beside each
 figure. Failure and unmeasured cells remain visible. Paper figures use Arial
-10 pt. Install Arial for paper exports; the mapping renderer uses an available
-font when Arial is absent and records the actual family in its report.
+10 pt. Install Arial before generating paper exports.
 The [current comparison record](../build/algorithm-comparison-20261021/README.md)
 separates official Elevator-LIO/GenZ-LIO, LingTu revisions, historical PCT and
 OctoPlanner3D results, and the missing same-condition planning baselines.

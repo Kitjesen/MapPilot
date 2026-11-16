@@ -37,7 +37,6 @@ from sim.scripts.mujoco.native_sensor_records import (
     RECORD_SIMULATION_CLOCK,
 )
 
-from runtime.camera_shm import ShmFrameReader, StreamKind
 from lingtu.assembly.graph import (
     ProcessArtifact,
     ProcessCommand,
@@ -53,6 +52,7 @@ from lingtu.sim.stop import (
 )
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import POINT_DTYPE
+from runtime.transport.camera_shm import ShmFrameReader, StreamKind
 
 PRODUCT_SESSION_ID = "1" * 32
 SESSION_ID = "test-session"

@@ -112,6 +112,7 @@ story += [para("7. 当前证据和待验证项", "h1_cn"), grid([["场景", "Lin
 
 story += [para("8. 最终决策", "h1_cn"), para("采用 PCT 的多层空间问题定义，采用 DimOS MLS 的表面、节点、边和增量生命周期，保留 LingTu 的原生三维几何、OctoMap、mapd、SCAN、Follower、Driver 和 DDS。"), para("Rust 进入纯算法核心，C++ 保留地图身份、机器人几何、取消、数据接口和执行边界。Rust 后端先以 A/B 方式接入，只有在固定场景下通过连通性、几何复核、性能和执行验收后，才切换为现场默认。", "quote_cn"), para("参考资料", "h2_cn"), para("DimOS MLS  https://github.com/dimensionalOS/dimos", "small_cn"), para("PCT Planner  https://github.com/byangw/PCT_planner", "small_cn"), para("PCT paper  https://ieeexplore.ieee.org/document/10531813", "small_cn"), para("LingTu matched comparison  docs/research/planner-public-dataset-comparison-20261114.md", "small_cn"), para("LingTu surface graph evidence  docs/research/surface-graph-20261031.md", "small_cn")]
 
+OUT.parent.mkdir(parents=True, exist_ok=True)
 doc = SimpleDocTemplate(str(OUT), pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm, topMargin=16 * mm, bottomMargin=20 * mm, title="LingTu 三维全局规划路线")
 doc.build(story, onFirstPage=footer, onLaterPages=footer)
 print(OUT)

@@ -50,6 +50,8 @@ class SemanticObservation:
     scene_graph: SceneGraph | None = None
     odometry_ts: float = 0.0
     map_odom_ts: float = 0.0
+    depth_scale_m: float | None = None
+    depth_range_m: tuple[float, float] | None = None
 
 # ---------------------------------------------------------------------------
 # Detection3D

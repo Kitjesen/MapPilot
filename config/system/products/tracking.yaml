@@ -41,6 +41,7 @@ host:
   capabilities: [gateway, navigation_skills, goal_commands, semantic, conversation]
   detector: yolo_trt
   llm: kimi
+  llm_timeout_sec: 30.0
   default_classes: person
   run_startup_checks: true
 includes: [control, lidar, slam, maps, limits, follower, global, local, teleop, camera]

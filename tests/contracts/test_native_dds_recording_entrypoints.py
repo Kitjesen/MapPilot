@@ -35,8 +35,12 @@ def test_player_defaults_to_an_isolated_domain_and_requires_live_opt_in() -> Non
     assert "int domain_id{84}" in text
     assert "--allow-live-domain" in text
     assert "validate_replay_domain" in text
-    assert all("--domain 0" not in line for line in _read(RECORDING / "README.md").splitlines()
-               if "lingtu_dds_player" in line)
+    replay_examples = [
+        line for line in _read(RECORDING / "README.md").replace("\\\n", " ").splitlines()
+        if "lingtu_dds_player" in line
+    ]
+    assert replay_examples
+    assert all("--domain 0" not in command or "--allow-live-domain" in command for command in replay_examples)
 
 
 def test_replay_allowlist_excludes_motion_and_control_topics() -> None:
@@ -99,6 +103,9 @@ def test_record_only_envelopes_are_checked_offline_and_terminal_is_evidence_gate
     assert "kDriverControlState" in capture
     assert "last final cmd_vel before terminal is not zero" in verifier
     assert "driver zero-output state was not observed before terminal" in verifier
+    assert "confirmation == nullptr || !confirmation->zero_output" in verifier
+    assert "state.observed_time_ns <= zero_started_ns" in verifier
+    assert "state.observed_time_ns > terminal->observed_time_ns" in verifier
     assert '"--verify-inspection-task"' in player
     assert '"--verify-inspection-task requires --dry-run"' in player
     assert "timeline_capture.observe" in player

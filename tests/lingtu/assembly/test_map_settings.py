@@ -21,6 +21,8 @@ def test_yaml_values_reach_map_service_environment():
     settings["input"]["max_points"] = 120000
     settings["occupancy"]["resolution_m"] = 0.10
     settings["occupancy"]["size_x"] = 80
+    settings["surface"]["max_hole_area_m2"] = 0.12
+    settings["surface"]["max_slope"] = 0.5
     settings["save"]["dynamic_filter"] = False
     before = deepcopy(settings)
 
@@ -34,6 +36,7 @@ def test_yaml_values_reach_map_service_environment():
     assert environment["LINGTU_MAPD_QUERY_MAX_JSON_BYTES"] == str(4 * 1024 * 1024)
     assert "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2" not in environment
     assert "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE" not in environment
+    assert not any(key.startswith("LINGTU_MAPD_SURFACE_") for key in environment)
     assert settings == before
 
 
@@ -63,6 +66,8 @@ def test_scan_uses_selected_robot_inflation(radius, below, above):
     ("input", "max_points", 1.5),
     ("occupancy", "resolution_m", float("nan")),
     ("occupancy", "p_hit", 1),
+    ("surface", "max_hole_area_m2", -1),
+    ("surface", "max_slope", float("nan")),
     ("save", "dynamic_filter", "false"),
 ])
 def test_invalid_map_settings_fail_at_compilation(group, field, value):
@@ -76,6 +81,14 @@ def test_unknown_map_setting_is_not_silently_ignored():
     settings = _settings()
     settings["occupancy"]["resoluton_m"] = 0.1
     with pytest.raises(ValueError, match=r"maps\.occupancy"):
+        mapd_environment(settings, {})
+
+
+@pytest.mark.parametrize("field", ["residual_m", "min_columns"])
+def test_retired_live_surface_setting_is_rejected(field):
+    settings = _settings()
+    settings["surface"][field] = 1
+    with pytest.raises(ValueError, match=r"maps\.surface"):
         mapd_environment(settings, {})
 
 
@@ -101,3 +114,20 @@ def test_standalone_scan_uses_selected_settings_directory(tmp_path):
     )
 
     assert compiled.map_resolution_m == 0.1
+
+
+def test_saved_surface_preview_defaults_do_not_change_navigation(tmp_path):
+    directory = tmp_path / "settings"
+    copytree(SYSTEM_SETTINGS_DIR, directory)
+    config = {"native_control_mode": "autonomy", "native_nav": {"local_planner": "scan", "tick_hz": 100}}
+    before = compile_native_nav_config("nav", config, settings_directory=directory)
+    path = directory / "maps.yaml"
+    settings = yaml.safe_load(path.read_text(encoding="utf-8"))
+    settings["maps"]["surface"] = {"max_hole_area_m2": 0.08, "max_slope": 0.4}
+    path.write_text(yaml.safe_dump(settings), encoding="utf-8")
+    after = compile_native_nav_config("nav", config, settings_directory=directory)
+
+    assert after.native_nav == before.native_nav
+    assert after.environment == before.environment
+    assert not any(key.startswith("LINGTU_MAPD_SURFACE_")
+                   for key in mapd_environment(settings["maps"], after.environment))

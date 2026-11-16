@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -130,8 +131,12 @@ class _Harness:
         (log_dir / "visual-first-frame.png").write_bytes(PNG)
         capture_dir = log_dir / "replay-frames"
         capture_dir.mkdir(exist_ok=True)
-        frame_index = min(len(self.published) - 1, 2)
-        (capture_dir / f"frame_{frame_index:06d}.png").write_bytes(PNG)
+        frame_index = len(self.published) - 1
+        frame = capture_dir / f"frame_{frame_index:06d}.png"
+        frame.write_bytes(PNG)
+        # Instant fixture writes can inherit an mtime older than capture start.
+        written_at_ns = time.time_ns()
+        os.utime(frame, ns=(written_at_ns, written_at_ns))
 
 
 class _FakeUnreal:

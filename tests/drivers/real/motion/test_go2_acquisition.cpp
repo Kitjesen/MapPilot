@@ -38,6 +38,20 @@ int main() {
     }
     {
       auto body = makeBody();
+      fake_unitree::move_code = 42;
+      const auto rejected = body->move({0.5, 0, 0});
+      require(!rejected.accepted && !rejected.transport_ok &&
+                  rejected.state.reason == "command_rejected:code=42",
+              "SDK move rejection must retain its return code");
+      fake_unitree::move_code = 3104;
+      const auto timed_out = body->move({0.5, 0, 0});
+      require(!timed_out.accepted && timed_out.error == "rpc_timeout:code=3104",
+              "SDK move timeout must retain its cause");
+      require(body->move({}).accepted, "failed move must still allow the SDK zero command");
+      expectCalls({"move", "move", "stop"});
+    }
+    {
+      auto body = makeBody();
       require(body->move({0.5, 0, 0}).accepted, "configuration state overrode SDK acceptance");
       expectCalls({"move"});
       fake_unitree::calls.clear();
@@ -129,6 +143,9 @@ int main() {
       fake_unitree::state_callback(&state);
       require(!body->health().healthy && body->health().reason == "imu_attitude_invalid",
               "invalid IMU accepted");
+      fake_unitree::calls.clear();
+      require(body->move({0.1, 0, 0}).accepted, "invalid IMU diagnostics overrode SDK acceptance");
+      expectCalls({"move"});
       require(body->stop().confirmsStop(), "invalid IMU blocked confirmed stop/release");
       state.imu_state().rpy() = {0.1F, -0.1F, 3.0F};
       fake_unitree::state_callback(&state);

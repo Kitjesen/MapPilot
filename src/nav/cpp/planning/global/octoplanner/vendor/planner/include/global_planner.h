@@ -227,8 +227,8 @@ public:
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
   void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
-  bool updateOctomap(std::shared_ptr<octomap::OcTree> map);
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
+  bool updateOctomap(std::shared_ptr<octomap::OcTree> map);
   void setPreparedRustGraph(std::shared_ptr<octomap::OcTree> map,
                             std::shared_ptr<mls::PreparedArtifactHandle> graph);
   void writePrepared(lingtu::maps::BinaryWriter& out) const;

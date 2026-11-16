@@ -54,6 +54,7 @@ def test_native_odom_local_risk_wiring_preserves_map_safety_authority() -> None:
     assert "projectRollingRiskGridToOdom" in producer
     assert "projectLocalTraversability" in projector
     assert 'copyGridSample(message, "odom")' in dds
+    assert "auto batch = sensor_mailbox.takeLatest()" in loop
     assert "inputs.apply(std::move(*batch), timing)" in loop
     assert "state.odom_requires_tf" in navd
     assert "ExecutionMode::Route" in navd
