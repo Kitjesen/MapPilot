@@ -1004,6 +1004,15 @@ namespace global_planner
             // The actual start may contain the robot or incomplete ground observations.
             const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
+            if (actual_start && ground_support_) {
+                const auto cell = worldToGrid(from.x(), from.y(), from.z());
+                const auto floor = artifact_->surface->below(cell.x, cell.y, cell.z);
+                if (floor && !hasGroundSupport(
+                        cell, direct_support_only_, support_depth_cells_)) {
+                    if (failure) *failure = TraversabilityFailure::GroundSupport;
+                    return false;
+                }
+            }
             if(from==to)return true;
             const auto target=queryWorld(to,robot_radius_,ground_support_);
             if(target!=TraversabilityFailure::None){if(failure)*failure=target;return false;}
@@ -1383,8 +1392,9 @@ namespace global_planner
         // Samples start at a voxel centre. Query the voxel containing the
         // physical footprint edge, not the first centre beyond that edge.
         // At 0.2 m resolution, a 0.43 m radius reaches offset 2, not offset 3.
-        const int n = std::max(0, static_cast<int>(std::floor(
-            robot_radius / std::max(1e-6, r) + 0.5)));
+        const double cells = robot_radius / std::max(1e-6, r);
+        int n = std::max(0, static_cast<int>(std::floor(cells + 0.5)));
+        if (n == 1 && std::abs(cells - 0.5) <= 1e-9) ++n;
         const std::array<GridIndex, 5> samples{{
             GridIndex{idx.x, idx.y, idx.z},
             GridIndex{idx.x + n, idx.y, idx.z},
@@ -1990,16 +2000,16 @@ namespace global_planner
                     return TraversabilityFailure::ExternalPreblockedBelow;
             }
         }
-        if (require_support) {
+        const auto supportFailure = [&]() {
+            if (!require_support) return TraversabilityFailure::None;
             const GridIndex support_seed = worldToGrid(p.x(), p.y(), p.z());
-            // The pose need not lie at the centre of its containing voxel.
             const double centre_offset = (support_seed.z + .5) * r - p.z();
-            if (!hasGroundSupport(
-                    support_seed, direct_support_only_, support_depth_cells_, centre_offset)) {
-                return TraversabilityFailure::GroundSupport;
-            }
-        }
-        if (!check_body) return TraversabilityFailure::None;
+            return hasGroundSupport(
+                       support_seed, direct_support_only_, support_depth_cells_, centre_offset)
+                ? TraversabilityFailure::None
+                : TraversabilityFailure::GroundSupport;
+        };
+        if (!check_body) return supportFailure();
         const bool explicit_body = body_clearance_below_m_ > 0.0 || body_clearance_above_m_ > 0.0;
         const double below = explicit_body ? std::max(0.0, body_clearance_below_m_) : r;
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
@@ -2022,7 +2032,7 @@ namespace global_planner
                     }
                 }
             }
-            return TraversabilityFailure::None;
+            return supportFailure();
         }
         for (int x = low.x; x <= high.x; ++x) {
             const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
@@ -2041,7 +2051,7 @@ namespace global_planner
                 }
             }
         }
-        return TraversabilityFailure::None;
+        return supportFailure();
     }
 
     bool OctoPlanner3D::sweptRouteFree(
