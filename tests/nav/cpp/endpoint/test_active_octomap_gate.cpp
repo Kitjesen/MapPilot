@@ -122,6 +122,9 @@ void testPreparedMapSurvivesNewSnapshot() {
   const auto configured = writeValidMap(root.path());
   const auto cache = configured.parent_path() / ".nav";
   lingtu::nav::plan::GlobalPlannerOptions options;
+  // Field requests supply body height; the standalone zero-height mode has no surface graph.
+  options.support_height_m = .35;
+  options.support_height_tolerance_m = .05;
   {
     ActiveOctomapGate gate(mapIdentity());
     const auto prepared = gate.prepare(configured);

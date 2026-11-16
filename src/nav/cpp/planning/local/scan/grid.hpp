@@ -14,6 +14,7 @@ class Grid {
   [[nodiscard]] bool valid() const noexcept;
   [[nodiscard]] const std::string &reason() const noexcept;
   [[nodiscard]] double resolution() const noexcept;
+  [[nodiscard]] double robotYaw() const noexcept { return robotYaw_; }
   [[nodiscard]] int occupiedCellCount() const noexcept;
   [[nodiscard]] int collisionPointCount() const noexcept;
   // SCAN's upstream twin-cylinder query; inflation belongs to Mapd.

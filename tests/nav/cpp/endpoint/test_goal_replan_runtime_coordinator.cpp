@@ -122,12 +122,12 @@ struct Fixture {
       : goal_plan(
             [this](const lingtu::nav::plan::GlobalPlanRequest &request,
                    const lingtu::nav::plan::GlobalPlanCancelCheck &cancelled) {
-              const int call = ++planner_calls;
               lingtu::nav::plan::GlobalPlanResult result;
               {
                 std::lock_guard<std::mutex> lock(planner_requests_mutex);
                 planner_requests.push_back(request);
               }
+              const int call = ++planner_calls;
               result.overlay_revision = request.temporary_overlay.revision;
               result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
               result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;

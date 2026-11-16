@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'src/nav/cpp/**'
+      - 'src/kernels/nav/mls_core/**'
+      - 'src/maps/**'
       - 'config/system/settings/**'
       - 'scripts/build/settings.py'
       - 'scripts/build/cmake/settings.cmake'
@@ -13,6 +15,8 @@ on:
   pull_request:
     paths:
       - 'src/nav/cpp/**'
+      - 'src/kernels/nav/mls_core/**'
+      - 'src/maps/**'
       - 'config/system/settings/**'
       - 'scripts/build/settings.py'
       - 'scripts/build/cmake/settings.cmake'
@@ -52,3 +56,28 @@ jobs:
 
       - name: Run tests
         run: ctest --test-dir build/nav-cpp --output-on-failure
+
+  global:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+          submodules: false
+
+      - name: Install global planner dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake python3-yaml liboctomap-dev
+
+      - name: Test Rust MLS
+        run: cargo test --manifest-path src/kernels/nav/mls_core/Cargo.toml
+
+      - name: Build global planner
+        run: |
+          cmake -S src/nav/cpp/planning/global/octoplanner -B build/global \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake --build build/global --parallel 4
+
+      - name: Test global planner
+        run: ctest --test-dir build/global --output-on-failure --parallel 2

@@ -224,8 +224,8 @@ def test_go2_standing_height_reaches_native_planner() -> None:
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.35"
     assert compiled.environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_OCTO_DIRECT_SUPPORT_ONLY"] == "0"
-    assert float(compiled.environment["LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2"]) == .16
-    assert float(compiled.environment["LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE"]) == .7
+    assert "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2" not in compiled.environment
+    assert "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE" not in compiled.environment
     assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"

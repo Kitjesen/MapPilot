@@ -1,0 +1,12 @@
+[package]
+name = "lingtu_mls_core"
+version = "0.1.0"
+edition = "2021"
+description = "LingTu multi-level surface and sparse graph core"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[features]
+default = []

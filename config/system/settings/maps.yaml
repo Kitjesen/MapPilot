@@ -34,6 +34,10 @@ maps:
     z_up_m: 0.10
     z_down_m: 0.10
   surface:
+    # Build-time defaults for C++ map cleanup; rebuild native programs after edits.
+    # Rust navigation surface preparation uses its closing radius and column headroom.
+    max_hole_area_m2: 0.16
+    max_slope: 0.7
     residual_m: 0.04
     min_columns: 3
   capacity:

@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <brainstem/client.hpp>
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
 #include <brainstem/external.hpp>
+#endif
 #include <cctype>
 #include <stdexcept>
 #include <string>
@@ -75,8 +77,10 @@ ControlState controlState(const brainstem::ControlState &source) {
   state.initial_zero_acknowledged = source.initial_zero_acknowledged;
   state.fsm = fsmName(source.body.kind);
   state.reason = source.reason;
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   state.owner = source.control_owner;
   state.owner_id = source.control_owner_id;
+#endif
   return state;
 }
 
@@ -108,12 +112,23 @@ Result result(const brainstem::Result &source, unsigned calls = 1) {
   return mapped;
 }
 
+Result unsupportedExternalResult() {
+  Result result;
+  result.calls = 0;
+  result.error = "external_control_unsupported";
+  result.state.reason = result.error;
+  return result;
+}
+
 }  // namespace
 
 struct Doso::Impl {
   explicit Impl(const Config &config)
-      : target(endpoint(config.host, config.port)), client(sdkConfig(config, target)),
-        external(sdkConfig(config, target)) {}
+      : target(endpoint(config.host, config.port)), client(sdkConfig(config, target))
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
+        , external(sdkConfig(config, target))
+#endif
+  {}
 
   Result remember(const brainstem::Result &source) {
     last_sdk_state = source.state;
@@ -129,13 +144,16 @@ struct Doso::Impl {
 
   std::string target;
   brainstem::Client client;
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   brainstem::ExternalControl external;
   std::string external_session;
   Clock::time_point next_external_query{};
+#endif
   brainstem::ControlState last_sdk_state;
   ControlState last_control;
   BodyState last_body;
 
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   Result rememberExternal(const brainstem::Response<brainstem::ExternalStatus> &response) {
     auto mapped = result(response.result);
     mapped.state = last_control;
@@ -155,32 +173,42 @@ struct Doso::Impl {
     last_control = mapped.state;
     return mapped;
   }
+#endif
 };
 
 Doso::Doso(const Config &config) : impl_(std::make_unique<Impl>(config)) {}
 Doso::~Doso() = default;
 
 Result Doso::refresh() {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   if (externalSelected()) return impl_->rememberExternal(impl_->external.getStatus());
+#endif
   return impl_->remember(impl_->client.refresh());
 }
 
 Result Doso::inspectControl() {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   const auto inspected = impl_->remember(impl_->client.getControlStatus().result);
   if (inspected.ok && inspected.transport_ok) impl_->last_body.observed_at = Clock::now();
   return inspected;
+#else
+  return refresh();
+#endif
 }
 
 Result Doso::move(const Velocity &velocity) {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   if (externalSelected()) {
     auto state = impl_->last_control;
     state.reason = "external_control_selected";
     return {false, true, false, state, state.reason, 0};
   }
+#endif
   return impl_->remember(impl_->client.move({velocity.vx_mps, velocity.vy_mps, velocity.yaw_rps}));
 }
 
 Result Doso::stop() noexcept {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   if (externalSelected()) {
     try {
       return impl_->rememberExternal(impl_->external.disable());
@@ -188,15 +216,18 @@ Result Doso::stop() noexcept {
       return {false, false, false, impl_->last_control, error.what(), 1};
     }
   }
+#endif
   return impl_->remember(impl_->client.stop());
 }
 
 Result Doso::act(BodyAction action) {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   if (externalSelected()) {
     auto state = impl_->last_control;
     state.reason = "external_control_selected";
     return {false, true, false, state, state.reason, 0};
   }
+#endif
   if (action == BodyAction::Recover || action == BodyAction::Damp) {
     ControlState state = impl_->last_control;
     state.ready = false;
@@ -210,16 +241,22 @@ Result Doso::act(BodyAction action) {
 }
 
 Capabilities Doso::capabilities() const noexcept {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   return {true, true, false, false, true, true};
+#else
+  return {true, true, false, false, true, false};
+#endif
 }
 
 Result Doso::motorPower(bool enabled) {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   if (externalSelected()) {
     if (!enabled) return impl_->rememberExternal(impl_->external.disable());
     auto state = impl_->last_control;
     state.reason = "external_enable_required";
     return {false, true, false, state, state.reason, 0};
   }
+#endif
   return impl_->remember(enabled ? impl_->client.enableMotors() : impl_->client.disableMotors());
 }
 
@@ -243,6 +280,7 @@ HealthState Doso::health() const {
 ProfileState Doso::readProfile() {
   ProfileState state;
   state.requires_grounded = true;
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   state.requires_disabled = true;
   const auto profile = impl_->client.getProfile();
   state.supported = profile.result.state.reason != "protocol_incompatible";
@@ -269,12 +307,37 @@ ProfileState Doso::readProfile() {
   state.available = profile.value.available;
   state.reason.clear();
   return state;
+#else
+  const auto body = impl_->client.getBodyState();
+  state.supported = false;
+  if (!body.result.ok) {
+    impl_->last_body.fresh = false;
+    state.reason = body.result.error;
+    return state;
+  }
+  impl_->last_body.fresh = true;
+  impl_->last_body.posture = posture(body.value.kind);
+  state.fresh = true;
+  state.grounded = body.value.kind == brainstem::BodyStateKind::Grounded;
+  state.reason = "profile_unsupported";
+  return state;
+#endif
 }
 
 Result Doso::switchProfile(const std::string &name) {
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
   return impl_->remember(impl_->client.switchProfile(name).result);
+#else
+  static_cast<void>(name);
+  Result result;
+  result.calls = 0;
+  result.error = "profile_unsupported";
+  result.state.reason = result.error;
+  return result;
+#endif
 }
 
+#if defined(LINGTU_BRAINSTEM_EXTERNAL_API)
 bool Doso::externalSelected() const { return !impl_->external_session.empty(); }
 
 message::ExternalState Doso::externalState() const {
@@ -319,6 +382,15 @@ Result Doso::externalFrame(const message::ExternalFrame &frame) {
   mapped.state = impl_->last_control;
   return mapped;
 }
+#else
+bool Doso::externalSelected() const { return false; }
+message::ExternalState Doso::externalState() const { return {}; }
+Result Doso::enterExternal(const std::string &) { return unsupportedExternalResult(); }
+Result Doso::enableExternal() { return unsupportedExternalResult(); }
+Result Doso::exitExternal() { return unsupportedExternalResult(); }
+Result Doso::externalHeartbeat() { return unsupportedExternalResult(); }
+Result Doso::externalFrame(const message::ExternalFrame &) { return unsupportedExternalResult(); }
+#endif
 
 AdapterDiagnostics Doso::diagnostics() const {
   return {
