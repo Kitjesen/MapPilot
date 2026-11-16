@@ -61,7 +61,8 @@ ExecutionOutput Executor::tick(const ExecutionInput &input) {
   output.pose_stage_count = pose_stages_.size();
   output.route_generation = generation;
   output.stairs = stair_step_;
-  if (!stairs_.localPathAllowed(output.local_path_map, input.mapBody.yaw)) {
+  if (!output.local_path_map.empty() &&
+      !stairs_.localPathAllowed(output.local_path_map, input.mapBody.yaw)) {
     const bool waitingForReplan = stair_replan_pending_ && !output.path_found;
     output.cmd_vel = {};
     output.near_field_stop = true;
@@ -76,7 +77,7 @@ ExecutionOutput Executor::tick(const ExecutionInput &input) {
     recovery_follower_.stopLinear();
     resetAutonomyProgress();
     output.tracking = {};
-  } else {
+  } else if (output.path_found) {
     stair_replan_pending_ = false;
   }
   const double speed = std::hypot(output.cmd_vel.vx, output.cmd_vel.vy);
