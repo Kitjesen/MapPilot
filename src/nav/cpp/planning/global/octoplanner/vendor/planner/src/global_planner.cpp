@@ -475,85 +475,106 @@ namespace global_planner
                 PointPose goal_floor = goal_point_;
                 start_floor.z -= support_height_m_;
                 goal_floor.z -= support_height_m_;
-                const auto cells = artifact_->rust_graph->query(
-                    mls::cellFromWorld(start_floor, resolution),
-                    mls::cellFromWorld(goal_floor, resolution),
-                    snap_search_radius_cells_, max_iterations_);
-                std::vector<PointPose> surface_points;
-                surface_points.reserve(cells.size());
-                for (const auto &cell : cells) {
-                    const PointPose point{
-                        (cell.x + .5) * resolution,
-                        (cell.y + .5) * resolution,
-                        (cell.z + .5) * resolution + support_height_m_,
-                        std::nullopt};
-                    if (!surface_points.empty() && surface_points.back().x == point.x &&
-                        surface_points.back().y == point.y &&
-                        surface_points.back().z == point.z) {
-                        continue;
-                    }
-                    surface_points.push_back(point);
-                }
-                if (surface_points.empty()) {
-                    throw std::runtime_error("Rust surface route has no stance cells");
-                }
                 rust_failure_kind = "geometry";
                 const auto valid = [&](const PointPose &a, const PointPose &b) {
                     return routeConnectionFree(a, b);
                 };
-                std::vector<PointPose> candidate;
-                candidate.reserve(surface_points.size() + 2);
-                candidate.push_back(start_point_);
-                for (std::size_t i = 0; i < surface_points.size(); ++i) {
-                    const auto &point = surface_points[i];
-                    if (valid(candidate.back(), point)) {
-                        candidate.push_back(point);
-                    } else {
-                        throw std::runtime_error(
-                            "Rust surface route geometry rejected at segment " +
-                            std::to_string(i));
+                const auto start_cell = mls::cellFromWorld(start_floor, resolution);
+                const auto goal_cell = mls::cellFromWorld(goal_floor, resolution);
+                std::vector<mls::SurfaceCell> blocked_cells;
+                std::vector<mls::SurfaceCell> cells;
+                std::vector<PointPose> checked;
+                for (int attempt = 0; attempt < 2; ++attempt) {
+                    cells = blocked_cells.empty()
+                        ? artifact_->rust_graph->query(start_cell, goal_cell,
+                                                       snap_search_radius_cells_, max_iterations_)
+                        : artifact_->rust_graph->queryAvoiding(
+                              start_cell, goal_cell, snap_search_radius_cells_,
+                              max_iterations_, blocked_cells);
+                    std::vector<PointPose> surface_points;
+                    std::vector<mls::SurfaceCell> surface_cells;
+                    surface_points.reserve(cells.size());
+                    surface_cells.reserve(cells.size());
+                    for (const auto &cell : cells) {
+                        const PointPose point{
+                            (cell.x + .5) * resolution,
+                            (cell.y + .5) * resolution,
+                            (cell.z + .5) * resolution + support_height_m_,
+                            std::nullopt};
+                        if (!surface_points.empty() && surface_points.back().x == point.x &&
+                            surface_points.back().y == point.y &&
+                            surface_points.back().z == point.z) continue;
+                        surface_points.push_back(point);
+                        surface_cells.push_back(cell);
                     }
-                }
-                std::size_t goal_index = candidate.size();
-                for (std::size_t i = candidate.size(); i-- > 0;) {
-                    if (valid(candidate[i], goal_point_)) {
-                        goal_index = i;
-                        break;
+                    if (surface_points.empty()) {
+                        throw std::runtime_error("Rust surface route has no stance cells");
                     }
-                }
-                PointPose resolved_goal = goal_point_;
-                if (goal_index == candidate.size()) {
-                    if (candidate.size() <= 1) {
-                        throw std::runtime_error("Rust surface route has no goal connector");
+                    std::vector<PointPose> candidate;
+                    candidate.reserve(surface_points.size() + 2);
+                    candidate.push_back(start_point_);
+                    std::optional<mls::SurfaceCell> rejected_cell;
+                    for (std::size_t i = 0; i < surface_points.size(); ++i) {
+                        const auto &point = surface_points[i];
+                        if (valid(candidate.back(), point)) candidate.push_back(point);
+                        else {
+                            rejected_cell = surface_cells[i];
+                            break;
+                        }
                     }
-                    resolved_goal = candidate.back();
-                    if (std::hypot(resolved_goal.x - goal_point_.x,
-                                   resolved_goal.y - goal_point_.y) >
-                            terminal_goal_xy_tolerance_m_ + kMetricToleranceEpsilonM ||
-                        std::abs(resolved_goal.z - goal_point_.z) >
-                            terminal_goal_z_tolerance_m_ + kMetricToleranceEpsilonM) {
-                        throw std::runtime_error("Rust surface route goal snap exceeds tolerance");
+                    if (rejected_cell) {
+                        if (attempt == 0) {
+                            blocked_cells.push_back(*rejected_cell);
+                            continue;
+                        }
+                        throw std::runtime_error("Rust surface route geometry rejected after detour");
                     }
-                } else {
-                    candidate.resize(goal_index + 1);
+                    std::size_t goal_index = candidate.size();
+                    for (std::size_t i = candidate.size(); i-- > 0;) {
+                        if (valid(candidate[i], goal_point_)) {
+                            goal_index = i;
+                            break;
+                        }
+                    }
+                    PointPose resolved_goal = goal_point_;
+                    if (goal_index == candidate.size()) {
+                        if (candidate.size() <= 1) {
+                            if (attempt == 0) {
+                                blocked_cells.push_back(surface_cells.back());
+                                continue;
+                            }
+                            throw std::runtime_error("Rust surface route has no goal connector");
+                        }
+                        resolved_goal = candidate.back();
+                        if (std::hypot(resolved_goal.x - goal_point_.x,
+                                       resolved_goal.y - goal_point_.y) >
+                                terminal_goal_xy_tolerance_m_ + kMetricToleranceEpsilonM ||
+                            std::abs(resolved_goal.z - goal_point_.z) >
+                                terminal_goal_z_tolerance_m_ + kMetricToleranceEpsilonM) {
+                            if (attempt == 0) {
+                                blocked_cells.push_back(surface_cells.back());
+                                continue;
+                            }
+                            throw std::runtime_error("Rust surface route goal snap exceeds tolerance");
+                        }
+                    } else candidate.resize(goal_index + 1);
+                    if (candidate.back().x != resolved_goal.x ||
+                        candidate.back().y != resolved_goal.y ||
+                        candidate.back().z != resolved_goal.z) candidate.push_back(resolved_goal);
+                    candidate.front().yaw = start_point_.yaw;
+                    candidate.back().yaw = goal_point_.yaw;
+                    checked = candidate;
+                    auto smoothed = smoothRoute(candidate, valid,
+                        [&](const PointPose &point) -> std::optional<double> {
+                            const auto ground = artifact_->rust_graph->height(
+                                point.x, point.y, point.z - support_height_m_,
+                                support_height_tolerance_m_, octree_->getResolution());
+                            return ground ? std::optional<double>(*ground + support_height_m_)
+                                           : std::nullopt;
+                        }, cancel_check_);
+                    if (!smoothed.empty()) checked = std::move(smoothed);
+                    break;
                 }
-                if (candidate.back().x != resolved_goal.x ||
-                    candidate.back().y != resolved_goal.y ||
-                    candidate.back().z != resolved_goal.z) {
-                    candidate.push_back(resolved_goal);
-                }
-                candidate.front().yaw = start_point_.yaw;
-                candidate.back().yaw = goal_point_.yaw;
-                auto checked = candidate;
-                auto smoothed = smoothRoute(candidate, valid,
-                    [&](const PointPose &point) -> std::optional<double> {
-                        const auto ground = artifact_->rust_graph->height(
-                            point.x, point.y, point.z - support_height_m_,
-                            support_height_tolerance_m_, octree_->getResolution());
-                        return ground ? std::optional<double>(*ground + support_height_m_)
-                                       : std::nullopt;
-                    }, cancel_check_);
-                if (!smoothed.empty()) checked = std::move(smoothed);
                 planner_results_ = std::move(checked);
                 search_info_.outcome = SearchInfo::Outcome::Found;
                 search_info_.used_surface_graph = true;
@@ -593,6 +614,7 @@ namespace global_planner
             const auto graph_finished=std::chrono::steady_clock::now();
             if (!candidate.empty()) {
                 const auto height = [&](const PointPose &point) -> std::optional<double> {
+                    if (!artifact_->rust_graph) return std::nullopt;
                     const auto ground = artifact_->rust_graph->height(
                         point.x, point.y, point.z - support_height_m_,
                         support_height_tolerance_m_, octree_->getResolution());
@@ -1696,15 +1718,15 @@ namespace global_planner
         }
         const int clearance = std::max(0, static_cast<int>(std::ceil(
             (support_height_m_ + std::max(r, body_clearance_above_m_)) / r)));
-        const auto surfaces = mls::extractSurfacesRust(
-            occupied, known_free, clearance, 1,
+        const double closing = ground_support_ && !direct_support_only_
+            ? surface_closing_radius_m_ : 0.0;
+        const LtMlsConfig rust_surface_config{
+            clearance,
+            static_cast<std::uint32_t>(std::max(0.0, std::ceil(closing / r))),
             static_cast<std::uint64_t>(std::max(0.0,
                 graph_config_.surface_max_hole_area_m2 / (r * r))),
-            graph_config_.surface_max_slope);
-        std::vector<mls::SurfaceCell> observed;
-        std::vector<mls::SurfaceCell> inferred;
-        observed = surfaces.observed;
-        inferred = surfaces.inferred;
+            static_cast<float>(graph_config_.surface_max_slope),
+            static_cast<float>(closing / r)};
         const int stride = std::max(1, static_cast<int>(std::ceil(search_resolution_m_ / r)));
         const int height_stride = max_slope_ > 0.0
             ? std::max(stride, static_cast<int>(std::ceil(1.0 / max_slope_))) : stride;
@@ -1717,8 +1739,11 @@ namespace global_planner
             static_cast<float>(std::max(0.0, max_slope_)),
             step_cells,
             height_stride};
+        // Keep source occupancy in the live artifact. Region updates can then
+        // replace occupied/free cells instead of misreading them as surfaces.
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
-            mls::PreparedArtifactHandle::createFromSurface(observed, inferred, rust_config, 1));
+            mls::PreparedArtifactHandle::create(
+                occupied, known_free, rust_surface_config, rust_config, 1));
     }
 
     // legacy: build only when Rust graph preparation is unavailable or an old
