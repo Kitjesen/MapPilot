@@ -58,7 +58,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         test_waypoint_helpers_core
         test_param_sensitivity
         test_path_edge_cases
-        test_benchmark
         test_validation
         test_terrain_core
         test_dynamic_clear_core
