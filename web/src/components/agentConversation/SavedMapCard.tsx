@@ -6,7 +6,7 @@ import styles from './CloudPreview.module.css'
 
 const Scene = lazy(() => import('../MapGalleryScene.tsx').then(module => ({ default: module.MapGalleryScene })))
 
-export function SavedMapCard({ name, epoch, autoOpen = true }: { name: string; epoch: number; autoOpen?: boolean }) {
+export function SavedMapCard({ name, epoch, autoOpen = true }: { name: string; epoch?: number; autoOpen?: boolean }) {
   const root = useRef<HTMLElement>(null)
   const scene = useRef<MapGallerySceneHandle | null>(null)
   const [visible, setVisible] = useState(false)
@@ -37,7 +37,7 @@ export function SavedMapCard({ name, epoch, autoOpen = true }: { name: string; e
   }
   return <section ref={root} className={styles.card} aria-label={`三维地图 ${name}`}>
     <header><Box size={14} /><strong>{name}</strong><span>已保存 · 只读</span></header>
-    <p className={styles.stats}><span>版本 {epoch}</span>{data && <>
+    <p className={styles.stats}>{data && <>
       <span>{data.count.toLocaleString()} / {data.total_points.toLocaleString()} 点</span>
       <span>{data.frame_id || '坐标系未记录'}</span>{data.count < data.total_points && <span>抽样预览</span>}
     </>}</p>

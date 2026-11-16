@@ -383,7 +383,7 @@ export const MapEditor = forwardRef<MapEditorHandle, Props>(function MapEditor(
       <button type="button" onClick={() => { if (isLocalMapEdit(op)) { setSelection(copyBounds(op.bounds)); setSelecting(false); onView('three') } else { setFilter(op); mapSettings?.open() } }}>
         {index + 1}. {mapEditLabel(op)}</button>
     </li>) : <li>尚无修改</li>}</ol>}
-    <p>{source.name}<br />地图版本 {source.contentEpoch} · {source.frameId}<br />已加载完整点云，修改另存为新地图。</p>
+    <p>{source.name}<br />{source.frameId}<br />已加载完整点云，修改另存为新地图。</p>
   </>
   const footer = footerVisible && <div ref={footerRef} className={styles.footerStack}>
     {error && dialog !== 'save' && <p role="alert" className={styles.error}>{error}</p>}

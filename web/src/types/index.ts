@@ -188,6 +188,28 @@ export interface HealthResponse {
   has_odom: boolean
   modules: Record<string, string>
   brainstem: Record<string, unknown>
+  issues?: Array<{
+    code: number
+    source: string
+    reason: string
+    impact: 'motion_blocking' | 'motion_hold' | 'motion_degrading' | 'diagnostic_only' | string
+    severity: 'info' | 'warning' | 'error' | string
+    message: string
+    active: boolean
+    [key: string]: unknown
+  }>
+  advisories?: Array<{
+    code: number
+    name: string
+    source: string
+    reason: string
+    impact: string
+    severity: string
+    message: string
+    operator_action?: string
+    active: boolean
+    [key: string]: unknown
+  }>
   [key: string]: unknown
 }
 
@@ -1849,7 +1871,7 @@ export interface OccupancyMapSceneLayer extends MapSceneLayer {
   origin: [number, number, number]
   yaw: number
   encoding: 'int8'
-  value_semantics: 'height_band_occupancy_not_traversability' | 'ground_relative_surface_not_traversability'
+  value_semantics: 'height_band_occupancy_not_traversability'
   scope: 'rolling_window'
   unknown_count: number
   free_count: number
@@ -1884,29 +1906,6 @@ export interface ElevationMapSceneLayer extends MapSceneLayer {
   payload_observation_sequence?: number
   payload_stamp_s?: number
   retained_for_generation?: number
-}
-
-export interface GroundDiagnosticMapSceneLayer extends MapSceneLayer {
-  id: 'maps.ground_height' | 'maps.ground_roughness' | 'maps.ground_support'
-  type: 'grid'
-  frame_id: string
-  producer_boot_id: string
-  stamp_s: number
-  generation: number
-  reset_epoch: MapResetEpoch
-  observation_sequence: number
-  live: boolean
-  grid_b64: string
-  rows: number
-  cols: number
-  resolution: number
-  origin: [number, number, number]
-  yaw: number
-  encoding: 'float32_le'
-  value_semantics: 'local_surface_fit_height_m' | 'local_surface_fit_residual_rms_m' | 'distinct_fine_xy_support_count'
-  scope: 'rolling_window'
-  valid_count: number
-  downsample_factor: 1
 }
 
 export interface MapSceneEvent {

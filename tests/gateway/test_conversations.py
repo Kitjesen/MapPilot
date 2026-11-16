@@ -302,16 +302,22 @@ def test_http_approval_is_scoped_and_rechecks_motion_safety(gateway, monkeypatch
 
 
 def test_codex_routes_preserve_login_identity_and_hide_credentials(gateway, monkeypatch, tmp_path):
-    import httpx
+    from decision.llm.codex_app_server import app_server
 
-    from decision.llm import codex
-
-    def handle(request):
-        assert request.url.path.endswith("/deviceauth/usercode")
-        return httpx.Response(200, json={"user_code": "TEST-CODE", "device_auth_id": "private-device", "interval": 5})
-
-    account = codex.CodexAccount(tmp_path / "account.json", transport=httpx.MockTransport(handle))
-    monkeypatch.setattr(codex, "account", account)
+    state = {"connected": False, "login": {"id": "login-one", "state": "pending",
+                                             "auth_url": "https://auth.openai.com/oauth/authorize?state=private",
+                                             "verification_url": "https://auth.openai.com/oauth/authorize?state=private",
+                                             "expires_at": 9999, "interval": 5}}
+    monkeypatch.setattr(app_server, "status", lambda: {"provider": "codex", "connected": state["connected"], "inference_verified": False, "auth_mode": "app_server"})
+    monkeypatch.setattr(app_server, "start_login", lambda: dict(state["login"]))
+    def poll(login_id):
+        if login_id != state["login"]["id"]:
+            from decision.llm.client import LLMError
+            raise LLMError("login_not_found")
+        return dict(state["login"])
+    monkeypatch.setattr(app_server, "poll_login", poll)
+    monkeypatch.setattr(app_server, "cancel_login", lambda login_id: {**state["login"], "state": "cancelled"})
+    monkeypatch.setattr(app_server, "disconnect", lambda: {"provider": "codex", "connected": False, "inference_verified": False, "auth_mode": "app_server"})
     path = "/api/v1/agent/connections/codex"
     response = gateway.client.get(path)
     assert response.status_code == 200 and response.json()["connected"] is False
@@ -324,3 +330,15 @@ def test_codex_routes_preserve_login_identity_and_hide_credentials(gateway, monk
     assert gateway.client.post(f"{path}/login/other/poll").status_code == 404
     assert gateway.client.delete(path).json()["connected"] is False
     assert gateway.agent._active_run is None
+
+
+def test_provider_route_reports_acp_setup_without_running_installers(gateway, monkeypatch):
+    monkeypatch.setenv("LINGTU_KILO_COMMAND", "missing-kilo-command")
+    response = gateway.client.get("/api/v1/agent/providers")
+    assert response.status_code == 200
+    kilo = next(item for item in response.json()["providers"] if item["id"] == "acp:kilo")
+    assert kilo["available"] is False
+    assert kilo["authenticated"] is None
+    assert kilo["install_command"]
+    assert kilo["login_command"]
+    assert response.headers["cache-control"] == "no-store"

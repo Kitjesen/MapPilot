@@ -11,17 +11,21 @@ import { ConversationShareCard } from './ConversationShareCard'
 import { useMapSettings } from '../hooks/useMapSettings.ts'
 import { QuestionCard } from './agentConversation/QuestionCard.tsx'
 import { PlanCard } from './agentConversation/PlanCard.tsx'
+import { DecisionInbox } from './agentConversation/DecisionInbox.tsx'
 import { ToolActivityGroup } from './agentConversation/ToolActivity.tsx'
 import { Bot, type BotState } from './agentConversation/Bot.tsx'
 import { BotStudio } from './agentConversation/BotStudio'
 import { ModelConnections } from './agentConversation/ModelConnections'
-import { readBotProfile, saveBotProfile } from '../services/botProfile.ts'
+import { FullscreenViewer } from './agentConversation/FullscreenViewer'
+import { readBotProfile, readBotRoster, saveBotProfile } from '../services/botProfile.ts'
 import { addModelMarks } from './agentConversation/modelMentions.ts'
 import { replyMarkdownBlocks } from './agentConversation/markdownStreamBlocks.ts'
 import styles from './AgentConversation.module.css'
 import { useImuMonitor } from '../hooks/useImuMonitor.ts'
 import { useSensorMonitor } from '../hooks/useSensorMonitor.ts'
 import { sensorCards } from '../services/sensors.ts'
+import { knownConversationModels } from '../services/agentConversation.ts'
+import { botActivityForTool } from './agentConversation/botPresentation.ts'
 
 import { conversationAttachmentUrl, conversationToolNames as toolNames, type ConversationMessage, type ConversationTurn } from '../services/agentConversation.ts'
 
@@ -30,6 +34,7 @@ const EMPTY_MESSAGES: ConversationMessage[] = []
 interface AgentConversationProps {
   locale: Locale
   controller: ReturnType<typeof useAgentConversation>
+  onBotChange?: (botId: string) => void
 }
 
 function InlineBusinessCard({ card }: { card: NonNullable<NonNullable<ConversationMessage['metadata']>['card']> }) {
@@ -89,10 +94,7 @@ const ReplyText = memo(function ReplyText({ id, text, failureReason, locale = 'z
       const target = event.target
       if (target instanceof HTMLImageElement && target.classList.contains('markdown-image')) setPreview(target.currentSrc || target.src)
     }}>{replyMarkdownBlocks(text).map((block, index) => <ReplyBlock key={index} text={block} />)}</div>
-    {preview && <div className={styles.imageLightbox} role="dialog" aria-label="查看图片" onClick={() => setPreview(null)}>
-      <button type="button" aria-label="关闭图片" onClick={() => setPreview(null)}><X size={20} /></button>
-      <img src={preview} alt="" onClick={event => event.stopPropagation()} />
-    </div>}
+    <FullscreenViewer open={Boolean(preview)} title="查看图片" kind="image" src={preview ?? undefined} onClose={() => setPreview(null)} />
   </>
 })
 
@@ -176,15 +178,20 @@ function ReasoningIcon({ value }: { value: string }) {
   return level >= 0 ? <EffortGlyph count={5} filled={level + 1} /> : <SlidersHorizontal size={14} aria-hidden="true" />
 }
 
-function ComposerMenu({ label, value, options, disabled, reasoning = false, permission = false, placeholder, onChange }: {
+function ComposerMenu({ label, value, options, disabled, reasoning = false, permission = false, placeholder, onChange,
+  onManage, reasoningOptions, reasoningValue, onReasoning }: {
   label: string
   value: string
-  options: { id: string; label: string; provider?: string; configured?: boolean; key_env?: string }[]
+  options: { id: string; label: string; provider?: string; configured?: boolean; key_env?: string; reasoning?: { id: string; label: string }[] }[]
   disabled: boolean
   reasoning?: boolean
   permission?: boolean
   placeholder?: string
   onChange: (value: string) => void
+  onManage?: () => void
+  reasoningOptions?: { id: string; label: string }[]
+  reasoningValue?: string
+  onReasoning?: (value: string) => void
 }) {
   const menu = useRef<HTMLDetailsElement>(null)
   const selected = options.find(option => option.id === value)
@@ -224,6 +231,20 @@ function ComposerMenu({ label, value, options, disabled, reasoning = false, perm
     </summary>
     <div className={styles.selectPanel} role="menu" aria-label={label}>
       <div className={styles.menuHeading}>{label}</div>
+      {onManage && <button type="button" className={styles.menuAction} onClick={() => {
+        onManage()
+        if (menu.current) menu.current.open = false
+      }}><SlidersHorizontal size={13} /><span>管理模型连接</span></button>}
+      {reasoningOptions && reasoningOptions.length > 1 && <>
+        <div className={styles.menuHeading}>思考深度</div>
+        {reasoningOptions.map(option => <button type="button" key={`reasoning-${option.id}`} role="menuitemradio"
+          aria-checked={option.id === reasoningValue} onClick={() => {
+            onReasoning?.(option.id)
+            if (menu.current) menu.current.open = false
+          }}>
+          <ReasoningIcon value={option.id} /><span>{option.label}</span>{option.id === reasoningValue && <Check size={13} aria-hidden="true" />}
+        </button>)}
+      </>}
       {options.map(option => <button type="button" key={option.id} role="menuitemradio" aria-checked={option.id === value}
         disabled={disabled || option.configured === false} title={option.configured === false ? option.provider === 'codex' ? '请在管理模型连接中登录' : `服务端需配置 ${option.key_env || '模型连接'}` : undefined} onClick={() => {
           onChange(option.id)
@@ -347,7 +368,7 @@ function ConversationSessions({ locale, controller: conversation, onShare }: Age
   </section>
 }
 
-export function AgentConversation({ locale, controller: conversation }: AgentConversationProps) {
+export function AgentConversation({ locale, controller: conversation, onBotChange }: AgentConversationProps) {
   const openImu = useImuMonitor()
   const openSensor = useSensorMonitor()
   const monitorSeen = useRef<Set<string> | null>(null)
@@ -368,13 +389,15 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
       catch { /* Plain tool output cannot request a panel. */ }
     }
   }, [conversation.snapshot, openImu, openSensor])
-  const [botProfile, setBotProfile] = useState(readBotProfile)
+  const [botRoster, setBotRoster] = useState(readBotRoster)
+  const [botProfile, setBotProfile] = useState(() => readBotProfile(conversation.botId))
   const [botStudioOpen, setBotStudioOpen] = useState(false)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
   const mapSettings = useMapSettings()
   const [expanded, setExpanded] = useState(false)
   const [sharingId, setSharingId] = useState<string | null>(null)
   const currentId = conversation.snapshot?.conversation_id
+  useEffect(() => { setBotProfile(readBotProfile(conversation.botId)); setBotRoster(readBotRoster()) }, [conversation.botId])
   useEffect(() => { setSharingId(null) }, [currentId])
   const [anchorId, setAnchorId] = useState<string | null>(null)
   const root = useRef<HTMLElement>(null)
@@ -469,6 +492,12 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
   const lastReplies = new Map(messages.filter(message => message.role === 'assistant').map(message => [message.turn_id, message.id]))
   const latestReply = messages.filter(message => message.role === 'assistant').at(-1)
   const approvals = conversation.snapshot?.approvals?.filter(approval => approval.state === 'pending') ?? []
+  const decisionItems = approvals.map(approval => {
+    const label = ({ run_python: '运行 Python 分析', save_map_copy: '另存地图副本' } as Record<string, string>)[approval.tool_name] ?? approval.tool_name
+    const detail = approval.tool_name === 'run_python' ? '将在 Host 执行本轮分析代码；此环境不是隔离沙箱。'
+      : Object.entries(approval.arguments).map(([name, value]) => `${name} ${typeof value === 'string' ? value : JSON.stringify(value)}`).join(' · ')
+    return { id: approval.approval_id, title: `是否${label}？`, detail, primary: '允许执行', secondary: '拒绝' }
+  })
   const initialLoading = !conversation.snapshot && conversation.loading
   const archived = conversation.snapshot?.metadata?.archived === true
   const showHistory = !conversation.sessionListOpen && conversation.open && (messages.length > 0 || turns.length > 0 || conversation.active || initialLoading || approvals.length > 0 || archived)
@@ -486,44 +515,71 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
   const runningTurn = turns.find(turn => turn.state === 'running')
   const currentTools = runningTurn ? messages.filter(message => message.role === 'tool' && message.turn_id === runningTurn.turn_id) : []
   const currentTool = currentTools.findLast(message => message.metadata?.status === 'running') ?? currentTools.at(-1)
+  const currentToolName = currentTool?.kind === 'tool_start'
+    ? (() => { try { const parsed = JSON.parse(currentTool.text); return typeof parsed.tool === 'string' ? parsed.tool : currentTool.kind } catch { return currentTool.kind } })()
+    : currentTool?.kind
   const toolRunning = Boolean(currentTool && (currentTool.metadata?.status === 'running'
     || currentTool.kind === 'tool_start' && currentTool.metadata?.status == null))
   const currentReply = runningTurn ? messages.filter(message => message.role === 'assistant' && message.turn_id === runningTurn.turn_id).at(-1) : undefined
   const writingReply = currentReply?.metadata?.status === 'streaming'
   const activeTurn = Boolean(runningTurn || conversation.active)
-  let workingLabel = text('Preparing a reply', '正在准备回复')
+  let workingLabel = text('Thinking', '思考中')
   if (toolRunning) {
-    workingLabel = text('Running a tool', '正在调用工具')
+    workingLabel = text('Working', '工作中')
     if (currentTool?.kind === 'tool_start') {
-      try { const name = JSON.parse(currentTool.text).tool; if (typeof name === 'string') workingLabel = `${text('Running', '正在调用')} · ${toolNames[name] ?? name}` }
+      try { const name = JSON.parse(currentTool.text).tool; if (typeof name === 'string') workingLabel = `${text('Working', '工作中')} · ${toolNames[name] ?? name}` }
       catch { /* A legacy start can omit a parseable tool name. */ }
-    } else if (currentTool?.kind) workingLabel = `${text('Running', '正在调用')} · ${toolNames[currentTool.kind] ?? currentTool.kind}`
-  } else if (writingReply) workingLabel = text('Writing a reply', '正在回复')
-  else if (currentTool) workingLabel = text('Processing tool results', '正在处理工具结果')
+    } else if (currentTool?.kind) workingLabel = `${text('Working', '工作中')} · ${toolNames[currentTool.kind] ?? currentTool.kind}`
+  } else if (writingReply) workingLabel = text('Replying', '回复中')
+  else if (currentTool) workingLabel = text('整理结果', '整理结果')
   const latestTurn = turns.at(-1)
-  const workStatus = approvals.length ? `${text('Awaiting approval', '等待确认')} · ${toolNames[approvals[0].tool_name] ?? approvals[0].tool_name}`
-    : conversation.optionsLoading ? text('Connecting', '正在连接')
-      : !conversation.options || conversation.optionsError ? text('Chat is unavailable', '对话暂不可用')
-        : conversation.error ? text('Connection interrupted', '连接异常，请重试')
-          : conversation.uploading ? text('Uploading attachments', '正在上传附件')
-            : conversation.sending ? text('Sending message', '正在发送')
-              : initialLoading ? text('Loading conversation', '正在读取会话')
-                : conversation.sessionBusy ? text('Updating conversation', '正在处理会话')
+  const workStatus = approvals.length ? text('Waiting for confirmation', '等待确认')
+    : conversation.optionsLoading ? text('Connecting', '连接中')
+      : !conversation.options || conversation.optionsError ? text('Model unavailable', '模型未连接')
+        : conversation.error ? text('Connection error', '连接异常')
+          : conversation.uploading ? text('Uploading', '上传中')
+            : conversation.sending ? text('Sending', '发送中')
+              : initialLoading ? text('Loading conversation', '读取会话')
+                : conversation.sessionBusy ? text('Updating conversation', '更新会话')
                   : activeTurn ? workingLabel
-                    : latestTurn?.state === 'failed' ? text('This turn failed', '本轮未完成')
-                      : latestTurn?.state === 'interrupted' ? text('This turn was interrupted', '本轮已中断')
-                        : latestTurn?.state === 'cancelled' ? text('This turn was cancelled', '本轮已取消') : ''
+                    : latestTurn?.state === 'failed' ? text('Incomplete', '未完成')
+                      : latestTurn?.state === 'interrupted' ? text('Interrupted', '已中断')
+                        : latestTurn?.state === 'cancelled' ? text('Cancelled', '已取消') : ''
   const botState: BotState = approvals.length ? 'waiting' : conversation.optionsLoading ? 'processing'
     : !conversation.options ? 'unavailable' : conversation.error || conversation.optionsError ? 'error'
       : conversation.uploading || conversation.sending || initialLoading || conversation.sessionBusy ? 'processing'
         : activeTurn ? toolRunning ? 'working' : writingReply ? 'writing' : 'processing'
           : latestTurn?.state === 'failed' ? 'error' : latestTurn?.state === 'completed' ? 'done' : 'idle'
-  const botLabel = workStatus || (botState === 'processing' ? text('Processing', '处理中')
-    : botState === 'working' ? text('Running a tool', '正在调用工具') : botState === 'writing' ? text('Writing a reply', '正在回复')
+  const botActivity = approvals.length ? 'waiting'
+    : conversation.uploading ? 'uploading'
+      : conversation.sending ? 'sending'
+        : writingReply ? 'writing'
+          : toolRunning ? botActivityForTool(currentToolName) : activeTurn ? 'thinking' : undefined
+  const botLabel = workStatus || (botState === 'processing' ? text('Thinking', '思考中')
+    : botState === 'working' ? text('Working', '工作中') : botState === 'writing' ? text('Replying', '回复中')
       : botState === 'waiting' ? text('Waiting for you', '等待你的确认')
-      : botState === 'unavailable' ? text('Chat is unavailable', '对话暂不可用')
-        : botState === 'error' ? text('Unable to continue', '暂时无法继续')
-        : botState === 'done' ? text('Ready to continue', '可以继续聊') : botProfile.name)
+      : botState === 'unavailable' ? text('Model unavailable', '模型未连接')
+        : botState === 'error' ? text('Connection error', '连接异常')
+        : botState === 'done' ? text('Completed', '已完成') : botProfile.name)
+  const botHeaderDetails = [botProfile.role ?? text('General assistant', '通用助手'), botState === 'idle' ? text('Ready', '就绪') : botLabel,
+    ...(botProfile.capabilities ?? [])].join(' · ')
+  const botSwitcher = <details className={styles.botSwitcher}>
+    <summary aria-label={text('Switch Bot', '切换 Bot')} title={text('Switch Bot', '切换 Bot')}>
+      <Bot state={botState} shape={botProfile.shape} color={botProfile.color} size={32} activity={botActivity} />
+      <span>{botProfile.name}</span><ChevronDown size={12} aria-hidden="true" />
+    </summary>
+    <div className={styles.botSwitcherPanel} role="menu" aria-label={text('Bot roster', 'Bot 列表')}>
+      {botRoster.map(profile => <button key={profile.id} type="button" role="menuitemradio" aria-checked={profile.id === conversation.botId}
+        onClick={event => { onBotChange?.(profile.id); event.currentTarget.closest('details')?.removeAttribute('open') }}>
+        <Bot state={profile.id === conversation.botId ? botState : 'idle'} shape={profile.shape} color={profile.color} size={32} />
+        <span><strong>{profile.name}</strong><small>{profile.role ?? text('General assistant', '通用助手')}</small></span>
+        {profile.id === conversation.botId && <Check size={14} aria-hidden="true" />}
+      </button>)}
+      <button type="button" className={styles.botSwitcherEdit} role="menuitem" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setBotStudioOpen(true) }}>
+        <SlidersHorizontal size={14} aria-hidden="true" /><span>{text('Edit current Bot', '编辑当前 Bot')}</span>
+      </button>
+    </div>
+  </details>
   useMenuDismiss(root)
   const fileSize = (size: number) => size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`
   useLayoutEffect(() => {
@@ -604,9 +660,7 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
           aria-label={text('Conversation history', '会话历史')} onClick={() => { conversation.setOpen(true); conversation.setSessionListOpen(true) }}>
           <History size={16} aria-hidden="true" />
         </button>
-        <button type="button" className={styles.botEntry} onClick={() => setBotStudioOpen(true)} aria-label="打开 Bot 形象与角色" title={`${botProfile.name} · 形象、角色与权限`}>
-          <Bot state={botState} shape={botProfile.shape} color={botProfile.color} size={botProfile.size} />
-        </button>
+        {botSwitcher}
       </div>}
       {showHistory && (
         <div className={styles.history}>
@@ -616,9 +670,8 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
               onClick={() => conversation.setSessionListOpen(!conversation.sessionListOpen)}>
               <History size={16} aria-hidden="true" /><span>{conversation.snapshot?.metadata?.title || text('Conversation', '对话')}</span>
               <ChevronDown size={13} aria-hidden="true" /></button>
-            <button type="button" className={styles.botEntry} onClick={() => setBotStudioOpen(true)} aria-label="打开 Bot 形象与角色" title={`${botProfile.name} · 形象、角色与权限`}>
-              <Bot state={botState} shape={botProfile.shape} color={botProfile.color} size={botProfile.size} />
-            </button>
+            {botSwitcher}
+            <span className={styles.botCapability} title={botHeaderDetails}>{botHeaderDetails}</span>
             <button type="button" className={styles.iconButton} aria-label={text('Share conversation', '分享对话')}
               title={text('Preview and share this conversation', '预览并分享当前会话')}
               disabled={!currentId || initialLoading || Boolean(conversation.sessionBusy || conversation.shareBusy || conversation.sending || conversation.uploading || conversation.approvalBusy)}
@@ -661,6 +714,7 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
             }}
             hidden={!messages.length && !turns.length && !conversation.active && !initialLoading && !approvals.length}>
             {initialLoading && <p className={styles.empty}>{text('Loading…', '读取中…')}</p>}
+            {decisionItems.length > 0 && <DecisionInbox decisions={decisionItems} onDecide={(decision, answer) => { void conversation.decideApproval(decision.id, answer === 'primary') }} />}
             {conversation.snapshot?.history_cursor != null && <button type="button" className={styles.iconButton}
               disabled={conversation.historyLoading} onClick={async () => {
                 followLatest.current = false
@@ -694,7 +748,7 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
                 : message.role === 'assistant'
                 ? <ReplyText id={message.id} text={message.text} locale={locale}
                     failureReason={message.kind === 'failed' ? turnsById.get(message.turn_id)?.failure_reason || message.text : undefined} />
-                : message.role === 'tool' ? <ToolActivityGroup messages={group} onSelectModel={conversation.setModel} now={conversation.snapshot?.server_time} active={turnsById.get(message.turn_id)?.state === 'running'}
+                : message.role === 'tool' ? <ToolActivityGroup messages={group} onSelectModel={conversation.setModel} onOpenConnections={() => setConnectionsOpen(true)} now={conversation.snapshot?.server_time} active={turnsById.get(message.turn_id)?.state === 'running'}
                   runningId={conversation.active && !conversation.error ? currentTool?.id : undefined}
                   awaiting={approvals.filter(approval => approval.turn_id === message.turn_id).map(approval => approval.tool_name)} /> : <>
                     {(turnsById.get(message.turn_id)?.reply_to_message_id || turnsById.get(message.turn_id)?.reply_quote) && <ReplyQuote locale={locale}
@@ -802,8 +856,7 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
         {conversation.includeMapContext ? <>
           <div className={styles.contextChip}>
             <details><summary><MapIcon size={13} aria-hidden="true" /><span>{conversation.context.map_id}</span></summary>
-              <div className={styles.contextDetails}><strong>{text('Map', '地图')} · {conversation.context.map_id}</strong>
-                <span>{text('Content version', '内容版本')} · {conversation.context.content_epoch}</span></div>
+              <div className={styles.contextDetails}><strong>{text('Map', '地图')} · {conversation.context.map_id}</strong></div>
             </details>
             <button type="button" disabled={Boolean(conversation.pending) || !conversation.editable}
               aria-label={text('Remove map context', '移除地图上下文')} onClick={() => conversation.setIncludeMapContext(false)}><X size={12} aria-hidden="true" /></button>
@@ -868,15 +921,12 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
             { id: 'full_access', label: 'Full access' },
           ]} disabled={controlsDisabled} permission onChange={value => conversation.setPermissionMode(value as typeof conversation.permissionMode)} />
           {conversation.uploading && <span className={styles.uploading} role="status">{text('Uploading…', '上传中…')}</span>}
-          <button type="button" className={styles.iconButton} aria-label="管理模型连接" title="管理模型连接"
-            onClick={() => setConnectionsOpen(true)}><SlidersHorizontal size={15} /></button>
-          {conversation.options && <div className={styles.modelControls}>
-            <ComposerMenu label={text('Model', '模型')} value={conversation.model} options={conversation.options?.models ?? []}
+          <div className={styles.modelControls}>
+            <ComposerMenu label={text('Model', '模型')} value={conversation.model} options={conversation.options?.models ?? knownConversationModels ?? []}
               disabled={controlsDisabled} placeholder={conversation.optionsLoading ? text('Connecting…', '连接中…') : text('Disconnected', '未连接')}
-              onChange={conversation.setModel} />
-            <ComposerMenu label={text('Thinking depth', '思考深度')} value={conversation.reasoning} options={model?.reasoning ?? []}
-              disabled={controlsDisabled || (model?.reasoning.length ?? 0) < 2} reasoning onChange={conversation.setReasoning} />
-          </div>}
+              onChange={conversation.setModel} onManage={() => setConnectionsOpen(true)}
+              reasoningOptions={model?.reasoning} reasoningValue={conversation.reasoning} onReasoning={conversation.setReasoning} />
+          </div>
           <button type="submit" className={styles.sendButton} disabled={!conversation.options || model?.configured === false || conversation.sending || conversation.uploading || archived || Boolean(conversation.sessionBusy)
             || (!conversation.draft.trim() && !conversation.attachments.length && !conversation.pending)}
             aria-label={conversation.pending ? text('Retry original message', '重试原消息') : conversation.active ? text('Queue message', '加入待执行') : text('Send message', '发送消息')}>
@@ -895,6 +945,7 @@ export function AgentConversation({ locale, controller: conversation }: AgentCon
         onClose={() => setBotStudioOpen(false)} onSave={(profile, permission) => {
           const saved = saveBotProfile(profile)
           setBotProfile(saved)
+          setBotRoster(readBotRoster())
           if (conversation.options && permission !== conversation.permissionMode) conversation.setPermissionMode(permission)
           return true
         }} />}

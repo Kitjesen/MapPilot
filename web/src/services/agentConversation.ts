@@ -2,6 +2,8 @@ import { dashboardFetch } from './observationMode.ts'
 
 export const CONVERSATION_PERMISSION_MODES = ['read_only', 'default', 'full_access'] as const
 export type ConversationPermission = typeof CONVERSATION_PERMISSION_MODES[number]
+export const CONVERSATION_ACTIVITY_STATES = ['started', 'running', 'awaiting', 'completed', 'failed', 'cancelled'] as const
+export type ConversationActivityState = typeof CONVERSATION_ACTIVITY_STATES[number]
 
 export function isConversationPermission(value: unknown): value is ConversationPermission {
   return CONVERSATION_PERMISSION_MODES.some(mode => mode === value)
@@ -41,6 +43,22 @@ export interface ConversationOptions {
   models: Array<{ id: string; label: string; provider?: string; configured?: boolean; attachment_accept?: string; key_env?: string; reasoning: Array<{ id: string; label: string }>; image_input: boolean }>
   attachments: { accept: string; max_files: number; max_file_bytes: number }
 }
+export const knownConversationModels: ConversationOptions['models'] = [
+  { id: 'codex:gpt-6-astra', label: 'GPT-6 Astra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'codex:gpt-6.1-sol', label: 'GPT-6.1 Sol · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'codex:gpt-6.1-terra', label: 'GPT-6.1 Terra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'codex:gpt-6-luna', label: 'GPT-6 Luna · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', configured: false, key_env: 'OPENAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'qwen-plus', label: 'Qwen Plus', provider: 'qwen', configured: false, key_env: 'DASHSCOPE_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'off', label: '快速' }, { id: 'on', label: '深度思考' }], image_input: false },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'claude', configured: false, key_env: 'ANTHROPIC_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'kimi-k3', label: 'Kimi K3', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'high', label: '高' }], image_input: true },
+  { id: 'grok-4.7', label: 'Grok 4.7 · xAI', provider: 'grok', configured: false, key_env: 'XAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:grok', label: 'Grok Build · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:kilo', label: 'Kilo Code · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:kiro', label: 'Kiro CLI · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:opencode', label: 'OpenCode · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:registry', label: 'ACP Registry Agent', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+]
 
 export interface ConversationPlan {
   title: string
@@ -77,7 +95,10 @@ export interface ConversationMessage {
   attachments?: ConversationAttachment[]
   created_at?: number | null
   metadata?: {
-    tool_call_id?: string; display_name?: string; status?: string; started_at?: number; duration_ms?: number; choices?: string[]
+    tool_call_id?: string; display_name?: string; status?: string; activity_state?: ConversationActivityState
+    activity_type?: 'model' | 'tool' | 'navigation' | 'tracking' | 'inspection' | 'other'
+    child_task_id?: string; child_state?: ConversationActivityState
+    started_at?: number; duration_ms?: number; choices?: string[]
     card?: { type?: string; title?: string; subtitle?: string; image_url?: string; price?: string; detail?: string; actions?: Array<{ label: string; href: string }> }
     collaboration?: { name: string; status?: string; summary?: string; href?: string }
     plan?: ConversationPlan
@@ -108,6 +129,7 @@ export interface ConversationMetadata {
   created_at: number
   updated_at: number
   archived: boolean
+  bot_id?: string
   forked_from?: { conversation_id: string; message_id: string; title: string; seq: number }
 }
 
@@ -129,6 +151,7 @@ export interface ConversationShare {
 export interface SharedConversationSnapshot {
   title: string
   created_at: number
+  bot_id?: string
   messages: Array<{ role: 'user' | 'assistant'; text: string; seq: number }>
 }
 
@@ -138,6 +161,7 @@ function isConversationMetadata(value: unknown): value is ConversationMetadata {
   const source = item.forked_from
   return typeof item.conversation_id === 'string' && typeof item.title === 'string'
     && Number.isFinite(item.created_at) && Number.isFinite(item.updated_at) && typeof item.archived === 'boolean'
+    && (item.bot_id === undefined || typeof item.bot_id === 'string' && Boolean(item.bot_id))
     && (source === undefined || Boolean(source) && typeof source === 'object'
       && typeof source.conversation_id === 'string' && Boolean(source.conversation_id)
       && typeof source.message_id === 'string' && Boolean(source.message_id) && typeof source.title === 'string'
@@ -272,8 +296,8 @@ export function conversationAttachmentUrl(conversationId: string, attachmentId: 
   return `${path}/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`
 }
 
-export async function createConversation(): Promise<string> {
-  const data = await request(path, {})
+export async function createConversation(botId = 'lingtu-default'): Promise<string> {
+  const data = await request(`${path}?bot_id=${encodeURIComponent(botId)}`, {})
   if (typeof data.conversation_id !== 'string' || !data.conversation_id) throw new Error('会话服务没有返回会话 ID。')
   return data.conversation_id
 }
@@ -287,19 +311,21 @@ export async function forkConversation(id: string, messageId: string): Promise<C
   return data
 }
 
-export async function listConversations(archived = false): Promise<ConversationMetadata[]> {
-  const data = await request(`${path}?archived=${archived}`)
+export async function listConversations(archived = false, botId?: string): Promise<ConversationMetadata[]> {
+  const botQuery = botId ? `&bot_id=${encodeURIComponent(botId)}` : ''
+  const data = await request(`${path}?archived=${archived}${botQuery}`)
   if (!Array.isArray(data.conversations) || !data.conversations.every(isConversationMetadata)) {
     throw new Error('会话列表格式无效，请重试。')
   }
   return data.conversations
 }
 
-export async function searchConversations(query: string, archived = false): Promise<ConversationSearchResult[]> {
+export async function searchConversations(query: string, archived = false, botId?: string): Promise<ConversationSearchResult[]> {
   const q = query.trim()
   if (!q) return []
   if (q.length > 200) throw new Error('搜索词最多 200 个字符。')
-  const data = await request(`${path}/search?q=${encodeURIComponent(q)}&archived=${archived}`)
+  const botQuery = botId ? `&bot_id=${encodeURIComponent(botId)}` : ''
+  const data = await request(`${path}/search?q=${encodeURIComponent(q)}&archived=${archived}${botQuery}`)
   if (!Array.isArray(data.results) || data.results.length > 30 || data.results.some(item => !item
     || !['conversation_id', 'title', 'message_id', 'snippet'].every(key => typeof item[key] === 'string')
     || !item.conversation_id || !item.message_id || !Number.isInteger(item.seq) || item.seq < 1
@@ -341,6 +367,7 @@ export async function deleteConversationShare(id: string): Promise<void> {
 export async function fetchSharedConversation(token: string): Promise<SharedConversationSnapshot> {
   const data = await request(`/api/v1/agent/shares/${encodeURIComponent(token)}`)
   if (typeof data.title !== 'string' || !Number.isFinite(data.created_at) || !Array.isArray(data.messages)
+    || (data.bot_id != null && (typeof data.bot_id !== 'string' || !data.bot_id))
     || data.messages.some(item => !item || !['user', 'assistant'].includes(item.role)
       || typeof item.text !== 'string' || !Number.isInteger(item.seq))) throw new Error('分享内容格式无效。')
   return data as unknown as SharedConversationSnapshot
@@ -434,6 +461,14 @@ export const conversationToolNames: Record<string, string> = {
   remember_preference: '记住偏好',
   update_preference: '修改偏好',
   forget_preference: '忘记偏好',
+  read_robot_memory: '读取机器人记忆',
+  remember_robot_memory: '记住机器人信息',
+  update_robot_memory: '修改机器人记忆',
+  forget_robot_memory: '忘记机器人记忆',
+  read_bot_memory: '读取 Bot 记忆',
+  remember_bot_memory: '记住 Bot 信息',
+  update_bot_memory: '修改 Bot 记忆',
+  forget_bot_memory: '忘记 Bot 记忆',
   skill_view: '读取技能',
   navigate_to: '前往目标位置', navigate_to_object: '前往目标物体', navigate_to_deg: '转向目标方向',
   find_object: '查找物体', detect_object: '识别物体', query_memory: '查询记忆', ask_user: '补充信息', done: '提交结果',
@@ -441,4 +476,5 @@ export const conversationToolNames: Record<string, string> = {
   find_inspection_points: '查找巡检点', preview_map_edits: '预览点云编辑',
   save_map_copy: '另存地图', set_navigation_region: '保存导航区域',
   save_inspection_point: '保存巡检点', get_agent_status: '查询任务状态',
+  follow_person: '跟随人员', cancel_agent_task: '取消当前任务',
 }

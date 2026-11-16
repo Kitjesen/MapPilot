@@ -2,9 +2,27 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Copy, ExternalLink, Link, LoaderCircle, X } from 'lucide-react'
 import { ModalShell } from '../Modal'
 import { cancelCodexLogin, disconnectCodex, getCodexConnection, pollCodexLogin, startCodexLogin,
-  type CodexConnection, type CodexLogin } from '../../services/modelConnections.ts'
+  getAcpProviders, type AcpProviderStatus, type CodexConnection, type CodexLogin } from '../../services/modelConnections.ts'
 import type { ConversationOptions } from '../../services/agentConversation.ts'
 import styles from './ModelConnections.module.css'
+
+const knownConversationModels: ConversationOptions['models'] = [
+  { id: 'codex:gpt-6-astra', label: 'GPT-6 Astra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'codex:gpt-6.1-sol', label: 'GPT-6.1 Sol · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'codex:gpt-6.1-terra', label: 'GPT-6.1 Terra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'codex:gpt-6-luna', label: 'GPT-6 Luna · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', configured: false, key_env: 'OPENAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'qwen-plus', label: 'Qwen Plus', provider: 'qwen', configured: false, key_env: 'DASHSCOPE_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'claude', configured: false, key_env: 'ANTHROPIC_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'kimi-k3', label: 'Kimi K3', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
+  { id: 'grok-4.7', label: 'Grok 4.7 · xAI', provider: 'grok', configured: false, key_env: 'XAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:grok', label: 'Grok Build · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:kilo', label: 'Kilo Code · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:kiro', label: 'Kiro CLI · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:opencode', label: 'OpenCode · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  { id: 'acp:registry', label: 'ACP Registry Agent', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+]
+
 
 export function ModelConnections({ options, onClose, onChanged }: {
   options?: ConversationOptions | null; onClose(): void; onChanged(): void
@@ -13,9 +31,10 @@ export function ModelConnections({ options, onClose, onChanged }: {
   const [login, setLogin] = useState<CodexLogin | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState<'code' | 'link' | ''>('')
+  const [copied, setCopied] = useState<'code' | 'link' | 'command' | ''>('')
   const [copyError, setCopyError] = useState('')
   const [provider, setProvider] = useState('codex')
+  const [acpProviders, setAcpProviders] = useState<AcpProviderStatus[]>([])
   const changed = useRef(onChanged)
   useEffect(() => { changed.current = onChanged }, [onChanged])
   useEffect(() => {
@@ -27,6 +46,11 @@ export function ModelConnections({ options, onClose, onChanged }: {
     let active = true
     getCodexConnection().then(value => { if (active) setAccount(value) })
       .catch(reason => { if (active) setError(String(reason.message ?? reason)) })
+    return () => { active = false }
+  }, [])
+  useEffect(() => {
+    let active = true
+    getAcpProviders().then(value => { if (active) setAcpProviders(value) }).catch(() => undefined)
     return () => { active = false }
   }, [])
   useEffect(() => {
@@ -54,7 +78,7 @@ export function ModelConnections({ options, onClose, onChanged }: {
     finally { setBusy(false) }
   }
   const pending = login?.state === 'pending'
-  async function copy(value: string, kind: 'code' | 'link') {
+  async function copy(value: string, kind: 'code' | 'link' | 'command') {
     setCopyError('')
     try { await navigator.clipboard.writeText(value); setCopied(kind) }
     catch { setCopyError('浏览器未允许复制，请选中下方的链接或验证码手动复制。') }
@@ -65,12 +89,18 @@ export function ModelConnections({ options, onClose, onChanged }: {
       onClose()
     })
   }
-  const providers = ['codex', ...new Set(options?.models.filter(model => model.provider && model.provider !== 'codex').map(model => model.provider!) ?? [])]
-  const labels: Record<string, string> = { codex: 'Codex', openai: 'OpenAI', moonshot: 'Kimi', claude: 'Claude', qwen: 'Qwen' }
-  const icons: Record<string, string> = { codex: 'openai.svg', openai: 'openai.svg', moonshot: 'moonshot.ico', claude: 'anthropic.png', qwen: 'qwen.png' }
-  const models = options?.models.filter(model => model.provider === provider) ?? []
-  const ready = models.some(model => model.configured !== false)
-  return <ModalShell open title="模型连接" onClose={close} className={styles.dialog}
+  const providerOrder = ['moonshot', 'claude', 'openai', 'qwen', 'grok', 'acp']
+  const providers = ['codex', ...new Set([...(options?.models.map(model => model.provider).filter((id): id is string => Boolean(id)) ?? []), ...providerOrder])]
+  const labels: Record<string, string> = { codex: 'Codex', openai: 'OpenAI', moonshot: 'Kimi', claude: 'Claude', qwen: 'Qwen', grok: 'Grok · xAI', acp: '外部 Agent' }
+  const icons: Record<string, string> = { codex: 'openai.svg', openai: 'openai.svg', moonshot: 'moonshot.ico', claude: 'anthropic.png', qwen: 'qwen.png', grok: 'grok.ico' }
+  const models = (options?.models ?? knownConversationModels).filter(model => model.provider === provider)
+  const ready = models.some(model => model.configured === true)
+  const acpCommandEnv: Record<string, string> = {
+    'acp:grok': 'LINGTU_ACP_COMMAND', 'acp:kilo': 'LINGTU_KILO_COMMAND',
+    'acp:kiro': 'LINGTU_KIRO_COMMAND', 'acp:opencode': 'LINGTU_OPENCODE_COMMAND',
+    'acp:registry': 'LINGTU_ACP_REGISTRY_COMMAND',
+  }
+  return <ModalShell open title="选择模型厂商" onClose={close} className={styles.dialog}
     headerAction={<button type="button" data-modal-cancel disabled={busy} className={styles.close} aria-label="关闭模型连接" onClick={close}><X size={17} /></button>}>
     <div className={styles.tabs} role="tablist" aria-label="模型提供商" onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -81,12 +111,16 @@ export function ModelConnections({ options, onClose, onChanged }: {
       setProvider(providers[next])
       event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
     }}>
-      {providers.map(id => <button key={id} id={`connection-tab-${id}`} role="tab" type="button"
+      {providers.map(id => {
+        const providerModels = (options?.models ?? knownConversationModels).filter(model => model.provider === id)
+        const providerReady = providerModels.some(model => model.configured === true)
+        return <button key={id} id={`connection-tab-${id}`} role="tab" type="button"
         aria-selected={provider === id} aria-controls="model-connection-panel" tabIndex={provider === id ? 0 : -1}
         onClick={() => setProvider(id)}>
         {icons[id] && <img src={`/assets/providers/${icons[id]}`} width={15} height={15} alt="" />}
-        <span>{labels[id] ?? id}</span>{id === 'codex' && pending && <i className={styles.tabPending} aria-label="正在等待授权" />}
-      </button>)}
+        <span>{labels[id] ?? id}<small>{providerReady ? '已配置' : '待连接'}</small></span>{id === 'codex' && pending && <i className={styles.tabPending} aria-label="正在等待授权" />}
+      </button>
+      })}
     </div>
     <section key={provider} id="model-connection-panel" className={styles.panel} role="tabpanel" aria-labelledby={`connection-tab-${provider}`}>
       {provider === 'codex' ? <>
@@ -95,17 +129,18 @@ export function ModelConnections({ options, onClose, onChanged }: {
           <span className={styles.status} data-ready={account?.connected}>{account?.connected ? '已授权' : pending ? '等待授权' : account ? '未连接' : '读取中…'}</span>
         </div>
         {pending ? <>
-          <div className={styles.code}>
+          {login.user_code && <div className={styles.code}>
             <span>验证码</span><code>{login.user_code}</code>
-            <button type="button" aria-label="复制验证码" title="复制验证码" onClick={() => void copy(login.user_code, 'code')}>{copied === 'code' ? <Check size={15} /> : <Copy size={15} />}</button>
-          </div>
+            <button type="button" aria-label="复制验证码" title="复制验证码" onClick={() => void copy(login.user_code!, 'code')}>{copied === 'code' ? <Check size={15} /> : <Copy size={15} />}</button>
+          </div>}
+          {!login.user_code && <div className={styles.code}><span>官方授权</span><a href={login.auth_url || login.verification_url} target="_blank" rel="noreferrer">打开授权页 <ExternalLink size={13} /></a></div>}
           <div className={styles.caption}><span><LoaderCircle size={11} />等待官方授权</span><span>{new Date(login.expires_at * 1000).toLocaleTimeString()} 前有效</span></div>
           <div className={styles.actions}>
             <button className={styles.cancel} disabled={busy} onClick={() => void action(async () => setLogin(await cancelCodexLogin(login.id)))}>取消</button>
-            <button type="button" aria-label="复制登录链接" onClick={() => void copy(login.verification_url, 'link')}>{copied === 'link' ? <Check size={13} /> : <Link size={13} />}{copied === 'link' ? '已复制' : '复制链接'}</button>
-            <a className={styles.primary} href={login.verification_url} target="_blank" rel="noreferrer">前往登录 <ExternalLink size={13} /></a>
+            <button type="button" aria-label="复制登录链接" onClick={() => void copy(login.auth_url || login.verification_url, 'link')}>{copied === 'link' ? <Check size={13} /> : <Link size={13} />}{copied === 'link' ? '已复制' : '复制链接'}</button>
+            <a className={styles.primary} href={login.auth_url || login.verification_url} target="_blank" rel="noreferrer">前往登录 <ExternalLink size={13} /></a>
           </div>
-          <details className={styles.help}><summary>无法打开？</summary><p>复制链接，在常用浏览器中打开，输入验证码。</p><code>{login.verification_url}</code></details>
+          <details className={styles.help}><summary>无法打开？</summary><p>复制链接，在常用浏览器中打开，完成官方登录。</p><p>如果官方页面提示需要启用 device code sign-in，请先到 ChatGPT 的 Security Settings 开启 Codex 设备码登录，再重新开始。</p><code>{login.auth_url || login.verification_url}</code></details>
           <span className={styles.srOnly} role="status">{copied === 'link' ? '登录链接已复制' : copied === 'code' ? '验证码已复制' : ''}</span>
           {copyError && <p className={styles.error} role="alert">{copyError}</p>}
         </> : <>
@@ -113,7 +148,7 @@ export function ModelConnections({ options, onClose, onChanged }: {
           <div className={styles.actions}>
             {account?.connected ? <button disabled={busy} onClick={() => void action(async () => {
               setAccount(await disconnectCodex()); setLogin(null); changed.current()
-            })}>断开连接</button> : <button className={styles.primary} disabled={busy || !account} onClick={() => void action(async () => {
+            })}>断开连接</button> : <button className={styles.primary} disabled={busy} onClick={() => void action(async () => {
               setCopied(''); setCopyError(''); setLogin(await startCodexLogin())
             })}>{busy ? '处理中…' : '登录'}</button>}
           </div>
@@ -121,10 +156,28 @@ export function ModelConnections({ options, onClose, onChanged }: {
         {login && !pending && <p className={styles.notice} role="status">{{ approved: '授权已保存，可回到对话选择 Codex。', expired: '验证码已过期，请重新登录。', cancelled: '已取消登录。', failed: '授权未完成，请重新登录。' }[login.state as Exclude<CodexLogin['state'], 'pending'>]}</p>}
         {error && <div className={styles.error} role="alert">{error}<button onClick={() => void action(async () => { setAccount(await getCodexConnection()) })}>重试</button></div>}
       </> : <>
-        <div className={styles.summary}><strong>{labels[provider] ?? provider} API</strong><span className={styles.status} data-ready={ready}>{ready ? '已配置' : '未配置'}</span></div>
-        <p className={styles.description}>{ready ? '可在对话中选择模型；可用性以实际请求为准。' : '请在 Host 服务端配置 API Key。'}</p>
-        {!ready && <code className={styles.envKey}>{models[0]?.key_env || 'API Key'}</code>}
-        <details className={styles.help}><summary>查看模型 · {models.length}</summary><ul>{models.map(model => <li key={model.id}>{model.label}</li>)}</ul></details>
+        <div className={styles.summary}><strong>{provider === 'acp' ? '本地 ACP Agent' : `${labels[provider] ?? provider} API`}</strong><span className={styles.status} data-ready={ready}>{ready ? '已配置' : '未配置'}</span></div>
+        <p className={styles.description}>{ready ? '可在对话中选择模型；可用性以实际请求为准。' : provider === 'acp' ? '安装后由 Agent 自己管理登录，LingTu 只负责连接 ACP。' : '请在 Host 服务端配置 API Key。'}</p>
+        {!ready && provider !== 'acp' && <code className={styles.envKey}>{models[0]?.key_env || 'API Key'}</code>}
+        {provider === 'acp' && <code className={styles.envKey}>命令由环境变量配置，状态以服务端探测为准</code>}
+        <details className={styles.help}><summary>查看模型 · {models.length}</summary><ul>{models.map(model => <li key={model.id}>
+          <span>{model.label}</span><small>{model.configured ? '命令可用' : provider === 'acp' ? `设置 ${acpCommandEnv[model.id] ?? 'ACP 命令'}` : '未配置'}</small>
+        </li>)}</ul></details>
+        {provider === 'acp' && <div className={styles.providerSetup}>
+          {models.map(model => {
+            const status = acpProviders.find(item => item.id === model.id)
+            if (!status) return null
+            return <div className={styles.providerRow} key={model.id}>
+              <div className={styles.providerMeta}><strong>{status.label}</strong><span data-ready={status.available}>{status.available ? `已发现${status.version ? ` · ${status.version}` : ''}` : '未发现命令'}</span></div>
+              <small>{status.available ? `登录由 ${status.label} 自己管理` : `配置 ${status.command_env}`}</small>
+              <div className={styles.providerActions}>
+                {status.install_url && <a href={status.install_url} target="_blank" rel="noreferrer">安装说明 <ExternalLink size={12} /></a>}
+                {status.install_command && status.install_command.startsWith('npm ') && <button type="button" onClick={() => void copy(status.install_command!, 'command')}>{copied === 'command' ? '已复制' : '复制安装命令'}</button>}
+                {status.login_command && <button type="button" onClick={() => void copy(status.login_command!, 'command')}>复制登录命令</button>}
+              </div>
+            </div>
+          })}
+        </div>}
       </>}
     </section>
   </ModalShell>

@@ -428,6 +428,38 @@ def test_camera_snapshot_returns_cached_gateway_jpeg(monkeypatch):
     assert response.body == b"\xff\xd8\xffcamera"
 
 
+def test_camera_snapshot_falls_back_to_go2rtc_frame(monkeypatch):
+    from fastapi import FastAPI
+
+    from gateway.routes.camera import register_camera_routes
+
+    class Response:
+        status_code = 200
+        headers = {"Content-Type": "image/jpeg"}
+        content = b"\xff\xd8\xffgo2rtc"
+
+    calls = []
+    monkeypatch.setattr("gateway.routes.camera.httpx.get", lambda url, **kwargs: calls.append((url, kwargs)) or Response())
+    monkeypatch.setattr("gateway.routes.camera._registered_snapshot_adapter_jpeg", lambda: None)
+    app = FastAPI()
+    camera = SimpleNamespace(health=lambda: {
+        "ports_out": {
+            "color_image": {"msg_count": 1, "stale_ms": 0, "rate_hz": 30},
+            "depth_image": {"msg_count": 1, "stale_ms": 0, "rate_hz": 30},
+        },
+        "backend": "orbbec_native",
+    })
+    gw = SimpleNamespace(_go2rtc_upstream="http://127.0.0.1:1984", _all_modules={}, _camera_status_probe=camera)
+    register_camera_routes(app, gw)
+
+    route = next(route for route in app.routes if route.path == "/api/v1/camera/snapshot")
+    response = asyncio.run(route.endpoint())
+
+    assert response.status_code == 200
+    assert response.body == b"\xff\xd8\xffgo2rtc"
+    assert calls and calls[0][0].endswith("/api/frame.jpeg?src=cam")
+
+
 def test_camera_snapshot_uses_camera_relay_one_shot_encoder(monkeypatch):
     from fastapi import FastAPI
 

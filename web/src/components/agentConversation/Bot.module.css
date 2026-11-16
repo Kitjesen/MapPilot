@@ -20,8 +20,12 @@
 .bot[data-state='unavailable'] { opacity: .65; }
 .bot[data-greeting='true'] .motion { animation: greet 700ms ease-out; }
 .effect { transform-origin: 8px 8px; animation: turn 5s linear infinite; opacity: .65; }
-.bot[data-activity='radar'] .attention { animation: glance 4s ease-in-out infinite; }
-.bot[data-activity='writing'] .attention { animation: read 3s ease-in-out infinite; }
+.bot[data-activity='radar'] .attention, .bot[data-activity='searching'] .attention { animation: glance 4s ease-in-out infinite; }
+.bot[data-activity='writing'] .attention, .bot[data-activity='reading'] .attention { animation: read 3s ease-in-out infinite; }
+.bot[data-activity='thinking'] .motion { animation: ponder 4s ease-in-out infinite; }
+.bot[data-activity='coding'] .motion, .bot[data-activity='running'] .motion, .bot[data-activity='computing'] .motion { animation: focus 3.2s ease-in-out infinite; }
+.bot[data-activity='controlling'] .motion { animation: nudge 3.2s ease-in-out infinite; }
+.bot[data-activity='progress'] .effect, .bot[data-activity='spawning'] .effect, .bot[data-activity='loading'] .effect { animation: turn 3.2s linear infinite; }
 .bot[data-activity='orbit'] .motion { animation: ponder 4s ease-in-out infinite; }
 .bot[data-activity='sending'] .motion, .bot[data-activity='uploading'] .motion { animation: lift 2.8s ease-in-out infinite; }
 .bot[data-activity='receiving'] .motion { animation: lift 2.8s ease-in-out reverse infinite; }

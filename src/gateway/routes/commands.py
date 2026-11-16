@@ -58,6 +58,12 @@ def register_command_routes(app, gw) -> None:
     async def get_conversation_options():
         return await asyncio.to_thread(conversations.call, gw, "get_conversation_options")
 
+    @app.get("/api/v1/agent/providers")
+    async def get_agent_providers():
+        """Read local ACP provider status and setup instructions."""
+        result = await asyncio.to_thread(conversations.call, gw, "get_agent_providers")
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
     @app.get("/api/v1/agent/connections/codex")
     async def codex_connection_status():
         result = await asyncio.to_thread(conversations.call, gw, "codex_connection")
@@ -82,16 +88,18 @@ def register_command_routes(app, gw) -> None:
         return await asyncio.to_thread(conversations.call, gw, "codex_connection", "disconnect")
 
     @app.post("/api/v1/agent/conversations", status_code=201)
-    async def create_conversation():
-        return await asyncio.to_thread(conversations.call, gw, "create_conversation")
+    async def create_conversation(bot_id: str | None = Query(default=None, min_length=1, max_length=120)):
+        return await asyncio.to_thread(conversations.call, gw, "create_conversation", bot_id)
 
     @app.get("/api/v1/agent/conversations")
-    async def list_conversations(archived: bool = False):
-        return await asyncio.to_thread(conversations.call, gw, "list_conversations", archived)
+    async def list_conversations(archived: bool = False,
+                                 bot_id: str | None = Query(default=None, min_length=1, max_length=120)):
+        return await asyncio.to_thread(conversations.call, gw, "list_conversations", archived, bot_id)
 
     @app.get("/api/v1/agent/conversations/search")
-    async def search_conversations(q: str = Query(min_length=1, max_length=200), archived: bool = False):
-        return await asyncio.to_thread(conversations.call, gw, "search_conversations", q, archived)
+    async def search_conversations(q: str = Query(min_length=1, max_length=200), archived: bool = False,
+                                   bot_id: str | None = Query(default=None, min_length=1, max_length=120)):
+        return await asyncio.to_thread(conversations.call, gw, "search_conversations", q, archived, bot_id)
 
     @app.get("/api/v1/agent/shares/{token}")
     async def get_shared_conversation(token: str):

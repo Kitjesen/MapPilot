@@ -1,0 +1,35 @@
+html, body, #root { min-height: 100%; margin: 0; }
+body { background: #f4f3ef; color: #25282c; font-family: Inter, 'Microsoft YaHei', sans-serif; }
+button { font: inherit; cursor: pointer; }
+.grok-product { max-width: 1120px; margin: 0 auto; padding: 42px 44px 38px; }
+.grok-product-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 30px; }
+.eyebrow, .section-kicker { color: #6f7778; font-size: 10px; letter-spacing: .16em; }
+h1 { margin: 16px 0 9px; font-size: 42px; line-height: 1.08; letter-spacing: -.05em; font-weight: 600; }
+h2 { margin: 7px 0; font-size: 21px; letter-spacing: -.03em; font-weight: 600; }
+.grok-product-header p, .hero-copy p, .section-title p { margin: 0; color: #788082; font-size: 12px; }
+.demo-badge { display: inline-flex; align-items: center; gap: 6px; padding: 8px 11px; border: 1px solid #e0dfd8; border-radius: 999px; color: #6d7576; font-size: 10px; white-space: nowrap; }
+.grok-product-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: center; margin: 42px 0 22px; }
+.bot-stage { display: grid; place-items: center; gap: 15px; min-height: 280px; border-radius: 26px; background: #e6ebeb; color: #717a7b; font-size: 11px; }
+.bot-stage > [data-family] { transform: scale(1.5); }
+.hero-copy { padding-left: 16px; }
+.state-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 25px; }
+.state-pills button, .viewer-buttons button { border: 1px solid #dcddd7; border-radius: 999px; padding: 7px 11px; background: transparent; color: #687072; font-size: 10px; }
+.state-pills button[aria-pressed='true'] { background: #23282d; color: #fff; border-color: #23282d; }
+.activity-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.activity-card { display: grid; justify-items: center; gap: 7px; min-height: 100px; border: 1px solid transparent; border-radius: 15px; padding: 13px 7px; background: transparent; color: #697274; }
+.activity-card.active { border-color: #d9dbd6; background: #fff; color: #25282c; box-shadow: 0 5px 18px #2732350b; }
+.activity-card strong { font-size: 12px; }
+.activity-card small { font-size: 10px; color: #92999a; text-align: center; }
+.computer-section, .viewer-section { margin-top: 24px; padding: 21px; border: 1px solid #e0e1dc; border-radius: 19px; background: #fff; }
+.section-title { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 14px; }
+.workspace-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 24px; }
+.workspace-card { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 15px; border-radius: 16px; background: #fff; border: 1px solid #e0e1dc; }
+.workspace-card > svg { color: #687579; }
+.workspace-card strong { font-size: 12px; }
+.workspace-card p { margin: 6px 0 12px; color: #899193; font-size: 10px; line-height: 1.45; }
+.workspace-card button { grid-column: 2; justify-self: start; border: 0; border-radius: 8px; padding: 6px 10px; background: #edf0ee; color: #454c4e; font-size: 10px; }
+.viewer-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.viewer-buttons button { background: #f5f5f1; }
+.map-placeholder { display: grid; place-items: center; gap: 15px; min-height: 320px; color: #9aa1a1; font-size: 12px; }
+footer { margin-top: 23px; color: #92999a; font-size: 10px; }
+@media (max-width: 760px) { .grok-product { padding: 24px; }.grok-product-header, .grok-product-hero { grid-template-columns: 1fr; display: grid; }.hero-copy { padding-left: 0; }.activity-grid { grid-template-columns: repeat(3, 1fr); }.workspace-grid { grid-template-columns: repeat(2, 1fr); }.grok-product-header .demo-badge { justify-self: start; } }

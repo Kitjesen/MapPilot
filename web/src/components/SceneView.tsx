@@ -38,6 +38,7 @@ import { liveNavigationStatus, operatorReasonMessage, presentNavigationStatus } 
 import { useCamera } from '../hooks/useCamera'
 import { useWHEP } from '../hooks/useWHEP'
 import { useVideoFrame } from '../hooks/useVideoFrame'
+import { useVideoDecodeRate } from '../hooks/useVideoDecodeRate'
 import { useRotatedVideoLayout } from '../hooks/useRotatedVideoLayout'
 import { useBinaryCloud } from '../hooks/useBinaryCloud'
 import { useOctomap } from '../hooks/useOctomap.ts'
@@ -534,6 +535,11 @@ function SceneViewComponent({
     whepStream,
     cameraVisible && sseState.connected && whepConnected,
   )
+  const cameraVideoFps = useVideoDecodeRate(
+    cameraVideoRef,
+    whepStream,
+    cameraVisible && sseState.connected && whepConnected,
+  )
   const cameraVideoLayout = useRotatedVideoLayout(
     cameraMediaRef,
     cameraVideoRef,
@@ -914,7 +920,6 @@ function SceneViewComponent({
     : mappingProbeCell?.value === 0 ? '支撑候选 · 已观测低表面'
       : mappingProbeCell?.value === -1 ? '未确认 · 缺少地面依据'
         : '当前窗口之外'
-  const mappingProbeGround = mappingProbeCell?.ground
   const initialMappingView = useRef<string | null>(null)
   useEffect(() => {
     const key = `${session?.product_session_id}:${poseEpoch}:${mappingView}`
@@ -960,7 +965,7 @@ function SceneViewComponent({
       : routeDraft.points.length === 1 ? '再添加一个点即可开始路线'
         : routeDraft.points.length === 0 ? '点击三维地图添加路线点位'
           : !sseState.connected ? '实时连接已断开，恢复后可开始路线'
-            : !routeDraftIdentity ? '正在读取活动地图版本…'
+            : !routeDraftIdentity ? '正在读取活动地图…'
               : !canStartRoute ? routeDisabledReason
                 : '点位顺序确认后即可开始路线'
   const previewDisabledReason = !sseState.connected ? '连接断开，等待恢复'
@@ -1222,7 +1227,7 @@ function SceneViewComponent({
   const handleRouteDraftPoint = useCallback((x: number, y: number, selectedZ?: number, mode: GoalPickMode = 'plane') => {
     if (routeDraftLocked) return
     if (!routeDraftIdentity) {
-      showToast('等待活动地图版本加载完成后再编辑连续点路线', 'error')
+      showToast('等待活动地图加载完成后再编辑连续点路线', 'error')
       return
     }
     const z = sceneGoalHeight(undefined, selectedZ, mode, navigationSupportHeight)
@@ -1287,7 +1292,7 @@ function SceneViewComponent({
       return
     }
     if (!routeDraftIdentity || !sameRouteDraftIdentity(routeDraft.identity, routeDraftIdentity)) {
-      setRouteTaskError('活动地图已变化，请重新选择路线点位')
+      setRouteTaskError('活动地图内容已变化，请重新选择路线点位')
       return
     }
     const signature = currentRouteSignature
@@ -2589,6 +2594,9 @@ function SceneViewComponent({
                   {!useWebRTCCamera && jpegCameraRecovered && cameraImgSrc
                     ? <img src={cameraImgSrc} className={styles.cameraPipImg} alt="机器人相机实时画面" draggable={false} />
                     : null}
+                  {useWebRTCCamera && cameraVideoFps !== null && Number.isFinite(cameraVideoFps)
+                    ? <span className={styles.cameraDecodeFps}>{cameraVideoFps.toFixed(1)} fps</span>
+                    : null}
                 </div>
                 : null
               }
@@ -2726,9 +2734,7 @@ function SceneViewComponent({
                 : mappingProbeCell?.value === 100 ? '此处有高于附近地面的回波；切换空间点云可查看三维形态。'
                 : mappingProbeCell?.value === 0 ? '此处观测到与附近低表面相连的支撑候选；仍需三维路径检查。'
                 : '这里不在当前滚动窗口内，不能判断是否已经建图。'}</p>
-              <small>{mappingProbeGround
-                ? `局部表面拟合 · 高度 ${mappingProbeGround.heightM.toFixed(2)} m · 残差 ${(mappingProbeGround.roughnessM * 100).toFixed(1)} cm · ${Math.round(mappingProbeGround.supportCount)} 个细 XY 支撑`
-                : '局部表面拟合不可用；这不是置信度或通行判定。'}</small>
+              <small>仅显示当前占据观测，不代表地面拟合或通行许可。</small>
               <small>仅检查地图，不发送运动目标</small>
             </div>}
             <div ref={navigationPanelsRef} data-chat-container="scene" className={styles.navigationPanels} data-selection-mode={navigationSelectionMode} data-map-editing={mapEditing}>
@@ -2815,7 +2821,7 @@ function SceneViewComponent({
                     <button type="button" className={styles.goalConfirmBtn}
                       disabled={routeActionPending !== null || routeDraft.points.length < 2
                         || !routeDraftIdentity || !sseState.connected || !canStartRoute}
-                      title={!routeDraftIdentity ? '等待活动地图版本' : !canStartRoute ? routeDisabledReason : '保存路线并提交一次原生巡检任务'}
+                      title={!routeDraftIdentity ? '等待活动地图' : !canStartRoute ? routeDisabledReason : '保存路线并提交一次原生巡检任务'}
                       onClick={() => void startRouteDraft()}>
                       <Play size={16} />{routeActionPending === 'start' ? '提交中…' : '开始路线'}
                     </button>

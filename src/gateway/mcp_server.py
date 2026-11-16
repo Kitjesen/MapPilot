@@ -35,7 +35,9 @@ from gateway.navigation.status import build_navigation_status
 from gateway.schemas import InstructionRequest, LocationUpsertRequest
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.instructions import instruction_control, submit_instruction
+from gateway.services.media_status import build_camera_status
 from gateway.services.native_control import estop as native_estop
+from gateway.services.robot_tools import camera_snapshot
 from runtime.module import Module, skill
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SceneGraph
@@ -75,9 +77,27 @@ def _ok(req_id: Any, result: Any) -> dict:
 
 
 def _text(req_id: Any, value: Any, *, output_schema: dict | None = None) -> dict:
-    text = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
-    result = {"content": [{"type": "text", "text": text}]}
-    structured = value if isinstance(value, dict) else None
+    images: list[dict[str, str]] = []
+    structured = None
+    display_value = value
+    if isinstance(value, dict):
+        display_value = dict(value)
+        for key in ("image_data_url", "image_data_urls"):
+            raw = display_value.pop(key, None)
+            values = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+            for item in values:
+                if not isinstance(item, str) or not item.startswith("data:image/") or "," not in item:
+                    continue
+                header, data = item.split(",", 1)
+                if ";base64" not in header or not data:
+                    continue
+                mime = header[5:].split(";", 1)[0]
+                if mime not in {"image/jpeg", "image/png", "image/webp"}:
+                    continue
+                images.append({"type": "image", "data": data, "mimeType": mime})
+        structured = display_value
+    text = json.dumps(display_value, ensure_ascii=False) if isinstance(display_value, (dict, list)) else str(display_value)
+    result = {"content": [{"type": "text", "text": text}, *images]}
     if output_schema is not None and structured is None:
         if not isinstance(value, str):
             raise TypeError("declared object output must return an object or JSON object string")
@@ -351,6 +371,33 @@ class MCPServerModule(Module, layer=6):
             )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
+
+    @skill(
+        description="Capture one fresh JPEG from the selected robot camera. Returns an MCP image content block when a frame is available; a configured source without a fresh frame is an explicit failure.",
+        output_schema={"type": "object", "properties": {
+            "success": {"type": "boolean"}, "sensor": {"type": "string"},
+            "received_at_s": {"type": "number"}, "error": {"type": "string"},
+            "note": {"type": "string"}}, "required": ["success"]},
+        read_only=True,
+    )
+    def capture_camera(self) -> dict:
+        """Capture one robot-camera JPEG through the Gateway camera owner."""
+        gateway = (self._all_modules or {}).get("GatewayModule")
+        if gateway is None:
+            return {"success": False, "error": "camera_gateway_unavailable"}
+        return camera_snapshot(gateway)
+
+    @skill(
+        description="Read camera and video readiness without opening a stream or changing camera settings.",
+        output_schema={"type": "object", "properties": {"success": {"type": "boolean"}, "status": {"type": "object"}}, "required": ["success"]},
+        read_only=True,
+    )
+    def get_camera_status(self) -> dict:
+        """Return camera source and video pipeline status."""
+        gateway = (self._all_modules or {}).get("GatewayModule")
+        if gateway is None:
+            return {"success": False, "error": "camera_gateway_unavailable"}
+        return {"success": True, "status": build_camera_status(gateway)}
 
     @skill
     def get_robot_position(self) -> str:

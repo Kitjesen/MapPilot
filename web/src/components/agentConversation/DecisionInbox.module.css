@@ -1,0 +1,24 @@
+.inbox { width: 100%; max-width: 500px; margin: 0 auto 8px; overflow: hidden; border-radius: 10px; background: var(--bg-layer-1); box-shadow: 0 0 0 .5px var(--border), 0 4px 14px rgba(26, 38, 58, .05); color: var(--text); }
+.header { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; }
+.header svg { color: #c18a00; animation: inbox-pop 300ms cubic-bezier(.22,1,.36,1) both; }
+.inbox[data-clear] .header svg { color: #228a58; }
+.card { display: grid; }
+.row { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 360ms cubic-bezier(.22,1,.36,1), opacity 220ms ease; }
+.row[data-gone] { grid-template-rows: 0fr; opacity: 0; }
+.row + .row { border-top: 1px solid var(--border); }
+.rowInner { min-height: 0; overflow: hidden; }
+.item { padding: 8px 12px 9px; }
+.title { margin: 0; font-size: 12px; line-height: 16px; font-weight: 600; }
+.detail { margin: 2px 0 0; color: var(--text-dim); font-size: 11px; line-height: 15px; white-space: pre-line; }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.primary, .secondary, .folded { min-height: 24px; padding: 2px 8px; border-radius: 6px; font: inherit; font-size: 11px; cursor: pointer; }
+.primary { border: 0; background: var(--text); color: var(--bg-layer-1); }
+.secondary { border: 1px solid var(--border); background: var(--bg-layer-1); color: var(--text); }
+.primary:hover, .secondary:hover { transform: translateY(-1px); }
+.done { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, #35a56d 12%, transparent); color: #228a58; font-size: 11px; animation: inbox-done 220ms cubic-bezier(.22,1,.36,1) both; }
+.folded { width: 100%; border: 0; border-radius: 0; background: transparent; color: var(--text-dim); text-align: start; }
+.folded:hover { background: var(--bg-layer-2); color: var(--text); }
+.empty { margin: 0; padding: 10px 12px; color: var(--text-dim); font-size: 11px; }
+@keyframes inbox-pop { from { opacity: 0; transform: scale(.7); } }
+@keyframes inbox-done { from { opacity: 0; transform: translateY(2px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) { .row, .primary:hover, .secondary:hover, .done, .header svg { transition: none; animation: none; } }

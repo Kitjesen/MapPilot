@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { Camera, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { RecordingLiveCamera } from '../RecordingLiveCamera'
 import styles from './LiveCameraCard.module.css'
 
@@ -17,9 +17,9 @@ export function LiveCameraCard() {
     return () => { observer.disconnect(); document.removeEventListener('visibilitychange', update) }
   }, [])
   const active = open && visible && foreground
-  return <section ref={root} className={styles.card} aria-label="实时相机卡片">
+  return <section ref={root} className={styles.card} data-view="camera" aria-label="实时相机卡片">
     <button type="button" className={styles.toggle} aria-expanded={open} aria-controls={region} onClick={() => setOpen(value => !value)}>
-      <span className={styles.icon}><Camera size={17} /></span><span className={styles.title}>实时相机<small>仅观看</small></span>
+      <span className={styles.title}><i className={styles.stateDot} aria-hidden="true" data-active={active} />实时相机<small>仅观看</small></span>
       <span className={styles.action}>{open ? '收起' : '展开观看'}</span><ChevronDown size={14} className={styles.chevron} />
     </button>
     <div id={region} className={styles.disclosure} data-open={open} inert={!open} aria-hidden={!open}>

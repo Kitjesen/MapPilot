@@ -1,0 +1,23 @@
+.card { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-layer-1); color: var(--text); }
+.card[data-state='awaiting_permission'] { border-color: color-mix(in srgb, var(--orange, #d48b32) 42%, var(--border)); }
+.card[data-state='failed'] { border-color: color-mix(in srgb, var(--red, #c95757) 35%, var(--border)); }
+.card[data-state='completed'] { border-color: color-mix(in srgb, var(--green, #4f9b73) 35%, var(--border)); }
+.header { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.icon { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; border-radius: 9px; color: var(--text-dim); background: var(--bg-layer-2); }
+.card[data-state='awaiting_permission'] .icon { color: var(--orange, #d48b32); }
+.card[data-state='failed'] .icon { color: var(--red, #c95757); }
+.card[data-state='completed'] .icon { color: var(--green, #4f9b73); }
+.heading { display: grid; gap: 2px; min-width: 0; }
+.heading strong { font-size: 12px; font-weight: 600; }
+.heading span, .detail, .elapsed { color: var(--text-dim); font-size: 11px; }
+.elapsed { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; white-space: nowrap; }
+.body { display: grid; gap: 5px; padding-left: 37px; }
+.action, .detail, .permission, .error { margin: 0; }
+.action { font-size: 13px; line-height: 1.45; }
+.permission { display: inline-flex; align-items: center; gap: 5px; color: var(--orange, #d48b32); font-size: 11px; line-height: 1.4; }
+.error { color: var(--red, #c95757); font-size: 11px; line-height: 1.4; }
+.footer { display: flex; justify-content: flex-end; gap: 7px; }
+.footer button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.footer button:hover { background: var(--bg-layer-2); }
+.footer .primary { border-color: var(--text); background: var(--text); color: var(--bg-layer-1); }
+@media (prefers-reduced-motion: reduce) { .footer button { transition: none; } }

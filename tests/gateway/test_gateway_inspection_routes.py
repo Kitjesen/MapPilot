@@ -853,6 +853,18 @@ def test_inspection_routes_use_native_store_and_client(monkeypatch):
     ]
 
 
+def test_put_route_uses_current_map_epoch_when_client_snapshot_is_stale(monkeypatch):
+    client, _native_client = _client(monkeypatch)
+    route = _route()
+    route["map_content_epoch"] = 1
+
+    response = client.post("/api/v1/inspection/routes", json=route)
+
+    assert response.status_code == 200
+    assert response.json()["route"]["map_content_epoch"] == 3
+    assert _Store.routes[("field-map", "route-a")]["map_content_epoch"] == 3
+
+
 def test_inspection_task_routes_generate_one_task_id_and_never_claim_execution(monkeypatch):
     client, native_client = _client(monkeypatch)
     route = _route()

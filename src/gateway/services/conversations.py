@@ -7,6 +7,7 @@ import json
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
+from decision.llm.client import LLMError
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.conversation_tools import workbench_tools
 
@@ -29,10 +30,15 @@ def call(gw, method, *args, **kwargs):
                       "turn_active", "approval_closed", "conversation_active", "conversation_archived"
                   } else 400)
         raise HTTPException(status, detail={"reason": reason}) from exc
+    except LLMError as exc:
+        reason = str(exc)
+        if reason == "login_not_found":
+            raise HTTPException(404, detail={"reason": reason}) from exc
+        raise
 
 
 def submit(gw, conversation_id, body):
-    tools, invoke = workbench_tools(gw)
+    tools, invoke = workbench_tools(gw, client_id=body.client_id)
     def guard(admit, tool_call_id):
         result = ControlCommandService(gw).run_motion_guarded_command("agent_tool", body, admit)
         return json.loads(result.body) if isinstance(result, JSONResponse) else result

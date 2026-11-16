@@ -20,6 +20,7 @@ import { useAgentConversation } from './hooks/useAgentConversation'
 import { instructionTaskCanDismiss } from './services/instructionTask'
 import { useTheme } from './components/useTheme'
 import { readStoredLocale, text, writeStoredLocale, type Locale } from './i18n'
+import { readCurrentBotId, setCurrentBotId } from './services/botProfile.ts'
 
 import { ToastContainer } from './components/Toast'
 import * as api from './services/api'
@@ -32,6 +33,7 @@ import {
 } from './services/motionTruth'
 import type { Tab } from './types'
 import './App.css'
+import { AIAnswerShowcase } from './components/AIAnswer'
 
 const MOTION_TRUTH_MAX_AGE_MS = 7_000
 
@@ -150,7 +152,12 @@ function Dashboard() {
     motionStartAllowed: motionStartGate.allowed,
     motionStartBlockedReason,
   })
-  const agentConversation = useAgentConversation(instructionTask.adopt, !standby, sseState.agentMessage)
+  const [activeBotId, setActiveBotId] = useState(readCurrentBotId)
+  const agentConversation = useAgentConversation(instructionTask.adopt, !standby, sseState.agentMessage, activeBotId)
+  const handleBotChange = useCallback((botId: string) => {
+    try { setActiveBotId(setCurrentBotId(botId).id) }
+    catch { /* The roster can change in another tab; keep the current Bot. */ }
+  }, [])
   const nativeTaskIdentity = useSyncExternalStore(
     currentNavigationTaskStore.subscribe,
     currentNavigationTaskStore.getSnapshot,
@@ -331,7 +338,7 @@ function Dashboard() {
           motionStartBlockedReason={sseState.connected ? motionStartBlockedReason : ''}
           hasNativeTask={Boolean(nativeTaskIdentity) && !instructionOwnsNativeTask}
         />
-        <AgentConversation locale={locale} controller={agentConversation} />
+        <AgentConversation locale={locale} controller={agentConversation} onBotChange={handleBotChange} />
         </>,
         currentTaskPanelTarget,
       )}
@@ -350,6 +357,9 @@ function Dashboard() {
 }
 
 function App() {
+  if (window.location.pathname === '/ai-answer' || window.location.pathname === '/components/ai-answer') {
+    return <AIAnswerShowcase />
+  }
   const shareToken = new URLSearchParams(window.location.search).get('conversation-share')
   if (shareToken) return <SharedConversation token={shareToken} locale={readStoredLocale()} />
   return <MapSettingsProvider><Dashboard /></MapSettingsProvider>

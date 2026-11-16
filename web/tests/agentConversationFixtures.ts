@@ -3,6 +3,7 @@ import * as sensors from '../src/services/sensors.ts'
 import * as botProfile from '../src/services/botProfile.ts'
 import * as botMotion from '../src/components/agentConversation/botMotion.ts'
 import * as botShapes from '../src/services/botShapes.ts'
+import * as botPresentation from '../src/components/agentConversation/botPresentation.ts'
 import * as modelMentions from '../src/components/agentConversation/modelMentions.ts'
 import * as markdownBlocks from '../src/components/agentConversation/markdownStreamBlocks.ts'
 import { createRequire } from 'node:module'
@@ -108,8 +109,10 @@ export function conversationDependency(name: string) {
       ? { default: new Proxy({}, { get: (_target, key) => key }) } : require(dependency) })
     return exports
   }
+  if (name.endsWith('/agentConversation/FullscreenViewer')) return { FullscreenViewer: () => null }
   if (name.endsWith('/services/sensors.ts')) return sensors
   if (name.endsWith('/services/botProfile.ts')) return botProfile
+  if (name.endsWith('/agentConversation/botPresentation.ts')) return botPresentation
   if (name.endsWith('/agentConversation/BotStudio')) return { BotStudio: () => null }
   if (name.endsWith('/agentConversation/ModelConnections')) return { ModelConnections: () => null }
   if (name.endsWith('/agentConversation/Bot.tsx')) {
@@ -118,6 +121,7 @@ export function conversationDependency(name: string) {
       if (dependency.endsWith('/botMotion.ts')) return botMotion
       if (dependency.endsWith('/services/botProfile.ts')) return botProfile
       if (dependency.endsWith('/services/botShapes.ts')) return botShapes
+      if (dependency.endsWith('/agentConversation/botPresentation.ts')) return botPresentation
       if (dependency.endsWith('/GrokAvatar.tsx')) {
         const result: Record<string, unknown> = {}
         const code = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/GrokAvatar.tsx', import.meta.url), 'utf8'), {
@@ -139,6 +143,7 @@ export function conversationDependency(name: string) {
     runInNewContext(source, { exports, require: (dependency: string) => {
       if (dependency.endsWith('/ObservationCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/LiveCameraCard')) return conversationDependency(dependency)
+      if (dependency.endsWith('/ComputerProgressCard')) return { ComputerProgressCard: () => null }
       if (dependency.endsWith('/SavedMapCard')) return conversationDependency(dependency)
       if (dependency.includes('/stageshow/motion/')) return conversationDependency(dependency)
       if (dependency.endsWith('/SavedMapsResult')) {
@@ -167,6 +172,7 @@ export function conversationDependency(name: string) {
       if (dependency.endsWith('/services/agentConversation.ts')) return { conversationToolNames }
       if (dependency.endsWith('/hooks/useMapSettings.ts')) return { useMapSettings: () => null }
       if (dependency.endsWith('/services/api.ts') || dependency.endsWith('/services/mapEdit.ts')) return {}
+      if (dependency.endsWith('/icons/IconGlyph.tsx')) return { IconGlyph: ({ name, size = 24 }: { name: string; size?: number }) => require('react').createElement('span', { 'data-icon': name, 'aria-hidden': true, style: { width: size, height: size } }) }
       if (dependency.endsWith('.css')) return { default: new Proxy({}, { get: (_target, key) => key }) }
       return require(dependency)
     } })

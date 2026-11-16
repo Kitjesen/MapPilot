@@ -15,8 +15,9 @@
 .dragging { user-select: none; cursor: grabbing; }
 .dragHandle { display: grid; place-items: center; width: 16px; height: 34px; color: var(--text-faint); cursor: grab; touch-action: none; }
 .dragHandle:active { cursor: grabbing; }
-.logo { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 10px; background: transparent; color: var(--text); cursor: pointer; }
+.logo { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 11px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); cursor: pointer; transition: background 140ms var(--ease-out), transform 140ms var(--ease-out); }
 .logo:hover { color: var(--text); background: var(--accent-glow); }
+.logo:active { transform: scale(.94); }
 .pageButton { text-decoration: none; }
 .workspace { display: flex; align-items: center; min-width: 0; flex: 0 0 auto; }
 .pageButton { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--text-dim); font: inherit; font-size: var(--type-body); cursor: pointer; white-space: nowrap; }
@@ -58,7 +59,7 @@
 .contextHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .contextHeading .contextLabel { margin-left: auto; }
 .contextHeading .iconButton { width: 32px; height: 32px; color: var(--text-dim); }
-.contextBrand { font-size: 15px; font-weight: 550; }
+.contextBrand { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 550; }
 .contextLabel { color: var(--text-dim); font-size: 13px; }
 .mapName { display: block; margin-top: 7px; overflow-wrap: anywhere; font-size: 19px; line-height: 1.4; font-weight: 550; }
 .mapFacts { display: grid; gap: 12px; margin: 18px 0; padding-top: 17px; border-top: 1px solid var(--border); font-size: 14px; }

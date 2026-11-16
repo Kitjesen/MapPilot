@@ -5,7 +5,7 @@ import { createAgentPreviewFetch } from './fixtures/agentCapabilitiesPreview.ts'
 test('preview is isolated and authorization only succeeds on the second login', async () => {
   const fetch = createAgentPreviewFetch()
   const options = await (await fetch('/api/v1/agent/options')).json()
-  assert.deepEqual(options.models.map((model: { provider: string }) => model.provider).sort(), ['claude', 'codex', 'moonshot', 'openai', 'qwen'])
+  assert.deepEqual(options.models.map((model: { provider: string }) => model.provider).sort(), ['acp', 'claude', 'codex', 'grok', 'moonshot', 'openai', 'qwen'])
   const path = '/api/v1/agent/connections/codex'
   const first = await (await fetch(`${path}/login`, { method: 'POST' })).json()
   for (let i = 0; i < 4; i++) assert.equal((await (await fetch(`${path}/login/${first.id}/poll`, { method: 'POST' })).json()).state, 'pending')

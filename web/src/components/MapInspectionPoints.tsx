@@ -110,7 +110,7 @@ export function MapInspectionPoints({ mapName, epoch, picked, onMarkers, onFocus
     <input aria-label="按点名或区域查找" placeholder="搜索点名或区域…" value={query} onChange={event => setQuery(event.target.value)} />
     <div className={styles.list}>{findInspectionPoints(points, query).map(point => <button key={point.name} type="button"
       aria-pressed={existing && name === point.name} disabled={busy} onClick={() => requestLeave(() => select(point))}>
-      <span>{point.name}</span><small>{String(point.metadata?.region ?? '未分区')}{point.map_content_epoch !== epoch ? ' · 地图版本已变化' : ''}</small>
+      <span>{point.name}</span><small>{String(point.metadata?.region ?? '未分区')}{point.map_content_epoch !== epoch ? ' · 地图内容已变化' : ''}</small>
     </button>)}</div>
     <button type="button" className={styles.newPoint} disabled={busy} onClick={() => requestLeave(() => {
       setExisting(false); setName(''); setRegion(''); setPosition(null); setFromSurface(false); setError(''); setMessage(''); setDirty(false)

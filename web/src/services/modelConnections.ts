@@ -1,9 +1,25 @@
 import { dashboardFetch } from './observationMode.ts'
 
-export interface CodexConnection { provider: 'codex'; connected: boolean; expires_at?: number; inference_verified: boolean }
+export interface CodexConnection { provider: 'codex'; connected: boolean; expires_at?: number; inference_verified: boolean; auth_mode?: 'app_server' }
 export interface CodexLogin {
   id: string; state: 'pending' | 'approved' | 'cancelled' | 'expired' | 'failed'
-  user_code: string; verification_url: string; expires_at: number; interval: number
+  user_code?: string; verification_url: string; auth_url?: string; expires_at: number; interval: number
+}
+export interface AcpProviderStatus {
+  id: string
+  label: string
+  kind: 'acp'
+  command: string | null
+  args: string[]
+  available: boolean
+  version: string | null
+  authenticated: boolean | null
+  auth_owner: 'provider'
+  command_env: string
+  args_env: string
+  install_url?: string
+  install_command?: string
+  login_command?: string
 }
 
 const path = '/api/v1/agent/connections/codex'
@@ -22,8 +38,10 @@ function connection(value: CodexConnection): CodexConnection {
   return value
 }
 function login(value: CodexLogin): CodexLogin {
-  if (!value || typeof value.id !== 'string' || typeof value.user_code !== 'string'
-    || value.verification_url !== 'https://auth.openai.com/codex/device'
+  if (!value || typeof value.id !== 'string'
+    || typeof value.verification_url !== 'string' || !value.verification_url.startsWith('https://auth.openai.com/')
+    || (value.user_code != null && typeof value.user_code !== 'string')
+    || (value.auth_url != null && typeof value.auth_url !== 'string')
     || !['pending', 'approved', 'cancelled', 'expired', 'failed'].includes(value.state)
     || !Number.isFinite(value.expires_at) || !Number.isFinite(value.interval) || value.interval < 3) throw new Error('登录状态无效')
   return value
@@ -33,3 +51,12 @@ export async function startCodexLogin() { return login(await request(`${path}/lo
 export async function pollCodexLogin(id: string) { return login(await request(`${path}/login/${encodeURIComponent(id)}/poll`, 'POST')) }
 export async function cancelCodexLogin(id: string) { return login(await request(`${path}/login/${encodeURIComponent(id)}`, 'DELETE')) }
 export async function disconnectCodex() { return connection(await request(path, 'DELETE')) }
+export async function getAcpProviders(): Promise<AcpProviderStatus[]> {
+  const value = await request('/api/v1/agent/providers')
+  if (!value || !Array.isArray(value.providers)) throw new Error('Agent 提供商状态无效')
+  return value.providers.map((item: AcpProviderStatus) => {
+    if (typeof item?.id !== 'string' || item.kind !== 'acp' || typeof item.available !== 'boolean'
+      || typeof item.command_env !== 'string' || !Array.isArray(item.args)) throw new Error('Agent 提供商状态无效')
+    return item
+  })
+}

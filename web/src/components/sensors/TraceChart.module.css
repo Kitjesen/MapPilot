@@ -51,9 +51,15 @@
 .plotRow { display: grid; grid-template-columns: 32px minmax(0,1fr); min-width: 0; align-items: stretch; }
 .yAxis { display: flex; flex-direction: column; justify-content: space-between; padding: 7px 4px 8px 0; font-size: 9px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .plotRow svg { width: 100%; height: 116px; display: block; overflow: hidden; cursor: crosshair; touch-action: pan-y; user-select: none; }
-.plotRow path { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.plotRow path { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.traceGroup { isolation: isolate; }
+.traceGlow { stroke-width: 6; opacity: .1; filter: blur(2px); }
+.traceLine { stroke-width: 1.85; }
+.traceFlow { stroke-width: 1.15; stroke-dasharray: 1 12; opacity: .8; animation: trace-flow 2.4s linear infinite; }
+.traceEndpointPulse { fill: none; stroke-width: 1; opacity: .55; animation: trace-pulse 2s ease-out infinite; transform-box: fill-box; transform-origin: center; }
+.traceEndpoint { stroke: var(--bg-layer-1); stroke-width: 1; }
 .plotRow text { fill: var(--text-dim); font: 11px var(--font-ui); }
-.grid { stroke: var(--border); stroke-width: .65; stroke-dasharray: 2 5; }
+.grid { stroke: var(--border); stroke-width: .65; stroke-dasharray: 2 5; opacity: .72; }
 .cursor { stroke: var(--text); stroke-width: .8; stroke-dasharray: 3 3; }
 .chart[data-layout='stack'] .plotRow svg { height: 54px; }
 .strip { margin-bottom: 4px; }
@@ -89,7 +95,9 @@
   .compactHint { display: block; }
 }
 @keyframes appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .channelPanel { animation: none; } .groupToggle svg { transition: none; } }
+@keyframes trace-flow { to { stroke-dashoffset: -26; } }
+@keyframes trace-pulse { 0%, 45% { opacity: .55; transform: scale(.75); } 80%, 100% { opacity: 0; transform: scale(2); } }
+@media (prefers-reduced-motion: reduce) { .channelPanel { animation: none; } .groupToggle svg { transition: none; } .traceFlow, .traceEndpointPulse { animation: none; } }
 
 .groupClip { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 160ms ease, opacity 140ms ease; }
 .groupClip > .groupBody { min-height: 0; overflow: hidden; }

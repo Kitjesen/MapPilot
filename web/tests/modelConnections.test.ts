@@ -28,3 +28,10 @@ test('authorization cannot link to a substituted provider page', async () => {
   try { await assert.rejects(startCodexLogin, /登录状态无效/) }
   finally { globalThis.fetch = original }
 })
+
+test('app-server authorization accepts an official OAuth URL without a device code', async () => {
+  globalThis.fetch = async () => Response.json({ id: 'app-login', state: 'pending',
+    auth_url: 'https://auth.openai.com/oauth/authorize?state=test',
+    verification_url: 'https://auth.openai.com/oauth/authorize?state=test', expires_at: 10, interval: 5 })
+  assert.equal((await startCodexLogin()).auth_url?.startsWith('https://auth.openai.com/'), true)
+})

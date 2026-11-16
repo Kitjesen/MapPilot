@@ -54,7 +54,7 @@ export function CloudPreview({ result }: { result: Record<string, unknown> }) {
   const matching = loaded && settings?.map?.name === loaded.source.name && settings.map.contentEpoch === loaded.source.contentEpoch
   return <section className={styles.card} aria-label="点云编辑预览">
     <header><Box size={14} aria-hidden="true" /><strong>点云预览</strong><span>处理后 · 尚未保存</span></header>
-    {loaded && <p className={styles.identity}>{loaded.source.name} · 版本 {loaded.source.contentEpoch} · {loaded.source.frameId}</p>}
+    {loaded && <p className={styles.identity}>{loaded.source.name} · {loaded.source.frameId}</p>}
     <p className={styles.stats}>
       {typeof stats.point_count === 'number' && <span>{stats.point_count.toLocaleString()} 点</span>}
       {typeof stats.removed_points === 'number' && <span>移除 {stats.removed_points.toLocaleString()}</span>}
@@ -83,7 +83,7 @@ export function CloudPreview({ result }: { result: Record<string, unknown> }) {
           {preview?.preview_points.length !== 0 && <button type="button" onClick={() => scene.current?.resetView()}><RotateCcw size={13} />复位</button>}
         </>}
       {image && <a href={image} download="point-cloud-preview.png"><Download size={13} />下载截图</a>}
-      {loaded && settings && <button type="button" disabled={!matching} title={!matching ? '请先打开对应版本的地图' : undefined}
+      {loaded && settings && <button type="button" disabled={!matching} title={!matching ? '请先打开对应的地图' : undefined}
         onClick={() => settings.setAgentPreview({ mapId: loaded.source.name, contentEpoch: loaded.source.contentEpoch,
           scene: { selecting: false, selection: null, view: 'draft', operations: loaded.operations, showDeleted: true, preview: loaded.preview } })}>
         <Map size={13} />在主地图查看</button>}

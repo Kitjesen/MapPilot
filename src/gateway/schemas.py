@@ -401,6 +401,55 @@ class ConversationAttachmentRequest(BaseModel):
     data_base64: str = Field(max_length=13981016)
 
 
+class AgentWorkspaceCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    branch: str | None = Field(default=None, min_length=1, max_length=160)
+    base_revision: str = Field(default="HEAD", min_length=1, max_length=256)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def workspace_name_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class AgentWorkspaceCheckpointRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=120)
+    message: str | None = Field(default=None, max_length=500)
+
+    @field_validator("label")
+    @classmethod
+    def checkpoint_label_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class AgentEnvironmentCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    endpoint: str = Field(min_length=1, max_length=512)
+    cwd: str = Field(min_length=1, max_length=512)
+    capabilities: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("name", "endpoint", "cwd")
+    @classmethod
+    def environment_text_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value or "\n" in value or "\r" in value:
+            raise ValueError("must be a non-empty single line")
+        return value
+
+
 class SafetyEstopRequest(BaseModel):
     """Emergency-stop activation request."""
 
@@ -1088,6 +1137,8 @@ class HealthResponse(GatewayResponseModel):
     has_odom: bool = False
     modules: dict[str, str] = Field(default_factory=dict)
     brainstem: dict[str, Any] = Field(default_factory=dict)
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    advisories: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ConstructedGoalTarget(GatewayResponseModel):
@@ -1469,7 +1520,8 @@ class InspectionRoutePointRequest(BaseModel):
     yaw: float | None = None
     tolerance: float = Field(default=0.35, gt=0.0, le=5.0)
     dwell: float = Field(default=0.0, ge=0.0, le=3600.0)
-    action: str = Field(default="", max_length=128)
+    # MVP inspection path: arrive, capture one synchronized overview, persist it.
+    action: str = Field(default="capture:overview", max_length=128)
     enabled: bool = True
 
 

@@ -201,7 +201,7 @@ test('all business states are valid; activity and completion preserve the select
     assert.equal(view.props['data-state'], state)
   }
   h.render({ state: 'done' })
-  assert.equal(h.calls.updates.at(-1)!.state, 'idle')
+  assert.equal(h.calls.updates.at(-1)!.state, 'finished')
   assert.equal(h.calls.faces.at(-1), 'happy')
   const faceCount = h.calls.faces.length
   h.render({ look: { x: .1, y: 0 } })
@@ -209,9 +209,9 @@ test('all business states are valid; activity and completion preserve the select
   h.render({ activity: 'radar' })
   assert.equal(h.calls.updates.at(-1)!.state, 'radar')
   h.render({ activity: undefined })
-  assert.equal(h.calls.updates.at(-1)!.state, 'idle')
+  assert.equal(h.calls.updates.at(-1)!.state, 'finished')
   assert.equal(h.calls.updates.at(-1)!.body, 'starFlower')
-  assert(h.calls.updates.every(options => options.state !== 'celebrate' && options.state !== 'finished'))
+  assert(h.calls.updates.every(options => options.state !== 'celebrate'))
 })
 
 test('greeting is one nod and expression is an independent Studio preview', t => {

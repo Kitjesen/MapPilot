@@ -29,7 +29,7 @@ export async function fetchMapPreview(
   const contentEpoch = Number(epochText)
   if (mapId !== mapName) throw new Error('地图预览已切换，请刷新后重试')
   if (!Number.isSafeInteger(contentEpoch) || contentEpoch <= 0) {
-    throw new Error('地图预览响应包含无效的内容版本')
+    throw new Error('地图预览响应缺少有效的地图内容')
   }
   if (expectedContentEpoch != null && contentEpoch !== expectedContentEpoch) {
     throw new Error('地图内容已更新，请刷新地图库后重试')
