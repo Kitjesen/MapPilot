@@ -132,6 +132,7 @@ add_library(octoplanner3d_global_planner STATIC
   surface_graph.cpp
   route_smoothing.cpp
 )
+# Raw occupancy stays in OctoMap. Prepared surfaces and the sparse graph come from Rust MLS.
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
     "${LINGTU_NAV_CPP_DIR}/../../maps/include"
