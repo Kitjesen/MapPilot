@@ -40,9 +40,10 @@ The current Go2 driver was freshly compiled against the existing real Unitree
 SDK2 prefix `/home/thunder/.cache/unitree-sdk2-install`. All 16 non-hardware
 CTest cases passed, including isolated-domain DDS IO. The x86_64 ELF loaded
 successfully with `--help`; `ldd` resolved both CycloneDDS libraries from that
-SDK prefix, and the binary's RPATH selects the same prefix. Evidence is in
-`build/converge/go2-sdk-build.log`; the recorded source revision and reproducible
-command are in `go2-sdk-source-head.txt` and `go2-sdk-build.sh` beside it.
+SDK prefix, and the binary's RPATH selects the same prefix. The initial build
+is recorded in `build/converge/go2-sdk-build.log`. The SDK-owned acceptance
+rebuild passed the same 16 cases in `build/converge/go2-sdk-only-build.log`;
+its source changes are recorded in `go2-sdk-only-source.patch` beside that log.
 
 Logs are retained under `build/converge/`, `build/converge-app-20261117/`,
 `build/global-tests-final.log` and `build/nav-portable-tests-final.log` in the
