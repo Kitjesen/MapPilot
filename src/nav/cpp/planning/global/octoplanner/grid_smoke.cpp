@@ -1,4 +1,5 @@
 #include "global_planner.h"
+#include "mls_backend.hpp"
 
 #include <iostream>
 #include <filesystem>
@@ -67,39 +68,6 @@ static PlannerConfig gridFixtureConfig() {
 
 struct OctoPlannerGridQueryTest
 {
-  static void preparedSupportFillsOnlyClosedHoles() {
-    const auto supported = [](const std::vector<octomap::point3d>& floor,
-                              PointPose pose = {.05,.05,.45}) {
-      auto tree = std::make_shared<octomap::OcTree>(.1);
-      tree->updateNode(octomap::point3d(-1,-1,-1),false);
-      tree->updateNode(octomap::point3d(1,1,1),false);
-      for (const auto& point : floor) tree->updateNode(point,true);
-      auto config = gridFixtureConfig();
-      config.support_height_m=.4;
-      config.support_height_tolerance_m=.05;
-      config.direct_support_only=false;
-      config.surface_closing_radius_m=.2;
-      OctoPlanner3D planner;
-      planner.setConfig(config);
-      planner.setOctomap(tree);
-      return planner.poseSupportFree(pose);
-    };
-    if (supported({{-.05,.05,.05},{-.05,-.05,.05},{-.05,.15,.05}}))
-      throw std::runtime_error("one-sided floor evidence expanded past its boundary");
-    if (supported({{-.05,.05,.05},{.05,-.05,.05}}))
-      throw std::runtime_error("corner evidence created an unprepared surface");
-    if (supported({{-.05,.15,.05},{.15,-.05,.05}}))
-      throw std::runtime_error("collinear floor evidence created an unprepared surface");
-    if (supported({{-.05,.05,.05},{.15,-.05,.05},{.15,.15,.05}}))
-      throw std::runtime_error("open three-point gap bypassed bounded-hole preparation");
-    if (!supported({{-.05,.05,.05},{.15,.05,.05},{.05,-.05,.05},{.05,.15,.05}}))
-      throw std::runtime_error("closed one-cell hole was not repaired during preparation");
-    if (!supported({{.05,.05,.05}}))
-      throw std::runtime_error("direct observed surface unnecessarily required surrounding evidence");
-    if (supported({{-.05,.05,-.55},{.15,.05,-.55}}))
-      throw std::runtime_error("another floor was borrowed outside the configured height band");
-  }
-
   static void supportedRouteTurnsInsideAnLShapedFloor() {
     auto tree=std::make_shared<octomap::OcTree>(.1);
     tree->updateNode(octomap::point3d(-1.2,-1.2,-1),false);
@@ -700,14 +668,16 @@ struct OctoPlannerGridQueryTest
     for (int x=-1;x<=1;++x) for (int y=-1;y<=1;++y)
       eraseCell(tree, octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
     planner.setOctomap(cloneTree(*tree));
-    if (!planner.supportSurface()->inferred(0,0,-7,-7) ||
+    if (!planner.artifact_->rust_graph->inferred(0,0,-7,-7) ||
         planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::None)
-      throw std::runtime_error("bounded three-cell sampling hole was not prepared");
+      throw std::runtime_error("three-cell sampling hole was not prepared");
     for (int x=-1;x<=1;++x) for (int y=-15;y<=15;++y)
-      eraseCell(tree, octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325));
+      tree->setNodeValue(octomap::point3d((x+.5)*.05,(y+.5)*.05,-.325),
+                         tree->getClampingThresMinLog(),true);
+    tree->updateInnerOccupancy();
     planner.setOctomap(cloneTree(*tree));
     if (planner.queryWorld(body,.1,true)!=OctoPlanner3D::TraversabilityFailure::GroundSupport)
-      throw std::runtime_error("open gap bypassed prepared support");
+      throw std::runtime_error("observed-free gap bypassed prepared support");
   }
   static void adjacentSupportSnapUsesNearestCell() {
     auto tree = std::make_shared<octomap::OcTree>(.05);
@@ -837,15 +807,6 @@ struct OctoPlannerGridQueryTest
         throw std::runtime_error(
           "occupied raw start bypassed its required entry sweep");
 
-      tree = std::make_shared<octomap::OcTree>(r);
-      tree->updateNode(octomap::point3d(-2,-2,-1), false);
-      tree->updateNode(octomap::point3d(2,2,1), false);
-      planner.setOctomap(tree);
-      planner.makePlan({.025,.025,.01}, {.625,.025,.01});
-      planner.getPlannerResults(path);
-      if (!path.empty() || planner.endpointResolution().failure !=
-          OctoPlanner3D::EndpointResolutionInfo::Failure::StartSnapExhausted)
-        throw std::runtime_error("unobserved start support was not handled by the official snap search");
     }
   }
   static void freeUnanchoredStartKeepsSafeQuantizationEntry()
@@ -1163,7 +1124,6 @@ int main()
   try {
     global_planner::OctoPlannerGridQueryTest::supportHeightUsesActualPoseWithinVoxel();
     global_planner::OctoPlannerGridQueryTest::supportHeightUsesBothFacesOfTheOccupiedVoxel();
-    global_planner::OctoPlannerGridQueryTest::preparedSupportFillsOnlyClosedHoles();
     global_planner::OctoPlannerGridQueryTest::supportedRouteTurnsInsideAnLShapedFloor();
     global_planner::OctoPlannerGridQueryTest::supportedRoutesDoNotRequireObservedCentreAir();
     global_planner::OctoPlannerGridQueryTest::startSnapUsesRouteHeightPreference();

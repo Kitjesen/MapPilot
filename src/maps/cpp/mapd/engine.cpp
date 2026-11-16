@@ -1,5 +1,5 @@
 #include "lingtu/maps/mapd/engine.hpp"
-#include "lingtu/maps/layers/surface_projection.hpp"
+#include "lingtu/maps/legacy/surface_projection.hpp"
 #include "lingtu/maps/io/scans.hpp"
 
 #include <algorithm>

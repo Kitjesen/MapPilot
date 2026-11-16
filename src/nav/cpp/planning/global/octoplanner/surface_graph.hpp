@@ -5,6 +5,7 @@
 
 namespace global_planner {
 
+// Retained for the standalone algorithm regression; production uses Rust MLS.
 class SurfaceGraph {
  public:
   using PoseCheck = std::function<bool(const PointPose &)>;

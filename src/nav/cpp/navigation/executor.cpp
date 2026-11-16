@@ -228,8 +228,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   }
   if (!stair_target && stair_goal.arrivalAllowed && atGoal(map_body) &&
       (pose_stages_.empty() || pose_stage_ + 1 == pose_stages_.size()) &&
-      (pose_stages_.empty() || !following.tracking.active ||
-       following.tracking.executionTimeS >= following.tracking.durationS)) {
+      (pose_stages_.empty() || !moving_spline)) {
     output.active = false;
     output.goal_reached = true;
     output.path_found = true;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::stable_graph::{edge_id, IncrementalGraph, StableEdge};
 use crate::voronoi_repair::rebuild_window;
@@ -20,12 +20,22 @@ pub(crate) fn repair_edges(
     window: RegionBounds,
     config: GraphConfig,
 ) -> EdgeRepairReport {
+    // Rebuild one link band beyond the invalidation window so a repaired edge
+    // can connect to a node that remains outside the changed region.
+    let graph_window = window.expand(config.max_link_cells.max(1), config.max_link_cells.max(1));
     let local_cells: Vec<_> = cells
         .iter()
         .copied()
-        .filter(|cell| window.contains(*cell))
+        .filter(|cell| graph_window.contains(*cell))
         .collect();
-    let local_graph = rebuild_window(&local_cells, window, config);
+    let next_cells: BTreeSet<_> = cells.iter().copied().collect();
+    let forced_nodes: Vec<_> = graph
+        .nodes
+        .values()
+        .map(|node| node.cell)
+        .filter(|cell| graph_window.contains(*cell) && next_cells.contains(cell))
+        .collect();
+    let local_graph = rebuild_window(&local_cells, graph_window, &forced_nodes, config);
     let mut report = EdgeRepairReport {
         local: !local_cells.is_empty() && (!local_graph.nodes.is_empty() || graph.nodes.is_empty()),
         global_fallback: !local_cells.is_empty()

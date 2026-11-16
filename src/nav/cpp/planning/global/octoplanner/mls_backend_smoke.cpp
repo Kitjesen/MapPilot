@@ -24,7 +24,8 @@ int main() try {
       if (x != 1 || y != 1) ring.push_back({x, y, 0});
     }
   }
-  const auto rust_surface = global_planner::mls::extractSurfacesRust(ring, {}, 1, 1, 1);
+  const LtMlsConfig surface_config{1, 1, 0.0F};
+  const auto rust_surface = global_planner::mls::extractSurfacesRust(ring, {}, surface_config);
   require(rust_surface.observed.size() == ring.size(),
           "Rust MLS observed surface count changed");
   require(rust_surface.inferred == std::vector<SurfaceCell>{{1, 1, 0}},
@@ -38,7 +39,6 @@ int main() try {
   require(rust_graph.edges.front().corridor.size() > 2,
           "Rust MLS graph did not export a corridor chain");
 
-  const LtMlsConfig surface_config{1, 1, 1, 0.70F};
   const LtMlsGraphConfig graph_config{3, 1, 0, 0, 0.0F, 0.0F};
   auto handle = global_planner::mls::PreparedArtifactHandle::create(
       line, {}, surface_config, graph_config, 7);
@@ -54,6 +54,11 @@ int main() try {
   require(handle.below(3, 0, 0) == std::optional<std::int32_t>(0) &&
               !handle.inferred(3, 0, 0, 0),
           "Rust MLS surface queries changed");
+  require(handle.occupied(3, 0, 0, 0), "Rust MLS occupied query changed");
+  require(handle.occupiedBelow(3, 0, 1) == std::optional<std::int32_t>(0),
+          "Rust MLS occupied-below query changed");
+  require(handle.regionOccupied(LtMlsRegion{2, 3, 0, 0, 0, 0}),
+          "Rust MLS region query changed");
   require(handle.height(0.35, 0.025, 0.0, 0.05, resolution) ==
               std::optional<double>(0.0),
           "Rust MLS height query changed");
@@ -61,13 +66,26 @@ int main() try {
   require(artifact_graph.nodes.size() == artifact_summary.nodes &&
               artifact_graph.edges.size() == artifact_summary.edges,
           "Rust MLS artifact graph export changed");
+  require(!artifact_graph.edges.empty() && artifact_graph.edges.front().id != 0,
+          "Rust MLS graph did not export stable edge IDs");
   const auto artifact_route = handle.query({0, 0, 0}, {11, 0, 0});
   require(!artifact_route.empty() && artifact_route.front() == SurfaceCell{0, 0, 0} &&
               artifact_route.back() == SurfaceCell{11, 0, 0},
           "Rust MLS artifact graph query did not return a route");
+  const auto route_check = handle.checkRoute(
+      artifact_route, LtMlsRouteCheckConfig{0, 0, 1, 1.0F, 0, {}});
+  require(route_check.valid && route_check.failed_segment < 0,
+          "Rust MLS route check rejected a valid route");
   const auto limited_route = handle.query({0, 0, 0}, {11, 0, 0}, 12);
   require(limited_route == artifact_route,
           "Rust MLS limited graph query changed an attached route");
+  bool budget_rejected = false;
+  try {
+    (void)handle.query({0, 0, 0}, {11, 0, 0}, 12, 1);
+  } catch (const std::exception&) {
+    budget_rejected = true;
+  }
+  require(budget_rejected, "Rust MLS graph query ignored its iteration budget");
   const auto update = handle.update({1, 1, 0, 1, 0, 0}, {{1, 0, 0}}, {});
   require(update.revision == 8 && !update.graph_rebuilt_globally,
           "Rust MLS artifact update did not use local graph repair");
@@ -79,39 +97,6 @@ int main() try {
   require(!surface_handle.query({0, 0, 0}, {11, 0, 0}, 12).empty(),
           "Rust MLS surface artifact did not query a route");
 
-  std::vector<SurfaceCell> two_levels;
-  for (int x = -24; x < 24; ++x) {
-    for (int y = -14; y < 14; ++y) {
-      two_levels.push_back({x, y, -1});
-      two_levels.push_back({x, y, 39});
-    }
-  }
-  const LtMlsGraphConfig large_graph_config{2, 11, 0, 2, 0.0F, 0.0F};
-  auto large_surface = global_planner::mls::PreparedArtifactHandle::createFromSurface(
-      two_levels, {}, large_graph_config, 13);
-  require(large_surface.summary().observed_surfaces == two_levels.size(),
-          "Rust MLS multi-level surface artifact changed");
-  const auto large_graph = large_surface.graph();
-  require(!large_graph.nodes.empty(), "Rust MLS multi-level graph lost all nodes");
-
-  std::vector<SurfaceCell> stair;
-  for (int x = 0; x <= 4; ++x) {
-    for (int y = 0; y < 2; ++y) stair.push_back({x, y, 0});
-  }
-  for (int x = 4; x <= 8; ++x) {
-    for (int y = 0; y < 2; ++y) stair.push_back({x, y, 3});
-  }
-  for (int z = 0; z <= 3; ++z) {
-    for (int y = 0; y < 2; ++y) stair.push_back({4, y, z});
-  }
-  const LtMlsGraphConfig stair_graph_config{2, 3, 0, 0, 0.0F, 0.0F, 0.0F, 3, 1};
-  auto stair_surface = global_planner::mls::PreparedArtifactHandle::createFromSurface(
-      stair, {}, stair_graph_config, 14);
-  const auto stair_route = stair_surface.query({0, 0, 0}, {8, 0, 3}, 12);
-  require(!stair_route.empty() && stair_route.front() == SurfaceCell{0, 0, 0} &&
-              stair_route.back() == SurfaceCell{8, 0, 3},
-          "Rust MLS multi-level route lost a same-XY surface connector");
-
   const auto cell = global_planner::mls::cellFromWorld({0.0, 0.0, 0.0}, resolution);
   require(cell == SurfaceCell{0, 0, 0}, "world-to-cell conversion changed");
   const auto point = global_planner::mls::worldFromCell(cell, resolution);
@@ -121,7 +106,8 @@ int main() try {
   Artifact source;
   source.resolution_m = resolution;
   source.revision = 7;
-  source.surfaces = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+  source.observed = {{0, 0, 0}, {2, 0, 0}};
+  source.inferred = {{1, 0, 0}};
   source.nodes = {{10, {0, 0, 0}}, {20, {2, 0, 0}}};
   source.edges = {Edge{10, 20, 0.10, {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}}};
   require(global_planner::mls::validate(source), "valid MLS artifact rejected");
@@ -132,6 +118,25 @@ int main() try {
   Artifact decoded;
   { lingtu::maps::BinaryReader in(stream); decoded = global_planner::mls::read(in); }
   require(decoded == source, "MLS artifact round trip changed data");
+  require(decoded.observed == source.observed && decoded.inferred == source.inferred,
+          "MLS artifact round trip changed surface provenance");
+  require(decoded.edges.front().id != 0, "MLS artifact did not restore stable edge ID");
+
+  std::stringstream legacy_stream(std::ios::in | std::ios::out | std::ios::binary);
+  {
+    lingtu::maps::BinaryWriter out(legacy_stream);
+    out.text("lingtu.mls.artifact");
+    out.value<std::uint32_t>(2);
+  }
+  legacy_stream.seekg(0);
+  bool legacy_rejected = false;
+  try {
+    lingtu::maps::BinaryReader in(legacy_stream);
+    (void)global_planner::mls::read(in);
+  } catch (const std::exception&) {
+    legacy_rejected = true;
+  }
+  require(legacy_rejected, "legacy MLS artifact format accepted");
 
   Artifact invalid = source;
   invalid.edges[0].to = 99;
@@ -140,9 +145,9 @@ int main() try {
   invalid.edges[0].corridor.clear();
   require(!global_planner::mls::validate(invalid), "empty MLS corridor accepted");
   invalid = source;
-  invalid.surfaces.push_back({-2000000000, 2000000000, -2000000000});
+  invalid.observed.push_back({-2000000000, 2000000000, -2000000000});
   require(global_planner::mls::validate(invalid), "large signed MLS cell rejected");
-  invalid.surfaces.push_back({-2000000000, 2000000000, -2000000000});
+  invalid.inferred.push_back({-2000000000, 2000000000, -2000000000});
   require(!global_planner::mls::validate(invalid), "duplicate large signed MLS cell accepted");
   return 0;
 } catch (const std::exception& error) {

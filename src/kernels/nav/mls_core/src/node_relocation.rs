@@ -30,7 +30,9 @@ pub(crate) fn relocate_nodes(
         .map(|node| node.cell)
         .collect();
     for (id, old_cell) in old_nodes {
-        if next_cells.contains(&old_cell) && !window.contains(old_cell) {
+        // A node keeps its stable cell while that surface still exists. The
+        // repair window only decides which incident edges are rebuilt.
+        if next_cells.contains(&old_cell) {
             continue;
         }
         let candidate = next_cells

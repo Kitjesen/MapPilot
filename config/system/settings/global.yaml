@@ -17,8 +17,6 @@ native_nav:
     # Inferred support remains separate from measured OctoMap occupancy.
     search_resolution_m: 0.10  # Nominal XY spacing; exhausted searches retry at map resolution.
     surface_closing_radius_m: 0.20
-    surface_max_hole_area_m2: 0.16
-    surface_max_slope: 0.7  # Geometry fitting limit, separate from robot climb limits.
 
     # Direct-only mode requires observed support in the same column.
     ground_support: true

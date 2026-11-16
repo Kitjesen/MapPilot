@@ -43,8 +43,8 @@ struct SurfaceStats {
 class SurfaceIndex {
  public:
   SurfaceIndex(const octomap::OcTree& tree, double headroom, double radius,
-               double max_hole_area_m2 = ::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2,
-               double max_slope = ::lingtu::settings::global::native_nav::global::surface_max_slope);
+               double max_hole_area_m2 = ::lingtu::settings::maps::maps::surface::max_hole_area_m2,
+               double max_slope = ::lingtu::settings::maps::maps::surface::max_slope);
   std::optional<int> below(int x, int y, int z) const;
   bool occupied(int x, int y, int minimum_z, int maximum_z) const;
   bool inferred(int x, int y, int minimum_z, int maximum_z) const;

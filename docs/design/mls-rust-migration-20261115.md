@@ -1,137 +1,99 @@
-# MLS Rust 迁移路线
+# MLS Rust 迁移
 
-日期：2026-11-15
+更新日期为 2026-11-16。
 
-目标是让 Rust 接管多层表面和全局图算法，让 C++ 保留 OctoMap 输入、机器人几何
-复核和现有导航运行入口。迁移完成后，生产规划器仍然使用同一套 body、support、
-step、slope 和 continuous sweep 合同。
+生产链由 OctoMap 快照、Rust MLS prepared artifact 和 OctoPlanner3D 请求适配组成。
+Rust 准备 observed/inferred 多层表面及稀疏路网，C++ 将候选表面格转换为机身位置，
+检查端点连接及路线几何。底层仍使用固定版本 OctoPlanner3D 和 DimOS 的算法来源，
+本地适配范围见 `src/nav/cpp/planning/global/octoplanner/SURFACE_NOTICE`。
 
-## 当前对比
+## 当前职责
 
-同一份 arrival-box OctoMap 的现有结果：
+| 数据或计算 | 拥有者 |
+| --- | --- |
+| 原始占据、已知 free 与未知证据 | 原生 OctoMap 快照 |
+| observed/inferred 多层表面 | Rust `lingtu_mls_core` |
+| 四邻域、wall distance、稀疏节点与 Voronoi corridor | Rust `lingtu_mls_core` |
+| 端点吸附、图路线、一次受阻绕行重试 | Rust graph query |
+| 原始地面支撑、机身净空、步高、坡度与连续扫掠 | C++ OctoMap 几何查询 |
+| 推断补面支撑与路线高度拟合 | Rust prepared surface query |
+| 地图身份、请求取消、缓存文件与 DDS endpoint | C++ `PlannerSession` 与 native endpoint |
+| 实时避障、局部轨迹和速度跟踪 | 现有 SCAN 与执行链 |
 
-| 阶段 | DimOS | LingTu Rust | LingTu C++ |
+`PlannerArtifact` 持有一个 Rust graph handle。原来的 C++ `SurfaceIndex` 已退出生产
+准备、规划查询和 prepared cache。独立 C++ `SurfaceGraph` 用于算法回归测试。
+生产请求查询 Rust 候选，逐段复核几何。几何拒绝时，最多携带一个拒绝格向 Rust
+请求绕行，再进入原有 XYZ 网格 A* 及其细分辨率重试。
+
+表面候选按列净空筛选，因此某个低机身姿态仍可通过的地面可能没有进入图候选。
+原始支撑查询直接读取 OctoMap 中暴露的占据表面，XYZ 回退可以继续使用这些地面。
+Rust 推断的补面单独提供支撑，明确观测为 free 的格子不会被补成地面。
+
+机器人半径、上下净空与支撑高度来自所选 RobotConfig，搜索和补面参数来自解析后
+的 `native_nav.global`。Rust 表面准备使用 closing 半径和列净空。
+`config/system/settings/maps.yaml` 的 `maps.surface.max_hole_area_m2` 与 `max_slope`
+为 C++ 地图清理的构建默认值，修改后重新构建原生程序。
+本地几何复核包含 LingTu 的机身和运动约束，参数不能解释成
+DimOS 或原版 OctoPlanner3D 的默认值。
+
+## 准备与查询
+
+准备阶段将 OctoMap 的 occupied 叶节点展开，调用 Rust 提取表面，并只对拟补格
+查询原生 free 证据。空闲体积由 OctoMap 持有。Rust 构图后，导航保留表面和图。
+
+地图或 `PlannerConfig::preparation()` 中的参数变化会重新准备。目标 XYZ/XY/Z
+容差、端点吸附半径、迭代预算和同层偏好更新本次查询，复用已有 artifact。
+当前 regional update 算法为首次实际更新延迟创建其增量图状态，避免初次构图与
+缓存恢复重复构图。
+
+取消回调在 C++ 准备循环、Rust 调用前后、候选验证及平滑后查询。取消结果会清空
+路线并报告 `Cancelled`。当前 Rust FFI 内部尚无取消回调，单次调用耗时仍影响取消
+响应时间。
+
+## 持久化
+
+`PlannerSession` 在地图目录 `.nav/profile-N.bin` 保存可重建的派生 artifact。
+外层格式为 `lingtu.navigation.prepared.7`，内容包含地图身份、源文件信息、准备参数、
+Rust observed/inferred cells、nodes、edges、corridors 及 ABI 版本。旧格式失效后
+重新准备。保存不会改写原始点云或 OctoMap。
+
+恢复路径通过 `createFromGraph()` 安装已保存的表面和图。图更新状态按需创建，
+缓存加载无需再次构图。地图源信息、准备参数或 ABI 不匹配时重建该 profile。
+
+原始 occupied/free 更新只适用于持有对应源数据的 Rust handle。导航创建及缓存
+恢复的 surface/graph handle 拒绝该入口，避免把 known-free 更新误读成 inferred
+surface。mapd 已有 `RegionUpdate` 数据契约，生产导航尚未接入这个增量输入，地图
+变化目前仍重新准备完整 artifact。
+
+## 历史同图对照
+
+以下数值来自 2026-11-15 的 arrival-box 离线对照，供说明迁移过程。当前版本需按
+相同地图、参数和端点重新测量，不能沿用这些数字作为本次构建或现场验收结果。
+
+| 指标 | DimOS | LingTu Rust | 历史 LingTu C++ |
 | --- | ---: | ---: | ---: |
 | surface cells | 2,241 | 2,240 | 2,240 |
 | sparse nodes | 29 | 29 | 36 |
 | graph edges | 47 | 45 | 43 |
 | graph components | 2 | 2 | 9 |
 | graph build | 6.86 ms 完整冷构图 | 8.6–14.1 ms | 11.4–22.3 ms |
-| geometry contract | 未提供 LingTu body 合同 | C++ 复核通过 | 原生通过 |
 
-Rust graph 已经接入生产 `PlannerArtifact` 的候选查询。端点使用 Rust 图查询和
-配置的吸附半径，C++ 负责把候选点转换为机身姿态并做几何复核。当前仍缺少 Rust
-surface 查询替换、prepared cache 的 Rust 序列化，以及把几何拒绝重新交给 Rust
-继续选路的完整 detour 查询。
+逐次试验记录保存在 `docs/research/mls-surface-compare-arrival-box-20261115.md`。
+曾用于比较 C++ `SurfaceIndex` 与 Rust 的 `mls_surface_compare.cpp` 已退役，历史版本
+可从提交 `79f9562a` 获取。当前全局请求和路线几何验证使用
+`octoplanner3d_headless`、`octoplanner3d_verify_path` 及相应 smoke。
 
-## 目标边界
+## 本轮验证与剩余范围
 
-Rust 最终拥有：
+2026-11-16 在独立集成工作树验证：Rust 25 项、Windows Release 全局规划 CTest
+19 项、配置与 RunPlan 19 项全部通过。地图模块编译成功，两个迁移头文件相关测试
+通过；`test_active_octomap_gate` 也已独立构建并验证新快照恢复同一份地面路网。
+GitHub 的 Linux global job 同时通过 Rust 和全局规划构建与测试。
 
-- occupied/free 输入转换后的 surface extraction；
-- observed/inferred 多层 surface artifact；
-- 四邻域 adjacency；
-- wall distance 和 sparse nodes；
-- Voronoi ownership 和 predecessor corridor；
-- graph edge cost；
-- endpoint snapping 和 graph query；
-- stable CellId；
-- `update_region` 和缓存恢复；
-- surface、graph、route 的离线诊断数据。
+`prepared_cache_smoke` 对同一地图、参数及端点比较首次准备、内存复用和磁盘恢复，
+验证路线一致、补面保留、查询参数不重建、机身变化切换 profile、原图不变，以及
+截断缓存重新准备。`surface_smoke` 保留已知 free、原始支撑、上下层、机身净空与
+扫掠回归。取消回归验证空路线及规划器可重用，尚不证明 Rust 调用可被中途打断。
 
-C++ 继续拥有：
-
-- OctoMap 读取和地图身份；
-- 机器人机身模型；
-- ground support、body、step、slope 和 continuous sweep 查询；
-- no-go 和临时占据接入；
-- DDS、PlannerSession 和现有 nav endpoint；
-- 最终可执行路线复核。
-
-这不是保留两套表面图长期并行。C++ 的 SurfaceIndex/SurfaceGraph 只在迁移期间作为
-对照和几何适配边界，Rust 通过固定接口后再删除 C++ 算法实现。
-
-## 三个替换接口
-
-持有式接口已经落地在 `lingtu_mls_core` C ABI 和
-`global_planner::mls::PreparedArtifactHandle`。C++ smoke 已验证 create、summary、
-surface export、graph export、graph query、region update 和析构。生产
-`PlannerArtifact` 现在同时持有 Rust graph handle，`startPlan()` 先查询 Rust
-候选路线，失败时才回退到 C++ 图并记录原因。
-
-### SurfaceArtifact
-
-Rust C ABI 现在返回可持有的 surface handle，并提供：
-
-```text
-observed cells
-inferred cells
-below(x, y, z)
-inferred(x, y, z-range)
-height(x, y, z, tolerance)
-surface iteration
-```
-
-生产支撑查询已经使用 Rust handle 的 `below` 和 `inferred`，路线平滑和图路线高度
-修正也已经使用 Rust `height`。原始占据、body 净空和 continuous sweep 仍直接读取
-OctoMap。当前没有让两份表面结果在同一个判断中混用。
-
-### GraphArtifact
-
-Rust C ABI 返回可持有的 graph handle，提供：
-
-```text
-nodes
-edges
-corridor
-component ids
-endpoint candidates
-graph query
-```
-
-每条候选 corridor 交给 C++ geometry adapter 复核。Rust graph 查询本身只负责一次
-静态路线搜索，raw route 不通过几何时交给现有 fallback 或外层重新规划。动态执行期间采用
-DimOS `truncate_to_safe` 的职责边界，不在同一次 global query 中循环修改图。
-
-### PlannerArtifact
-
-Rust handle 持有 graph、surface cell 和 revision。生产 `PlannerArtifact` 仍同时持有
-C++ `SurfaceIndex`、C++ `SurfaceGraph` 回退和 Rust graph handle。C++ `PlannerSession`
-负责：
-
-```text
-map identity
-artifact lifetime
-geometry verifier
-query cancellation
-route result
-```
-
-地图没有变化时复用同一个 Rust graph handle。Rust `update_region` 已可用并通过
-smoke，但当前 mapd 仍以新 OctoMap 重新准备整张生产 artifact，尚未把区域 delta 接入。
-
-## 迁移顺序
-
-1. 持有式 Rust artifact、稳定节点 ID、区域更新和 Dijkstra 已完成。
-2. Rust graph 查询已接入生产 `PlannerArtifact`，并保留配置的端点吸附半径。
-3. C++ geometry adapter 负责机身姿态转换、endpoint 连接和最终路线复核。
-4. 在 arrival-box、body-depth/align、stairs、multifloor 和 nav_3d_course 上做同图
-   surface、graph、route 和 geometry 对照。
-5. 将 Rust surface 查询和 prepared cache 接到同一生产 artifact。
-6. 删除 C++ SurfaceGraph，再删除 C++ SurfaceIndex 的算法实现。
-
-## 当前不删除 C++ 图算法的原因
-
-当前 Rust raw surface 已经作为生产 `startPlan()` 的正常 graph 输入，并通过 C++
-几何合同或记录 fallback。C++ `SurfaceGraph` 仍作为拒绝路线时的回退和对照，
-`SurfaceIndex` 仍负责原生 surface 支持查询与回退准备。这两个边界完成后，才能删除
-C++ 图算法。
-
-迁移完成的最低证据是：
-
-- Rust surface 和 C++ surface 逐格对齐；
-- Rust graph 在固定参数下组件和端点接入稳定；
-- Rust route 通过 C++ body、support、step、slope、continuous sweep；
-- warm query 和 `update_region` 可复用；
-- `used_surface_graph` 和 `used_rust_graph` 已出现在正式诊断；
-- 五个正式三维场景回归通过。
+- 接入 mapd regional delta 时再验证增量更新与整图重建的一致性。
+- 分别记录离线、MuJoCo 与实际机器人验证，现场执行仍需独立验收。

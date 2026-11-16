@@ -375,9 +375,6 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
   options.search_resolution_m = optionalDouble(body, "search_resolution_m", options.search_resolution_m);
   options.surface_closing_radius_m = optionalDouble(
     body, "surface_closing_radius_m", options.surface_closing_radius_m);
-  options.surface_max_hole_area_m2 = optionalDouble(
-    body, "surface_max_hole_area_m2", options.surface_max_hole_area_m2);
-  options.surface_max_slope = optionalDouble(body, "surface_max_slope", options.surface_max_slope);
   options.support_height_m = optionalDouble(
     body,
     "support_height_m",
@@ -481,8 +478,6 @@ void emitConstraints(const PlannerOptions & options)
             << options.support_depth_cells << ','
             << "\"search_resolution_m\":" << options.search_resolution_m << ','
             << "\"surface_closing_radius_m\":" << options.surface_closing_radius_m << ','
-            << "\"surface_max_hole_area_m2\":" << options.surface_max_hole_area_m2 << ','
-            << "\"surface_max_slope\":" << options.surface_max_slope << ','
             << "\"support_height_m\":" << options.support_height_m << ','
             << "\"support_height_tolerance_m\":"
             << options.support_height_tolerance_m << ','
@@ -556,6 +551,13 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
             << (result.used_surface_graph ? "true" : "false") << ','
             << "\"used_rust_graph\":"
             << (result.used_rust_graph ? "true" : "false") << ','
+            << "\"rust_fallback\":"
+            << (result.rust_fallback ? "true" : "false") << ','
+            << "\"rust_failure_kind\":\"" << result.rust_failure_kind << "\","
+            << "\"rust_failure\":\"" << result.rust_failure << "\","
+            << "\"rust_query_failures\":" << result.rust_query_failures << ','
+            << "\"rust_geometry_rejections\":" << result.rust_geometry_rejections << ','
+            << "\"rust_other_failures\":" << result.rust_other_failures << ','
             << "\"goal_error_m\":" << result.goal_error_m << ','
             << "\"goal_xy_error_m\":" << result.goal_xy_error_m << ','
             << "\"goal_z_error_m\":" << result.goal_z_error_m << ','

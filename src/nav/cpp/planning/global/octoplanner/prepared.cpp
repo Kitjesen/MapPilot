@@ -2,9 +2,7 @@
 #include "mls_backend.hpp"
 #include "lingtu/maps/io/binary.hpp"
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -20,41 +18,9 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.5";
+constexpr const char* kFormat="lingtu.navigation.prepared.7";
 constexpr std::uint32_t kEndian=0x01020304U;
-struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
-
-::LtMlsGraphConfig rustGraphConfig(
-    const PlannerConfig& config, double resolution) {
-  const int stride = std::max(1, static_cast<int>(std::ceil(
-      config.search_resolution_m / resolution)));
-  const int height_stride = config.max_slope > 0.0
-      ? std::max(stride, static_cast<int>(std::ceil(1.0 / config.max_slope)))
-      : stride;
-  return {
-      stride,
-      height_stride,
-      0,
-      std::max(1, config.obstacle_clearance_radius_cells),
-      static_cast<float>(std::max(0.0, config.obstacle_clearance_weight)),
-      static_cast<float>(std::max(0.0, config.floor_change_penalty)),
-      static_cast<float>(std::max(0.0, config.max_slope)),
-      std::max(0, static_cast<int>(std::ceil(config.max_step_height / resolution))),
-      height_stride};
-}
-
-::LtMlsConfig rustSurfaceConfig(
-    const PlannerConfig& config, double resolution) {
-  return {
-      std::max(0, static_cast<int>(std::ceil(
-          (config.support_height_m + std::max(resolution, config.body_clearance_above_m)) /
-          resolution))),
-      static_cast<std::uint32_t>(std::max(0.0, std::ceil(
-          config.surface_closing_radius_m / resolution))),
-      static_cast<std::uint64_t>(std::max(0.0, std::floor(
-          config.surface_max_hole_area_m2 / (resolution * resolution)))),
-      static_cast<float>(config.surface_max_slope)};
-}
+struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,21> preparation; };
 
 Header readHeader(BinaryReader& in) {
   if(in.text()!=kFormat || in.value<std::uint32_t>()!=kEndian)
@@ -96,31 +62,21 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
     if(!lingtu::nav::plan::sameMapIdentity(header.map,identity) ||
         header.preparation!=config.preparation() || header.size!=std::filesystem::file_size(source) ||
         header.modified!=std::filesystem::last_write_time(source).time_since_epoch().count())return false;
-    auto surface=global_planner::SurfaceIndex::read(in);
-    const bool needs_graph=config.ground_support && config.support_height_m>0 && !config.lowest_traversable_only;
-    if(surface->resolution()!=map->getResolution())
-      throw std::runtime_error("prepared map does not match geometry");
-    const auto has_rust=in.value<std::uint8_t>();
-    if(has_rust>1 || bool(has_rust)!=needs_graph)
-      throw std::runtime_error("prepared map does not contain Rust MLS artifacts");
-    std::shared_ptr<global_planner::mls::PreparedArtifactHandle> rust_surface;
-    std::shared_ptr<global_planner::mls::PreparedArtifactHandle> rust_graph;
-    if(has_rust) {
-      const auto source=global_planner::mls::readSourceMap(in);
-      const auto raw=global_planner::mls::readSurfaceMap(in);
-      const auto graph_surface=global_planner::mls::readSurfaceMap(in);
-      const auto rust_config=rustGraphConfig(config,map->getResolution());
-      const auto surface_config=rustSurfaceConfig(config,map->getResolution());
-      rust_surface=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
-          global_planner::mls::PreparedArtifactHandle::create(
-              source.occupied,source.known_free,surface_config,rust_config,1));
-      rust_graph=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
-          global_planner::mls::PreparedArtifactHandle::createFromSurface(
-              graph_surface.observed,graph_surface.inferred,rust_config,1));
-    }
+    auto rust_artifact=global_planner::mls::read(in,false);
+    if(rust_artifact.resolution_m!=map->getResolution())
+      throw std::runtime_error("prepared Rust graph resolution mismatch");
+    const auto rust_abi=in.value<std::uint32_t>();
+    if(rust_abi!=lt_mls_abi_version())
+      throw std::runtime_error("prepared map Rust MLS ABI changed");
     if(!in.complete())throw std::runtime_error("unexpected prepared map tail");
-    planner.setOctomap(map,std::move(surface),{},
-        std::move(rust_surface),std::move(rust_graph));
+    global_planner::mls::RustGraph rust_graph{
+        std::move(rust_artifact.nodes),std::move(rust_artifact.edges)};
+    auto restored=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
+        global_planner::mls::PreparedArtifactHandle::createFromGraph(
+            rust_artifact.observed,rust_artifact.inferred,rust_graph,
+            global_planner::mls::rustGraphConfig(config,map->getResolution()),
+            rust_artifact.revision));
+    planner.setPreparedRustGraph(map,std::move(restored));
     std::fprintf(stderr,"OctoPlanner3D restored prepared map: %s\n",path.string().c_str());
     return true;
   } catch(const std::exception& error) {
@@ -148,7 +104,9 @@ void savePrepared(const std::filesystem::path& directory,const std::filesystem::
       out.value<std::uint64_t>(std::filesystem::file_size(source));
       out.value<std::int64_t>(std::filesystem::last_write_time(source).time_since_epoch().count());
       for(double value:config.preparation())out.value(value);
-      planner.writePrepared(out);stream.flush();
+      planner.writePrepared(out);
+      out.value<std::uint32_t>(lt_mls_abi_version());
+      stream.flush();
       if(!stream)throw std::runtime_error("cannot flush prepared map");
     }
 #if defined(_WIN32)

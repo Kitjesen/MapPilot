@@ -2,6 +2,11 @@
 
 日期：2026-11-15
 
+本文保留 2026-11-15 各阶段的历史结果。文中的“当前”和运行命令均指对应试验版本。
+使用 C++ `SurfaceIndex` 的 `mls_surface_compare.cpp` 已退役，历史源码可从
+`79f9562a` 获取。当前生产入口及迁移状态见
+[`mls-rust-migration-20261115.md`](../design/mls-rust-migration-20261115.md)。
+
 本轮使用同一份 OctoMap 文件：
 
 ```text
@@ -10,7 +15,7 @@ build/arrival-box-20261027/occlusion-map-final/same_source_map/octomap.ot
 
 地图分辨率为 0.10 m。占据叶节点展开为相同的整数体素列后，分别输入 Rust `lingtu_mls_core` 和 C++ `SurfaceIndex`。表面图统计使用同一个 C++ `SurfaceGraph` 和同一套搜索配置，隔离表面表示差异。全局几何复核使用当前 C++ `OctoPlanner3D`，起点和终点来自已通过的 MuJoCo 场景请求。
 
-运行命令：
+历史运行命令：
 
 ```powershell
 build/artifact-check/Release/octoplanner3d_mls_surface_compare.exe `
@@ -127,7 +132,7 @@ components`。节点和边的数量级已经接近，但 Rust 仍保留了 C++ �
 这一步的结果足以进入下一阶段的 Rust node/edge 接口对照，但不足以宣称
 现场默认规划器已经替换。
 
-当前复测命令仍为：
+该版本的历史复测命令为：
 
 ```powershell
 build/artifact-check/Release/octoplanner3d_mls_surface_compare.exe `
@@ -156,59 +161,13 @@ handle，`startPlan()` 先查询 Rust 路线，并对端点连接和每段路线
 查询中看到 `used_rust_graph=true`，但还不代表 C++ `SurfaceGraph` 已删除或 Rust
 surface/cache 已完成迁移。
 
-## raw OctoMap provider 对齐（2026-11-15）
 
-本轮修正了生产接入中的一个参数归属错误。`SurfaceIndex` 准备表面时使用
-`support_height_m + max(resolution, body_clearance_above_m)` 作为机身净空，
-Rust 图接入之前却用单个地图分辨率再次读取表面。两者不一致会使同一张地图产生
-不同的表面集合。Rust 接入现在复用准备阶段的净空，并直接从同一份 OctoMap
-occupied/free leaves 构造 `PreparedArtifactHandle`。
+## 2026-11-16 迁移收口
 
-C++ `SurfaceGraph` 的输入也改为同一个准备净空。随后仍由
-`surfaceStance()` 和 body geometry 过滤可执行节点，这是执行约束产生的节点数量
-差异，不再是表面层选择差异。
+生产 `PlannerArtifact` 持有 Rust 表面和路网。候选经 C++ OctoMap 几何复核，拒绝后
+最多进行一次 Rust 绕行重试，再回退 XYZ 网格 A*。C++ `SurfaceIndex` 已退出生产。
+原始支撑直接查询 OctoMap，Rust 支撑查询用于 inferred 补面，避免图候选的净空
+筛选丢失可用原始地面。prepared cache 使用 `.7` 格式恢复已保存的 Rust 表面和图。
 
-生产 artifact 现在分别持有两个 Rust handle。完整 raw surface 同时用于
-`below/inferred/height` 查询和 Rust graph/Dijkstra，C++ 只在候选路线的端点、边和
-连续扫掠上做机器人几何复核。几何复核拒绝 raw 路线时，才按需构建 C++
-`SurfaceGraph` fallback，不再把 `SurfaceIndex` 的 stance 子集作为 Rust graph 的
-第二份输入。
-
-同图 A/B 结果：
-
-| 地图 | raw provider | observed / inferred | 图与 C++ SurfaceIndex | 几何复核 |
-| --- | --- | --- | --- | --- |
-| `arrival-box-20261027/occlusion-map-final` | `true` | 2240 / 0 | 36 / 43 / 9，一致 | 通过 |
-| `body-depth-20261025/baseline/align` | `true` | 3456 / 0 | 11 / 13 / 3，一致 | 通过 |
-| `body-depth-20261025/baseline/upper_floor` | `true` | 9600 / 0 | 28 / 48 / 2，一致 | 两边都没有可接入端点 |
-
-生产 planner 复测补充：arrival-box 和 body-depth align 都报告
-`used_rust_graph=true`，两条路线均通过 C++ body/support/step/slope/sweep 复核。
-upper_floor 的 raw surface 已对齐，但起终点无法接入，Rust 查询随后回退到 C++
-graph，最终仍然不生成路线。
-
-当 raw 路线被 C++ 几何复核拒绝时，当前仍回退到已经验证过的 C++
-`SurfaceGraph` 输出。这个回退只发生在本次路线查询，不增加重复表面提取，也不改变
-C++ 的 body、support、step、slope 和 continuous sweep 复核。
-
-Rust graph 的节点稀疏化现在会保留同一 XY 柱中不同 Z 的节点。此前 3-D 距离阈值
-可能在同一连通 surface 中丢掉较近的堆叠层，新增的多层回归覆盖了这一情况。
-
-本轮没有删除 C++ `SurfaceIndex` 或 `SurfaceGraph`。下一步是把上述同图集合对照
-固化成自动回归，再迁移 prepared cache，最后删除 C++ 表面算法。
-
-## cache 与 fallback 收敛（2026-11-15）
-
-prepared cache 已升级到 `lingtu.navigation.prepared.4`。缓存保存 C++ surface
-索引和两个 Rust surface cell 集合，恢复时直接建立 Rust surface/graph handle。
-C++ `SurfaceGraph` 不再写入或随缓存恢复。Rust route 失败后才按需构建 C++
-SurfaceGraph 作为 fallback，这条路径仍使用同一套 geometry adapter。
-
-Rust cache 现在同时保存 occupied/free source evidence。恢复时调用 Rust
-`PreparedArtifactHandle::create()`，所以 `below/inferred/height/occupied` 查询来自
-同一个 raw artifact。C++ body geometry 直接读取 OctoMap，并复用已有 block cache，
-SurfaceIndex 不再参与 body occupancy 和 region collision 查询。
-
-prepared cache smoke 已覆盖首次保存、磁盘恢复、inferred support、机身参数、地图
-版本、源文件时间戳、查询预算、no-go 和截断缓存，全部通过。Rust route 成功的恢复
-路径不会重新打印 surface provider 准备日志，说明缓存没有重新从 OctoMap 构图。
+本文中的 C++/Rust 表面对齐、构图耗时和通过数量均保留其当时版本和地图范围。
+本次构建、取消、缓存恢复以及真实机器人执行的结果由对应验证记录给出。

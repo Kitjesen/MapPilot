@@ -9,7 +9,7 @@
 
 #include <octomap/OcTree.h>
 
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 #include "lingtu/maps/layers/surface.hpp"
 #include "lingtu/maps/io/binary.hpp"
 

@@ -82,8 +82,8 @@ SLAM 状态和导航输入门控中。因此，mapd 的 `TRACKING`、`live` 不�
 | `layers/rolling_occupancy.hpp` | 有界滚动 3D 占据、射线清除、膨胀碰撞快照和已观测/未知证据；输出 `/maps/local_collision`。 |
 | `layers/voxel.hpp` | 保留观测表面的体素点云、局部窗口快照和容量/更新统计。 |
 | `layers/block_grid.hpp` | 稀疏分块的累计 3D 占据网格，支持射线更新、ROI 快照和二进制持久化。 |
-| `layers/ground_surface.hpp` | 在同一 XY 保留不同高度证据的局部地面聚类、平面拟合与坡度/粗糙度估计。 |
-| `layers/surface_projection.hpp` | 把观测地面与局部 3D 占据投影成展示用支撑/障碍图。 |
+| `legacy/ground_surface.hpp` | 在同一 XY 保留不同高度证据的局部地面聚类、平面拟合与坡度/粗糙度估计。 |
+| `legacy/surface_projection.hpp` | 把观测地面与局部 3D 占据投影成展示用支撑/障碍图。 |
 | `layers/grid.hpp` | `Grid2D` 及网格创建、几何比较等基础操作。 |
 | `layers/elevation.hpp` | 高程投影及其结果类型。 |
 | `layers/esdf.hpp` | 二维距离场和梯度计算，用于地图投影。 |

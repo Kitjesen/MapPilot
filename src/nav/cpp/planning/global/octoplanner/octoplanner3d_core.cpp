@@ -1,6 +1,5 @@
 #include "octoplanner3d_core.hpp"
 #include "prepared.hpp"
-#include "surface_graph.hpp"
 
 #include <octomap/AbstractOcTree.h>
 #include <octomap/OcTree.h>
@@ -259,8 +258,6 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   global_planner::PlannerConfig config;
   config.search_resolution_m = nonnegativeOrDefault(options.search_resolution_m, 0.10);
   config.surface_closing_radius_m = nonnegativeOrDefault(options.surface_closing_radius_m, 0.20);
-  config.surface_max_hole_area_m2 = nonnegativeOrDefault(options.surface_max_hole_area_m2, PlannerOptions{}.surface_max_hole_area_m2);
-  config.surface_max_slope = nonnegativeOrDefault(options.surface_max_slope, PlannerOptions{}.surface_max_slope);
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
     config.robot_radius = options.robot_radius;
   }
@@ -464,6 +461,12 @@ PlanResult runPreparedPlanner(
   result.options = request.options;
   result.used_surface_graph = search_info.used_surface_graph;
   result.used_rust_graph = search_info.used_rust_graph;
+  result.rust_fallback = search_info.rust_fallback;
+  result.rust_failure_kind = search_info.rust_failure_kind;
+  result.rust_failure = search_info.rust_failure;
+  result.rust_query_failures = search_info.rust_query_failures;
+  result.rust_geometry_rejections = search_info.rust_geometry_rejections;
+  result.rust_other_failures = search_info.rust_other_failures;
   copyOverlayIdentity(request, result);
   result.cancelled = search_info.outcome == global_planner::OctoPlanner3D::SearchInfo::Outcome::Cancelled ||
                      (cancel_check && cancel_check());
@@ -529,7 +532,7 @@ PlanResult runWithLoadedMap(
   planner.setNoGoRegions(request.no_go_regions);
   try {
     planner.setOctomap(map);
-  } catch (const global_planner::SurfaceGraph::Cancelled &) {
+  } catch (const global_planner::OctoPlanner3D::Cancelled &) {
     return cancelledResult(request,started);
   }
   return runPreparedPlanner(planner, request, cancel_check, started);
@@ -610,9 +613,10 @@ struct PlannerSession::Impl {
       else {
         prepared->setOctomap(map);
         if(cancel_check && cancel_check())return false;
-        savePrepared(cache_path,map_path,map_identity,config,*prepared);
+        if (prepared->artifact()->rust_graph)
+          savePrepared(cache_path,map_path,map_identity,config,*prepared);
       }
-    } catch (const global_planner::SurfaceGraph::Cancelled &) {
+    } catch (const global_planner::OctoPlanner3D::Cancelled &) {
       return false;
     }
     prepared->setExternalPreblockedRegions(toPlannerBlockedRegions(requested_overlay));

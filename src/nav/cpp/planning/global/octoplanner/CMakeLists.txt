@@ -86,12 +86,6 @@ else()
   )
 endif()
 
-if(NOT TARGET lingtu_maps_surface)
-  add_library(lingtu_maps_surface STATIC "${LINGTU_NAV_CPP_DIR}/../../maps/cpp/layers/surface.cpp")
-  target_include_directories(lingtu_maps_surface PUBLIC "${LINGTU_NAV_CPP_DIR}/../../maps/include")
-  target_link_libraries(lingtu_maps_surface PUBLIC "$<BUILD_INTERFACE:lingtu_settings>" octomap_vendor octomath_vendor)
-endif()
-
 set(LINGTU_MLS_CORE_DIR "${LINGTU_NAV_CPP_DIR}/../../kernels/nav/mls_core")
 find_program(CARGO_EXECUTABLE cargo REQUIRED)
 set(LINGTU_MLS_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargo-mls")
@@ -135,9 +129,10 @@ add_dependencies(lingtu_mls_core lingtu_mls_core_build)
 add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
   mls_backend.cpp
-  surface_graph.cpp
   route_smoothing.cpp
 )
+# Raw occupancy stays in OctoMap. Rust MLS owns prepared surfaces and the sparse graph.
+# Geometry rejection can request one bounded Rust detour before the grid fallback.
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
     "${LINGTU_NAV_CPP_DIR}/../../maps/include"
@@ -146,7 +141,6 @@ target_include_directories(octoplanner3d_global_planner
     "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
 )
 target_link_libraries(octoplanner3d_global_planner
-  PUBLIC lingtu_maps_surface
   PUBLIC lingtu_mls_core
   PUBLIC "$<BUILD_INTERFACE:lingtu_settings>"
   PUBLIC
@@ -193,7 +187,6 @@ target_link_libraries(octoplanner3d_runtime
     "$<BUILD_INTERFACE:lingtu_settings>"
   PRIVATE
     octoplanner3d_global_planner
-    lingtu_maps_surface
 )
 if(TARGET lingtu_maps_artifacts)
   target_link_libraries(octoplanner3d_runtime PRIVATE lingtu_maps_artifacts)
@@ -257,13 +250,6 @@ set_target_properties(octoplanner3d_verify_path PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 
-add_executable(octoplanner3d_mls_surface_compare mls_surface_compare.cpp)
-target_link_libraries(octoplanner3d_mls_surface_compare PRIVATE octoplanner3d_global_planner)
-set_target_properties(octoplanner3d_mls_surface_compare PROPERTIES
-  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
-  INSTALL_RPATH "$ORIGIN"
-)
-
 add_executable(octoplanner3d_make_test_octomap make_test_octomap.cpp)
 target_link_libraries(octoplanner3d_make_test_octomap
   PRIVATE
@@ -275,10 +261,16 @@ set_target_properties(octoplanner3d_make_test_octomap PROPERTIES
   INSTALL_RPATH "$ORIGIN"
 )
 if(BUILD_TESTING)
+  add_executable(octoplanner3d_start_evidence_smoke start_evidence_smoke.cpp)
+  target_link_libraries(octoplanner3d_start_evidence_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_start_evidence_smoke COMMAND octoplanner3d_start_evidence_smoke)
+  add_executable(octoplanner3d_surface_smoke surface_smoke.cpp)
+  target_link_libraries(octoplanner3d_surface_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_surface_smoke COMMAND octoplanner3d_surface_smoke)
   add_executable(octoplanner3d_prepared_surface_smoke prepared_surface_smoke.cpp)
   target_link_libraries(octoplanner3d_prepared_surface_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_prepared_surface_smoke COMMAND octoplanner3d_prepared_surface_smoke)
-  add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp)
+  add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp surface_graph.cpp)
   target_link_libraries(octoplanner3d_surface_graph_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_surface_graph_smoke COMMAND octoplanner3d_surface_graph_smoke)
   add_executable(octoplanner3d_mls_backend_smoke mls_backend_smoke.cpp)
@@ -287,12 +279,6 @@ if(BUILD_TESTING)
   add_executable(octoplanner3d_route_smoothing_smoke route_smoothing_smoke.cpp)
   target_link_libraries(octoplanner3d_route_smoothing_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_route_smoothing_smoke COMMAND octoplanner3d_route_smoothing_smoke)
-  add_executable(octoplanner3d_start_evidence_smoke start_evidence_smoke.cpp)
-  target_link_libraries(octoplanner3d_start_evidence_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
-  add_test(NAME octoplanner3d_start_evidence_smoke COMMAND octoplanner3d_start_evidence_smoke)
-  add_executable(octoplanner3d_surface_smoke surface_smoke.cpp)
-  target_link_libraries(octoplanner3d_surface_smoke PRIVATE octoplanner3d_global_planner)
-  add_test(NAME octoplanner3d_surface_smoke COMMAND octoplanner3d_surface_smoke)
   add_executable(test_body_geometry "${LINGTU_NAV_CPP_DIR}/../../../tests/nav/cpp/test_body_geometry.cpp")
   target_link_libraries(test_body_geometry PRIVATE lingtu_nav_body)
   add_test(NAME test_body_geometry COMMAND test_body_geometry)
@@ -319,6 +305,7 @@ if(BUILD_TESTING)
   target_link_libraries(octoplanner3d_queue_node_compare_smoke PRIVATE lingtu_settings)
   target_include_directories(octoplanner3d_queue_node_compare_smoke
     PRIVATE
+      "${LINGTU_NAV_CPP_DIR}/../../maps/include"
       "${OCTOPLANNER3D_SOURCE_DIR}/planner/include"
       "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
       "${OCTOMAP_INCLUDE_DIR}"

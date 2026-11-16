@@ -54,10 +54,10 @@ int main() try {
   require(session.run(path,identity,request).failure_reason=="start_temporary_obstacle",
           "initial-body exemption erased an explicit forbidden region");
   request.temporary_overlay={};
-  request.start.x=.525;
-  request.start.z=.7;
+  // The actual start admits departure without support observations, so probe unsupported air at the goal.
+  request.goal={.525,.025,.7,{}};
   const auto unsupported=session.run(path,identity,request);
-  require(!unsupported.ok, "free air fabricated ground support");
+  require(!unsupported.ok, "free air fabricated goal support");
   tree.updateNode(-.975,.025,.125,true);
   tree.updateInnerOccupancy();
   require(tree.write(path.string()), "could not update legacy fixture");

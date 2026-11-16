@@ -668,6 +668,7 @@ class Follower::Impl {
   }
 
   void stopLinear() {
+    hasApplied_ = false;
     path_.stopLinear();
     spline_.stopLinear();
   }

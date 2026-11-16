@@ -4,6 +4,7 @@
 #include "lingtu_mls_core.h"
 #include "lingtu/maps/io/binary.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -38,9 +39,12 @@ struct Edge {
   std::uint32_t to{0};
   double cost{0.0};
   std::vector<SurfaceCell> corridor;
+  // Stable for the lifetime of the endpoint node IDs. Legacy artifacts derive
+  // this value from from/to while they are read.
+  std::uint64_t id{0};
 
   bool operator==(const Edge& other) const {
-    return from == other.from && to == other.to && cost == other.cost &&
+    return id == other.id && from == other.from && to == other.to && cost == other.cost &&
            corridor == other.corridor;
   }
 };
@@ -48,13 +52,26 @@ struct Edge {
 struct Artifact {
   double resolution_m{0.0};
   std::uint64_t revision{0};
-  std::vector<SurfaceCell> surfaces;
+  std::vector<SurfaceCell> observed;
+  std::vector<SurfaceCell> inferred;
   std::vector<Node> nodes;
   std::vector<Edge> edges;
 
   bool operator==(const Artifact& other) const {
+    const auto same_edge = [](const Edge& lhs, const Edge& rhs) {
+      const auto id = [](const Edge& edge) {
+        if (edge.id != 0) return edge.id;
+        const auto a = std::min(edge.from, edge.to);
+        const auto b = std::max(edge.from, edge.to);
+        return (std::uint64_t{a} << 32) | std::uint64_t{b};
+      };
+      return id(lhs) == id(rhs) && lhs.from == rhs.from && lhs.to == rhs.to &&
+             lhs.cost == rhs.cost && lhs.corridor == rhs.corridor;
+    };
     return resolution_m == other.resolution_m && revision == other.revision &&
-           surfaces == other.surfaces && nodes == other.nodes && edges == other.edges;
+           observed == other.observed && inferred == other.inferred &&
+           nodes == other.nodes && edges.size() == other.edges.size() &&
+           std::equal(edges.begin(), edges.end(), other.edges.begin(), same_edge);
   }
 };
 
@@ -62,16 +79,6 @@ struct SurfaceMap {
   std::vector<SurfaceCell> observed;
   std::vector<SurfaceCell> inferred;
 };
-
-struct SourceMap {
-  std::vector<SurfaceCell> occupied;
-  std::vector<SurfaceCell> known_free;
-};
-
-void writeSurfaceMap(lingtu::maps::BinaryWriter& out, const SurfaceMap& surface);
-SurfaceMap readSurfaceMap(lingtu::maps::BinaryReader& in);
-void writeSourceMap(lingtu::maps::BinaryWriter& out, const SourceMap& source);
-SourceMap readSourceMap(lingtu::maps::BinaryReader& in);
 
 struct RustGraphSummary {
   std::uint64_t nodes{0};
@@ -84,6 +91,13 @@ struct RustGraphSummary {
 struct RustGraph {
   std::vector<Node> nodes;
   std::vector<Edge> edges;
+};
+
+struct RustRouteCheckResult {
+  bool valid{false};
+  std::uint32_t failure_kind{0};
+  std::int32_t failed_segment{-1};
+  SurfaceCell failed_cell{};
 };
 
 struct ArtifactSummary {
@@ -133,13 +147,24 @@ public:
       const LtMlsGraphConfig& graph_config,
       std::uint64_t revision = 1);
 
+  static PreparedArtifactHandle createFromGraph(
+      const std::vector<SurfaceCell>& observed,
+      const std::vector<SurfaceCell>& inferred,
+      const RustGraph& graph,
+      const LtMlsGraphConfig& graph_config,
+      std::uint64_t revision = 1);
+
   ArtifactSummary summary() const;
   SurfaceMap surfaces() const;
-  SourceMap source() const;
   std::optional<std::int32_t> below(std::int32_t x, std::int32_t y,
                                     std::int32_t z) const;
   bool inferred(std::int32_t x, std::int32_t y, std::int32_t min_z,
                 std::int32_t max_z) const;
+  bool occupied(std::int32_t x, std::int32_t y, std::int32_t min_z,
+                std::int32_t max_z) const;
+  std::optional<std::int32_t> occupiedBelow(
+      std::int32_t x, std::int32_t y, std::int32_t z) const;
+  bool regionOccupied(const LtMlsRegion& region) const;
   std::optional<double> height(double x, double y, double expected_z,
                                double tolerance, double resolution) const;
   RustGraph graph() const;
@@ -149,6 +174,13 @@ public:
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
                                  std::int32_t max_snap_cells,
                                  std::int32_t max_iterations) const;
+  std::vector<SurfaceCell> queryAvoiding(
+      SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
+      std::int32_t max_iterations,
+      const std::vector<SurfaceCell>& blocked_cells) const;
+  RustRouteCheckResult checkRoute(
+      const std::vector<SurfaceCell>& route,
+      const LtMlsRouteCheckConfig& config) const;
   ArtifactUpdateReport update(
       LtMlsRegion region,
       const std::vector<SurfaceCell>& occupied,
@@ -159,14 +191,13 @@ private:
   LtMlsArtifact* handle_{nullptr};
 };
 
-constexpr std::uint32_t kFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 3;
+
+LtMlsGraphConfig rustGraphConfig(const PlannerConfig& config, double resolution);
 
 SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
                                const std::vector<SurfaceCell>& known_free,
-                               std::int32_t clearance_cells,
-                               std::uint32_t closing_passes,
-                               std::uint64_t max_hole_cells,
-                               double max_slope = 0.70);
+                               const LtMlsConfig& config);
 
 RustGraphSummary summarizeGraphRust(const std::vector<SurfaceCell>& surfaces,
                                     std::int32_t node_spacing_cells = 1,
@@ -189,6 +220,6 @@ PointPose worldFromCell(const SurfaceCell& cell, double resolution_m);
 
 bool validate(const Artifact& artifact, std::string* error = nullptr);
 void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact);
-Artifact read(lingtu::maps::BinaryReader& in);
+Artifact read(lingtu::maps::BinaryReader& in, bool require_complete = true);
 
 }  // namespace global_planner::mls
