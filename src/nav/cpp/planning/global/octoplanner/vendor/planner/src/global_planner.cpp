@@ -1007,7 +1007,8 @@ namespace global_planner
             if (actual_start && ground_support_) {
                 const auto cell = worldToGrid(from.x(), from.y(), from.z());
                 const auto floor = artifact_->surface->below(cell.x, cell.y, cell.z);
-                if (floor && !hasGroundSupport(
+                const bool robot_evidence = hasOccupiedNearZ(cell, 2);
+                if (floor && !robot_evidence && !hasGroundSupport(
                         cell, direct_support_only_, support_depth_cells_)) {
                     if (failure) *failure = TraversabilityFailure::GroundSupport;
                     return false;
@@ -1036,7 +1037,8 @@ namespace global_planner
                     const auto support = worldToGrid(from.x(), from.y(), from.z());
                     const auto floor = artifact_->surface->below(
                         support.x, support.y, support.z);
-                    if (floor && !hasFootprintGroundSupport(
+                    const bool robot_evidence = hasOccupiedNearZ(support, 2);
+                    if (floor && !robot_evidence && !hasFootprintGroundSupport(
                             support, robot_radius_, support_depth_cells_)) {
                         if (failure) *failure = TraversabilityFailure::GroundSupport;
                         return false;
