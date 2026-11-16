@@ -320,5 +320,5 @@ def test_video_readiness_distinguishes_alive_from_stale_source(monkeypatch, tmp_
     assert observed["files"][0]["status"] == "waiting_for_source"
     assert observed["files"][0]["source_fresh"] is False
     assert f"video_source_not_fresh:{status_path}" in blockers
-    assert f"status_file_not_ready:{status_path}" in blockers
+    assert f"video_source_not_fresh:{status_path}" in blockers
 

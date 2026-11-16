@@ -15,7 +15,6 @@ Use this folder only for portable compute kernels and ABI contracts.
 | Path | Role |
 | --- | --- |
 | `nav/path_safety/` | 2D path safety C ABI kernel |
-| `nav/mls_core/` | 3D multi-level surface and sparse graph C ABI kernel |
 | `calibration/camera_lidar_optimizer/` | Camera-LiDAR calibration optimizer kernel |
 
 The production navigation kernel lives with its owning domain at `src/nav/cpp/`.

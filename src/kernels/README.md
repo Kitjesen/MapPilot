@@ -30,7 +30,6 @@ kernel         = pure compute behind a stable C ABI or process ABI
 The current materialized kernel targets are listed in `catalog.py`:
 
 - `path_safety`
-- `mls_core` (offline global-planner surface/graph kernel)
 - `camera_lidar_calibration_optimizer`
 
 The production C++/nanobind navigation kernel is already owned by the nav
@@ -41,9 +40,6 @@ Build the path-safety kernel directly with Cargo:
 
 ```bash
 cargo build --manifest-path src/kernels/nav/path_safety/Cargo.toml --release
-
-# The MLS kernel is currently an offline comparison backend.
-cargo test --manifest-path src/kernels/nav/mls_core/Cargo.toml
 ```
 
 ## Boundary Rule

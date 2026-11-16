@@ -880,7 +880,9 @@ def test_scan_is_a_nav_local_planner_selection(
     assert plan.product == "nav"
     assert plan.product_variant == "standard"
     assert plan.native_nav["local_planner"] == "scan"
-    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
+    assert "cmu" in plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"].split(",")
+    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"].endswith("/thunder")
     assert target.product == "nav"
     assert target.manifest.name == "local_scan.json"
     assert restored == plan

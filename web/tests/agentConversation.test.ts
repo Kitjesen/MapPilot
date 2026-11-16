@@ -249,7 +249,10 @@ function harness(options: { storage?: Map<string, string>; snapshot?: Conversati
   const exports: Record<string, unknown> = {}
   const profileExports: Record<string, unknown> = {}
   const browserStorage = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) }
-  runInNewContext(compile('../src/services/botProfile.ts'), { exports: profileExports, localStorage: browserStorage })
+  runInNewContext(compile('../src/services/botProfile.ts'), {
+    exports: profileExports, localStorage: browserStorage,
+    require: createRequire(new URL('../src/services/botProfile.ts', import.meta.url)),
+  })
   runInNewContext(compile('../src/hooks/useAgentConversation.ts'), {
     exports, require: (name: string) => name.endsWith('/services/botProfile.ts') ? profileExports : name === 'react' ? react : name.endsWith('/useMapSettings.ts') ? { useMapSettings: () => mapSettings } : name.endsWith('/api')
       ? { makeRequestId: () => `message-${++nextId}` } : service,

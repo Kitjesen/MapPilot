@@ -82,7 +82,6 @@ The current catalog is defined in `src/kernels/catalog.py`.
 Materialized targets:
 
 - `path_safety`
-- `mls_core` (offline Rust surface/graph backend, not the field planner default)
 - `camera_lidar_calibration_optimizer`
 
 Navigation C++ kernels that already live in `src/nav/cpp/` stay there.

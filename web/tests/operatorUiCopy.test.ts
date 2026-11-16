@@ -29,7 +29,7 @@ test('scene actions live in the floating dock instead of duplicating in the canv
   assert.match(sceneSource, /const sceneDockControls = <>/)
   assert.match(sceneSource, /createPortal\(sceneDockControls, sceneDockTarget\)/)
   assert.match(topbarSource, /id="scene-actions-slot"/)
-  assert.equal([...sceneSource.matchAll(/<span>当前扫描<\/span>/g)].length, 1)
+  assert.match(sceneSource, /当前扫描，非完整碰撞栅格。/)
   assert.equal([...sceneSource.matchAll(/<span>开始建图<\/span>/g)].length, 1)
   assert.match(sceneSource, /pendingGoal\.z\.toFixed\(2\)/)
 })

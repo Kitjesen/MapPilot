@@ -8,9 +8,9 @@ test('chat replies render links and inline images while guide images retain thei
   const markdown = '[查看结果](https://example.com/result)\n\n![地图预览](/maps/preview.png)\n\n![运动回放](https://example.com/motion.gif)'
   const options = { pageId: 'agent', resolveDocumentLink: () => undefined }
   const chat = renderMarkdown(markdown, { ...options, renderImages: true })
-  assert.match(chat, /<a href="https:\/\/example.com\/result" target="_blank" rel="noreferrer">查看结果<\/a>/)
-  assert.match(chat, /<img src="\/maps\/preview.png" alt="地图预览" loading="lazy"/)
-  assert.match(chat, /<img src="https:\/\/example.com\/motion.gif" alt="运动回放"/)
+  assert.match(chat, /<a[^>]* href="https:\/\/example.com\/result" target="_blank" rel="noreferrer">[\s\S]*?查看结果[\s\S]*?<\/a>/)
+  assert.match(chat, /<img[^>]* src="\/maps\/preview.png" alt="地图预览" loading="lazy"/)
+  assert.match(chat, /<img[^>]* src="https:\/\/example.com\/motion.gif" alt="运动回放"/)
   assert.doesNotMatch(renderMarkdown(markdown, options), /<img/)
 })
 
@@ -20,7 +20,7 @@ test('chat media keeps scripts and unsupported image sources as text', () => {
   })
   assert.doesNotMatch(html, /<img|<script|href="javascript:/)
   assert.match(html, /&lt;script&gt;/)
-  assert.match(html, /<a href="#"/)
+  assert.match(html, /<a[^>]* href="#"/)
 })
 
 test('generated API tables preserve union types and mode choices in one cell', () => {
