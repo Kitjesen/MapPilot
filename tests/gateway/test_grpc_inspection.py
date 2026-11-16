@@ -109,7 +109,7 @@ def test_native_rejection_keeps_recording_rollback(monkeypatch):
     assert gateway._recording.stops[0]["expected_session_id"].startswith("recording-")
 
 
-def test_invalid_binding_and_route_epoch_do_not_start_owner(monkeypatch):
+def test_invalid_binding_and_canonical_route_epoch_do_not_start_owner(monkeypatch):
     client, native = _client(monkeypatch)
     gateway = client.app.state.gateway
     with client, serve(gateway) as channel:
@@ -118,9 +118,8 @@ def test_invalid_binding_and_route_epoch_do_not_start_owner(monkeypatch):
             stub.StartInspection(start_request(binding=inspection_pb.InspectionBinding()), timeout=3)
         assert rejected.value.code() == grpc.StatusCode.INVALID_ARGUMENT
         route = {**_route(), "map_content_epoch": 4}
-        with pytest.raises(grpc.RpcError) as rejected:
-            put(stub, route)
-        assert rejected.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+        stored = put(stub, route)
+        assert stored.details.fields["map_content_epoch"].number_value == 3
     assert native.calls == [] and gateway._recording.starts == []
 
 

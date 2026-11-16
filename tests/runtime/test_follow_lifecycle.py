@@ -13,6 +13,7 @@ from decision.tasks.sdk_agent import TurnResult
 from nav.services.goals import GoalService
 from runtime.msgs.nav import NavigationCommandKind, NavigationCommandReceipt, NavigationGoalState, NavigationGoalStatus
 from runtime.msgs.numpy_compat import np
+from runtime.msgs.semantic import Detection3D
 
 
 class Commands:
@@ -140,6 +141,17 @@ def test_conversation_follow_survives_reply_queries_and_stops_after_native_feedb
     assert status["navigation"]["follow_task_id"] == ref["follow_task_id"]
     assert status["navigation"]["product_session_id"] == ref["product_session_id"]
 
+    assert not servo._publish_goal_from_3d(np.array([3.0, 0.0, 0.0]))
+    servo._latest_bgr = np.zeros((32, 32, 3), dtype=np.uint8)
+    servo._latest_bgr_ts = servo._latest_detection_ts = 100.0
+    servo._last_perception_time = time.monotonic()
+    servo._latest_detections = [Detection3D(id="person-a", label="person", bbox_2d=[0, 0, 24, 24])]
+    servo._follow_selection = {
+        "observation_sequence": 1, "generation": servo._intent_generation,
+        "review_state": "ready", "candidates": [{"target_id": "person-a", "kind": "person"}],
+    }
+    assert servo.confirm_follow_target(ref["follow_task_id"], ref["product_session_id"],
+                                       "person-a", 1)["accepted"]
     publish(servo)
     child = commands.goals[-1]
     cancelled = chat_turn(chat, "停止跟随", permission_mode="read_only")

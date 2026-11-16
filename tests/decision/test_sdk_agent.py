@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -429,64 +429,33 @@ async def test_clarification_returns_choices_and_preserves_freeform_question():
 
 
 @pytest.mark.asyncio
-async def test_codex_direct_responses_retains_owned_tools_and_history(monkeypatch):
-    from decision.llm import codex
+async def test_codex_app_server_keeps_history_without_claiming_owned_tool_execution(monkeypatch):
+    from decision.llm.codex_app_server import app_server
 
-    model = FakeModel([[call("inspect", {"target": "map"})], [message("地图已检查")]])
-    captured = []
-    monkeypatch.setattr(codex.account, "access_token", lambda: "private-test-token")
-
-    def create(**kwargs):
-        captured.append((kwargs["model"], str(kwargs["openai_client"].base_url)))
-        return model
-
-    monkeypatch.setattr("agents.models.openai_responses.OpenAIResponsesModel", create)
+    chat = Mock(return_value="已收到地图问题")
+    monkeypatch.setattr(app_server, "chat", chat)
     invoke = AsyncMock(return_value={"ok": True})
     history = [{"role": "user", "content": "上一次"}, {"role": "assistant", "content": "已记录"}]
-    result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke, history=history)
-    assert captured == [("gpt-6.1-sol", "https://chatgpt.com/backend-api/codex/")]
-    invoke.assert_awaited_once_with("inspect", {"target": "map"}, "call_1")
-    assert result.kind == "reply" and result.text == "地图已检查"
+    result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke,
+                        history=history, permission_mode="read_only")
+    assert chat.call_args.args[0][:len(history)] == history
+    assert chat.call_args.kwargs["model"] == "gpt-6.1-sol"
+    assert chat.call_args.kwargs["permission_mode"] == "read_only"
+    invoke.assert_not_awaited()
+    assert result.kind == "reply" and result.text == "已收到地图问题"
     assert result.model_items[:len(history)] == history
-    assert all(setting.store is False for setting in model.settings)
-    assert all(setting.temperature is None for setting in model.settings)
 
 
 @pytest.mark.asyncio
-async def test_codex_actual_sdk_http_stream_carries_token_and_tool_result(monkeypatch):
-    import httpx
-    import openai
+async def test_codex_app_server_failure_does_not_claim_tool_success(monkeypatch):
+    from decision.llm.client import LLMError
+    from decision.llm.codex_app_server import app_server
 
-    from decision.llm import codex
-
-    requests = []
-    original = openai.AsyncOpenAI
-
-    def respond(request):
-        requests.append(request)
-        output = [call("inspect", {"target": "map"})] if len(requests) == 1 else [message("已检查")]
-        event = ResponseCompletedEvent(type="response.completed", sequence_number=1,
-            response=Response.model_construct(id=f"response-{len(requests)}", object="response", model="gpt-6.1-sol",
-                created_at=0, status="completed", output=output, usage=None))
-        return httpx.Response(200, headers={"content-type": "text/event-stream"},
-                              text="data: " + event.model_dump_json() + "\n\n")
-
-    monkeypatch.setattr(openai, "AsyncOpenAI", lambda **kwargs: original(**kwargs,
-                        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    monkeypatch.setattr(codex.account, "access_token", lambda: "private-http-test-token")
+    monkeypatch.setattr(app_server, "chat", Mock(side_effect=LLMError("app_server_unavailable")))
     invoke = AsyncMock(return_value={"ok": True})
     result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke)
-    assert result.text == "已检查"
-    assert len(requests) == 2
-    for request in requests:
-        assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
-        assert request.headers["authorization"] == "Bearer private-http-test-token"
-        body = json.loads(request.content)
-        assert body["stream"] is True and body["store"] is False
-        assert body["model"] == "gpt-6.1-sol" and body["instructions"] == "Help the operator"
-        assert "temperature" not in body and "max_output_tokens" not in body
-    assert any(item.get("type") == "function_call_output" for item in json.loads(requests[1].content)["input"])
-    invoke.assert_awaited_once()
+    assert result.kind == "failed" and "app_server_unavailable" in result.text
+    invoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio
