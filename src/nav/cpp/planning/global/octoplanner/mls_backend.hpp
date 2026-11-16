@@ -48,13 +48,26 @@ struct Edge {
 struct Artifact {
   double resolution_m{0.0};
   std::uint64_t revision{0};
+  // Prepared surfaces keep their provenance.  `surfaces` remains an in-memory
+  // compatibility view for small tools that construct an artifact directly;
+  // persisted artifacts use observed/inferred below.
   std::vector<SurfaceCell> surfaces;
+  std::vector<SurfaceCell> observed;
+  std::vector<SurfaceCell> inferred;
   std::vector<Node> nodes;
   std::vector<Edge> edges;
 
   bool operator==(const Artifact& other) const {
+    const auto split = [](const Artifact& value) {
+      std::pair<std::vector<SurfaceCell>, std::vector<SurfaceCell>> result{
+          value.observed, value.inferred};
+      if (result.first.empty() && result.second.empty()) result.first = value.surfaces;
+      return result;
+    };
+    const auto left = split(*this);
+    const auto right = split(other);
     return resolution_m == other.resolution_m && revision == other.revision &&
-           surfaces == other.surfaces && nodes == other.nodes && edges == other.edges;
+           left == right && nodes == other.nodes && edges == other.edges;
   }
 };
 
@@ -74,6 +87,13 @@ struct RustGraphSummary {
 struct RustGraph {
   std::vector<Node> nodes;
   std::vector<Edge> edges;
+};
+
+struct RustRouteCheckResult {
+  bool valid{false};
+  std::uint32_t failure_kind{0};
+  std::int32_t failed_segment{-1};
+  SurfaceCell failed_cell{};
 };
 
 struct ArtifactSummary {
@@ -123,18 +143,44 @@ public:
       const LtMlsGraphConfig& graph_config,
       std::uint64_t revision = 1);
 
+  static PreparedArtifactHandle createFromGraph(
+      const std::vector<SurfaceCell>& observed,
+      const std::vector<SurfaceCell>& inferred,
+      const RustGraph& graph,
+      const LtMlsGraphConfig& graph_config,
+      std::uint64_t revision = 1);
+
+  static PreparedArtifactHandle createFromGraph(
+      const std::vector<SurfaceCell>& surfaces,
+      const RustGraph& graph,
+      const LtMlsGraphConfig& graph_config,
+      std::uint64_t revision = 1) {
+    return createFromGraph(surfaces, {}, graph, graph_config, revision);
+  }
+
   ArtifactSummary summary() const;
   SurfaceMap surfaces() const;
   std::optional<std::int32_t> below(std::int32_t x, std::int32_t y,
                                     std::int32_t z) const;
   bool inferred(std::int32_t x, std::int32_t y, std::int32_t min_z,
                 std::int32_t max_z) const;
+  bool occupied(std::int32_t x, std::int32_t y, std::int32_t min_z,
+                std::int32_t max_z) const;
+  std::optional<std::int32_t> occupiedBelow(
+      std::int32_t x, std::int32_t y, std::int32_t z) const;
+  bool regionOccupied(const LtMlsRegion& region) const;
   std::optional<double> height(double x, double y, double expected_z,
                                double tolerance, double resolution) const;
   RustGraph graph() const;
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal) const;
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
                                  std::int32_t max_snap_cells) const;
+  std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
+                                 std::int32_t max_snap_cells,
+                                 std::int32_t max_iterations) const;
+  RustRouteCheckResult checkRoute(
+      const std::vector<SurfaceCell>& route,
+      const LtMlsRouteCheckConfig& config) const;
   ArtifactUpdateReport update(
       LtMlsRegion region,
       const std::vector<SurfaceCell>& occupied,
@@ -145,7 +191,7 @@ private:
   LtMlsArtifact* handle_{nullptr};
 };
 
-constexpr std::uint32_t kFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 2;
 
 SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
                                const std::vector<SurfaceCell>& known_free,
@@ -175,6 +221,6 @@ PointPose worldFromCell(const SurfaceCell& cell, double resolution_m);
 
 bool validate(const Artifact& artifact, std::string* error = nullptr);
 void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact);
-Artifact read(lingtu::maps::BinaryReader& in);
+Artifact read(lingtu::maps::BinaryReader& in, bool require_complete = true);
 
 }  // namespace global_planner::mls

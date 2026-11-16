@@ -25,7 +25,7 @@
 
 #include "octomap/OcTree.h"
 #include "lingtu/maps/no_go.hpp"
-#include "lingtu/maps/layers/surface.hpp"
+#include "lingtu/maps/io/binary.hpp"
 
 namespace global_planner
 {
@@ -140,7 +140,6 @@ struct PlannerConfig
   }
 };
 
-using SurfaceIndex = lingtu::maps::layers::SurfaceIndex;
 class SurfaceGraph;
 namespace mls { class PreparedArtifactHandle; }
 
@@ -149,9 +148,9 @@ namespace mls { class PreparedArtifactHandle; }
 // map or preparation geometry changes.
 struct PlannerArtifact
 {
-  std::shared_ptr<const SurfaceIndex> surface;
+  // legacy: retained for old prepared artifacts and Rust query fallback.
   std::shared_ptr<SurfaceGraph> graph;
-  // Rust owns the candidate surface graph. C++ keeps geometry validation here.
+  // Rust owns the executable global candidate graph.
   std::shared_ptr<mls::PreparedArtifactHandle> rust_graph;
 };
 
@@ -193,6 +192,14 @@ public:
     int iterations{0};
     bool used_surface_graph{false};
     bool used_rust_graph{false};
+    bool rust_fallback{false};
+    std::string rust_failure_kind{"none"};
+    std::string rust_failure{};
+    // Counts are per route request. They make a fallback report useful when a
+    // caller retries a request without parsing the human-readable message.
+    std::uint32_t rust_query_failures{0};
+    std::uint32_t rust_geometry_rejections{0};
+    std::uint32_t rust_other_failures{0};
   };
 
   struct RouteValidation
@@ -224,8 +231,10 @@ public:
   void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
   void setOctomap(std::shared_ptr<octomap::OcTree> map,
-                 std::shared_ptr<const SurfaceIndex> surface = {},
-                 std::shared_ptr<SurfaceGraph> graph = {});
+                 std::shared_ptr<SurfaceGraph> graph = {},
+                 bool build_legacy_graph = false);
+  void setPreparedRustGraph(std::shared_ptr<octomap::OcTree> map,
+                            std::shared_ptr<mls::PreparedArtifactHandle> graph);
   void writePrepared(lingtu::maps::BinaryWriter& out) const;
 
   void makePlan(const PointPose start,const PointPose goal);
@@ -235,9 +244,6 @@ public:
 
   EndpointResolutionInfo endpointResolution() const noexcept;
   SearchInfo searchInfo() const noexcept;
-  std::shared_ptr<const SurfaceIndex> supportSurface() const {
-    return artifact_ ? artifact_->surface : nullptr;
-  }
   std::shared_ptr<const PlannerArtifact> artifact() const { return artifact_; }
 
   struct PlanningSlice {
@@ -351,9 +357,7 @@ private:
     const octomap::point3d & from, const octomap::point3d & to,
     TraversabilityFailure *failure = nullptr) const;
 
-  void rebuildSurfaceIndex();
   void rebuildRustGraph();
-  std::optional<PointPose> surfaceStance(int x, int y, int z) const;
   void rebuildSurfaceGraph();
   void rebuildDerivedLayers();
 

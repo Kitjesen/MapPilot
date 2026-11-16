@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <queue>
 #include <stdexcept>
@@ -20,6 +21,7 @@ namespace global_planner
         // OctoMap exposes point coordinates as floats; preserve inclusive
         // metric bounds when those coordinates are compared with doubles.
         constexpr double kMetricToleranceEpsilonM = 1e-6;
+
     }
 
     OctoPlanner3D::OctoPlanner3D()
@@ -63,9 +65,8 @@ namespace global_planner
         if (octree_) {
             external_preblocked_cells_.clear();
             clearMapQueryCaches();
-            if (preparation_changed || !artifact_ || !artifact_->surface) {
-                rebuildSurfaceIndex();
-                rebuildSurfaceGraph();
+            if (preparation_changed || !artifact_ || !artifact_->rust_graph) {
+                rebuildRustGraph();
             }
             rebuildExternalPreblockedCells();
             rebuildDerivedLayers();
@@ -127,7 +128,8 @@ namespace global_planner
     }
 
     void OctoPlanner3D::setOctomap(std::shared_ptr<octomap::OcTree> map,
-        std::shared_ptr<const SurfaceIndex> surface,std::shared_ptr<SurfaceGraph> graph)
+        std::shared_ptr<SurfaceGraph> graph,
+        bool build_legacy_graph)
     {
         if (!map)
         {
@@ -139,26 +141,50 @@ namespace global_planner
         map_ready_ = true;
         external_preblocked_cells_.clear();
         artifact_ = std::make_shared<PlannerArtifact>();
-        if(surface) artifact_->surface=std::move(surface);
-        else rebuildSurfaceIndex();
         rebuildQueryOffsets();
         clearMapQueryCaches();
-        if(graph) {
-            artifact_->graph=std::move(graph);
+        if (graph) artifact_->graph = std::move(graph);
+        if (build_legacy_graph) {
+            if (artifact_->graph) rebuildRustGraph();
+            else rebuildSurfaceGraph();
+        } else {
             rebuildRustGraph();
-        } else rebuildSurfaceGraph();
+        }
+        rebuildExternalPreblockedCells();
+        rebuildDerivedLayers();
+    }
+
+    void OctoPlanner3D::setPreparedRustGraph(
+        std::shared_ptr<octomap::OcTree> map,
+        std::shared_ptr<mls::PreparedArtifactHandle> graph) {
+        if (!map || !graph) throw std::invalid_argument("prepared map requires Rust graph");
+        octree_ = std::move(map);
+        map_ready_ = true;
+        external_preblocked_cells_.clear();
+        artifact_ = std::make_shared<PlannerArtifact>();
+        artifact_->rust_graph = std::move(graph);
+        rebuildQueryOffsets();
+        clearMapQueryCaches();
         rebuildExternalPreblockedCells();
         rebuildDerivedLayers();
     }
 
     void OctoPlanner3D::writePrepared(lingtu::maps::BinaryWriter& out) const
     {
-        if (!artifact_ || !artifact_->surface) {
+        if (!artifact_ || !artifact_->rust_graph || !octree_) {
             throw std::runtime_error("planner artifact is not prepared");
         }
-        artifact_->surface->write(out);
-        out.value<std::uint8_t>(artifact_->graph ? 1 : 0);
-        if(artifact_->graph)artifact_->graph->write(out);
+        out.value<std::uint8_t>(1);
+        const auto surfaces = artifact_->rust_graph->surfaces();
+        const auto graph = artifact_->rust_graph->graph();
+        mls::Artifact cached;
+        cached.resolution_m = octree_->getResolution();
+        cached.revision = artifact_->rust_graph->summary().revision;
+        cached.observed = surfaces.observed;
+        cached.inferred = surfaces.inferred;
+        cached.nodes = graph.nodes;
+        cached.edges = graph.edges;
+        mls::write(out, cached);
     }
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
@@ -325,9 +351,15 @@ namespace global_planner
             const auto cell=worldToGrid(point.x,point.y,point.z);
             const double offset=(cell.z+.5)*octree_->getResolution()-point.z;
             const auto [low,high]=supportDepthRange(support_depth_cells_,offset);
-            const auto z = artifact_->rust_graph
+            const auto z = artifact_ && artifact_->rust_graph
                 ? artifact_->rust_graph->below(cell.x, cell.y, cell.z)
-                : artifact_->surface->below(cell.x, cell.y, cell.z);
+                : std::nullopt;
+            if (!z) {
+                for (int depth = low; depth <= high; ++depth) {
+                    const GridIndex support{cell.x, cell.y, cell.z - depth};
+                    if (isSupportCell(support)) return support.z;
+                }
+            }
             return z && *z>=cell.z-high && *z<=cell.z-low ? z : std::nullopt;
         };
         const auto a=floor(from),b=floor(to);
@@ -434,9 +466,9 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
-        if (!resolveGoal()) return false;
         if (artifact_ && artifact_->rust_graph) {
             const auto graph_started = std::chrono::steady_clock::now();
+            const char *rust_failure_kind = "query";
             try {
                 const double resolution = octree_->getResolution();
                 PointPose start_floor = start_point_;
@@ -446,32 +478,41 @@ namespace global_planner
                 const auto cells = artifact_->rust_graph->query(
                     mls::cellFromWorld(start_floor, resolution),
                     mls::cellFromWorld(goal_floor, resolution),
-                    snap_search_radius_cells_);
+                    snap_search_radius_cells_, max_iterations_);
                 std::vector<PointPose> surface_points;
                 surface_points.reserve(cells.size());
                 for (const auto &cell : cells) {
-                    const auto point = surfaceStance(cell.x, cell.y, cell.z);
-                    if (!point) {
-                        throw std::runtime_error("Rust surface route contains an unsupported cell");
-                    }
-                    if (!surface_points.empty() && surface_points.back().x == point->x &&
-                        surface_points.back().y == point->y &&
-                        surface_points.back().z == point->z) {
+                    const PointPose point{
+                        (cell.x + .5) * resolution,
+                        (cell.y + .5) * resolution,
+                        (cell.z + .5) * resolution + support_height_m_,
+                        std::nullopt};
+                    if (!surface_points.empty() && surface_points.back().x == point.x &&
+                        surface_points.back().y == point.y &&
+                        surface_points.back().z == point.z) {
                         continue;
                     }
-                    surface_points.push_back(*point);
+                    surface_points.push_back(point);
                 }
                 if (surface_points.empty()) {
                     throw std::runtime_error("Rust surface route has no stance cells");
                 }
+                rust_failure_kind = "geometry";
                 const auto valid = [&](const PointPose &a, const PointPose &b) {
                     return routeConnectionFree(a, b);
                 };
                 std::vector<PointPose> candidate;
                 candidate.reserve(surface_points.size() + 2);
                 candidate.push_back(start_point_);
-                for (const auto &point : surface_points) {
-                    if (valid(candidate.back(), point)) candidate.push_back(point);
+                for (std::size_t i = 0; i < surface_points.size(); ++i) {
+                    const auto &point = surface_points[i];
+                    if (valid(candidate.back(), point)) {
+                        candidate.push_back(point);
+                    } else {
+                        throw std::runtime_error(
+                            "Rust surface route geometry rejected at segment " +
+                            std::to_string(i));
+                    }
                 }
                 std::size_t goal_index = candidate.size();
                 for (std::size_t i = candidate.size(); i-- > 0;) {
@@ -480,23 +521,35 @@ namespace global_planner
                         break;
                     }
                 }
+                PointPose resolved_goal = goal_point_;
                 if (goal_index == candidate.size()) {
-                    throw std::runtime_error("Rust surface route has no goal connector");
+                    if (candidate.size() <= 1) {
+                        throw std::runtime_error("Rust surface route has no goal connector");
+                    }
+                    resolved_goal = candidate.back();
+                    if (std::hypot(resolved_goal.x - goal_point_.x,
+                                   resolved_goal.y - goal_point_.y) >
+                            terminal_goal_xy_tolerance_m_ + kMetricToleranceEpsilonM ||
+                        std::abs(resolved_goal.z - goal_point_.z) >
+                            terminal_goal_z_tolerance_m_ + kMetricToleranceEpsilonM) {
+                        throw std::runtime_error("Rust surface route goal snap exceeds tolerance");
+                    }
+                } else {
+                    candidate.resize(goal_index + 1);
                 }
-                candidate.resize(goal_index + 1);
-                candidate.push_back(goal_point_);
+                if (candidate.back().x != resolved_goal.x ||
+                    candidate.back().y != resolved_goal.y ||
+                    candidate.back().z != resolved_goal.z) {
+                    candidate.push_back(resolved_goal);
+                }
                 candidate.front().yaw = start_point_.yaw;
                 candidate.back().yaw = goal_point_.yaw;
                 auto checked = candidate;
                 auto smoothed = smoothRoute(candidate, valid,
                     [&](const PointPose &point) -> std::optional<double> {
-                        const auto ground = artifact_->rust_graph
-                            ? artifact_->rust_graph->height(
-                                point.x, point.y, point.z - support_height_m_,
-                                support_height_tolerance_m_, octree_->getResolution())
-                            : artifact_->surface->height(
-                                {point.x, point.y, point.z - support_height_m_},
-                                support_height_tolerance_m_);
+                        const auto ground = artifact_->rust_graph->height(
+                            point.x, point.y, point.z - support_height_m_,
+                            support_height_tolerance_m_, octree_->getResolution());
                         return ground ? std::optional<double>(*ground + support_height_m_)
                                        : std::nullopt;
                     }, cancel_check_);
@@ -511,11 +564,22 @@ namespace global_planner
                            std::chrono::steady_clock::now() - graph_started).count());
                 return true;
             } catch (const std::exception &error) {
+                search_info_.rust_fallback = true;
+                search_info_.rust_failure_kind = rust_failure_kind;
+                search_info_.rust_failure = error.what();
+                if (std::strcmp(rust_failure_kind, "query") == 0) {
+                    ++search_info_.rust_query_failures;
+                } else if (std::strcmp(rust_failure_kind, "geometry") == 0) {
+                    ++search_info_.rust_geometry_rejections;
+                } else {
+                    ++search_info_.rust_other_failures;
+                }
                 printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
                        error.what());
             }
         }
-        if (artifact_ && artifact_->graph) {
+        if (!resolveGoal()) return false;
+        if (artifact_ && artifact_->graph && !artifact_->rust_graph) {
             const auto valid = [&](const PointPose &a,const PointPose &b) {
                 return routeConnectionFree(a,b);
             };
@@ -529,13 +593,9 @@ namespace global_planner
             const auto graph_finished=std::chrono::steady_clock::now();
             if (!candidate.empty()) {
                 const auto height = [&](const PointPose &point) -> std::optional<double> {
-                    const auto ground = artifact_->rust_graph
-                        ? artifact_->rust_graph->height(
-                            point.x, point.y, point.z - support_height_m_,
-                            support_height_tolerance_m_, octree_->getResolution())
-                        : artifact_->surface->height(
-                            {point.x, point.y, point.z - support_height_m_},
-                            support_height_tolerance_m_);
+                    const auto ground = artifact_->rust_graph->height(
+                        point.x, point.y, point.z - support_height_m_,
+                        support_height_tolerance_m_, octree_->getResolution());
                     return ground ? std::optional<double>(*ground+support_height_m_) : std::nullopt;
                 };
                 candidate=smoothRoute(std::move(candidate),valid,height,cancel_check_);
@@ -1289,24 +1349,23 @@ namespace global_planner
                                         int support_depth_cells, double centre_offset) const
     {
         const auto [minimum_depth, maximum_depth] = supportDepthRange(support_depth_cells, centre_offset);
-        if (artifact_->rust_graph) {
-            if (!direct_support_only && artifact_->rust_graph->inferred(
+        if (!direct_support_only && artifact_ && artifact_->rust_graph) {
+            if (artifact_->rust_graph->inferred(
                     idx.x, idx.y, idx.z - maximum_depth, idx.z - minimum_depth)) {
                 return true;
             }
             const auto floor = artifact_->rust_graph->below(idx.x, idx.y, idx.z);
-            if (!floor || *floor < idx.z - maximum_depth || *floor > idx.z - minimum_depth)
+            if (!floor || *floor < idx.z - maximum_depth || *floor > idx.z - minimum_depth) {
                 return false;
+            }
             return (*floor + 1 != idx.z || !isOccupiedCell(idx)) &&
                    isSupportPatch({idx.x, idx.y, *floor});
         }
-        if (!direct_support_only && artifact_->surface->inferred(idx.x,idx.y,
-                idx.z-maximum_depth,idx.z-minimum_depth)) return true;
-        const auto floor = artifact_->surface->below(idx.x,idx.y,idx.z);
-        if (!floor || *floor < idx.z-maximum_depth || *floor > idx.z-minimum_depth)
-            return false;
-        return (*floor+1 != idx.z || !isOccupiedCell(idx)) &&
-               isSupportPatch({idx.x,idx.y,*floor});
+        for (int depth = minimum_depth; depth <= maximum_depth; ++depth) {
+            const GridIndex floor{idx.x, idx.y, idx.z - depth};
+            if (isSupportCell(floor)) return true;
+        }
+        return false;
     }
 
     bool OctoPlanner3D::hasFootprintGroundSupport(
@@ -1612,81 +1671,58 @@ namespace global_planner
         return false;
     }
 
-    void OctoPlanner3D::rebuildSurfaceIndex()
-    {
-        const auto started = std::chrono::steady_clock::now();
-        const double headroom = support_height_m_ + std::max(octree_->getResolution(), body_clearance_above_m_);
-        const double closing = ground_support_ && !direct_support_only_ ? surface_closing_radius_m_ : 0.0;
-        if (!artifact_) artifact_ = std::make_shared<PlannerArtifact>();
-        artifact_->surface = std::make_shared<const SurfaceIndex>(*octree_, headroom, closing,
-            graph_config_.surface_max_hole_area_m2, graph_config_.surface_max_slope);
-        printf("OctoPlanner3D surface index: observed=%zu inferred=%zu radius=%.3f prepare_ms=%.3f\n",
-            artifact_->surface->observedSurfaces(), artifact_->surface->inferredSurfaces(), closing,
-            std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
-    }
-
-    std::optional<PointPose> OctoPlanner3D::surfaceStance(int x, int y, int z) const
-    {
-        const double resolution = octree_->getResolution();
-        const PointPose nominal{
-            (x + .5) * resolution, (y + .5) * resolution,
-            (z + .5) * resolution + support_height_m_};
-        const int levels = static_cast<int>(std::ceil(
-            (support_height_tolerance_m_ + .5 * resolution) / (.5 * resolution)));
-        for (int level = 0; level <= levels; ++level) {
-            for (int sign : {1, -1}) {
-                if (level == 0 && sign < 0) continue;
-                auto point = nominal;
-                point.z += sign * level * .5 * resolution;
-                if (queryWorld({float(point.x), float(point.y), float(point.z)},
-                               robot_radius_, true) == TraversabilityFailure::None) {
-                    return point;
-                }
-            }
-        }
-        return std::nullopt;
-    }
-
     void OctoPlanner3D::rebuildRustGraph()
     {
-        if (!artifact_ || !artifact_->surface || !ground_support_ ||
+        if (!artifact_ || !octree_ || !ground_support_ ||
             support_height_m_ <= 0.0 || lowest_traversable_only_) {
-            if (artifact_) artifact_->rust_graph.reset();
+            if (artifact_) {
+                artifact_->rust_graph.reset();
+            }
             return;
         }
         const double r = octree_->getResolution();
-        const auto cells = artifact_->surface->surfaces(r);
-        std::unordered_set<lingtu::maps::layers::SurfaceCell,
-                           lingtu::maps::layers::SurfaceCellHash> inferred_set;
-        for (const auto &cell : artifact_->surface->inferredPoints()) {
-            inferred_set.insert(cell);
+        std::vector<mls::SurfaceCell> occupied;
+        std::vector<mls::SurfaceCell> known_free;
+        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+            const int span = std::max(1, static_cast<int>(std::lround(it.getSize() / r)));
+            const int x0 = static_cast<int>(std::lround((it.getX() - .5 * it.getSize()) / r));
+            const int y0 = static_cast<int>(std::lround((it.getY() - .5 * it.getSize()) / r));
+            const int z0 = static_cast<int>(std::lround((it.getZ() - .5 * it.getSize()) / r));
+            auto &cells = octree_->isNodeOccupied(*it) ? occupied : known_free;
+            cells.reserve(cells.size() + static_cast<std::size_t>(span * span * span));
+            for (int x = x0; x < x0 + span; ++x)
+                for (int y = y0; y < y0 + span; ++y)
+                    for (int z = z0; z < z0 + span; ++z) cells.push_back({x, y, z});
         }
+        const int clearance = std::max(0, static_cast<int>(std::ceil(
+            (support_height_m_ + std::max(r, body_clearance_above_m_)) / r)));
+        const auto surfaces = mls::extractSurfacesRust(
+            occupied, known_free, clearance, 1,
+            static_cast<std::uint64_t>(std::max(0.0,
+                graph_config_.surface_max_hole_area_m2 / (r * r))),
+            graph_config_.surface_max_slope);
         std::vector<mls::SurfaceCell> observed;
         std::vector<mls::SurfaceCell> inferred;
-        observed.reserve(cells.size());
-        inferred.reserve(inferred_set.size());
-        for (const auto &cell : cells) {
-            const mls::SurfaceCell converted{cell.x, cell.y, cell.z};
-            if (inferred_set.find(cell) != inferred_set.end()) inferred.push_back(converted);
-            else observed.push_back(converted);
-        }
+        observed = surfaces.observed;
+        inferred = surfaces.inferred;
         const int stride = std::max(1, static_cast<int>(std::ceil(search_resolution_m_ / r)));
         const int height_stride = max_slope_ > 0.0
             ? std::max(stride, static_cast<int>(std::ceil(1.0 / max_slope_))) : stride;
+        const int step_cells = std::max(0, static_cast<int>(std::ceil(max_step_height_ / r)));
         const LtMlsGraphConfig rust_config{
-            stride, height_stride, 0,
+            stride, std::max(height_stride, step_cells), 0,
             std::max(1, obstacle_clearance_radius_cells_),
             static_cast<float>(std::max(0.0, obstacle_clearance_weight_)),
             static_cast<float>(std::max(0.0, floor_change_penalty_)),
             static_cast<float>(std::max(0.0, max_slope_)),
-            std::max(0, static_cast<int>(std::ceil(max_step_height_ / r))),
+            step_cells,
             height_stride};
-        auto rust_handle = mls::PreparedArtifactHandle::createFromSurface(
-            observed, inferred, rust_config, 1);
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
-            std::move(rust_handle));
+            mls::PreparedArtifactHandle::createFromSurface(observed, inferred, rust_config, 1));
     }
 
+    // legacy: build only when Rust graph preparation is unavailable or an old
+    // prepared artifact requires the compatibility graph.
     void OctoPlanner3D::rebuildSurfaceGraph()
     {
         if (!artifact_) artifact_ = std::make_shared<PlannerArtifact>();
@@ -1695,24 +1731,25 @@ namespace global_planner
         if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
         const auto started=std::chrono::steady_clock::now();
         const double r=octree_->getResolution();
-        const auto cells=artifact_->surface->surfaces(r);
-
-        rebuildRustGraph();
+        if (!artifact_->rust_graph) rebuildRustGraph();
+        if (!artifact_->rust_graph) return;
+        const auto surfaces = artifact_->rust_graph->surfaces();
+        std::vector<mls::SurfaceCell> cells = surfaces.observed;
+        cells.insert(cells.end(), surfaces.inferred.begin(), surfaces.inferred.end());
 
         std::vector<PointPose> points;
         points.reserve(cells.size());
         for (const auto &cell : cells) {
             if (cancel_check_ && cancel_check_()) throw SurfaceGraph::Cancelled{};
-            const auto selected = surfaceStance(cell.x, cell.y, cell.z);
-            if (selected) points.push_back(*selected);
+            points.push_back({
+                (cell.x + .5) * r,
+                (cell.y + .5) * r,
+                (cell.z + .5) * r + support_height_m_,
+                std::nullopt});
         }
         artifact_->graph=std::make_shared<SurfaceGraph>(std::move(points),r,graph_config_,
-            [](const PointPose &) { return true; }, // Points already passed full static geometry.
-            [&](const PointPose &a,const PointPose &b) {
-                return metricConnectionWithinLimits(a,b) &&
-                    sweptRouteFree({float(a.x),float(a.y),float(a.z)},
-                                   {float(b.x),float(b.y),float(b.z)},nullptr,nullptr,true,true);
-            },cancel_check_);
+            [](const PointPose &) { return true; },
+            [](const PointPose &, const PointPose &) { return true; }, cancel_check_);
         printf("OctoPlanner3D surface graph: nodes=%zu edges=%zu prepare_ms=%.3f\n",
             artifact_->graph->nodeCount(),artifact_->graph->edgeCount(),
             std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
@@ -1774,7 +1811,8 @@ namespace global_planner
 
     bool OctoPlanner3D::isOccupiedCell(const GridIndex & idx) const
     {
-        return artifact_->surface->occupied(idx.x, idx.y, idx.z, idx.z);
+        const auto *node = octree_->search(gridToWorld(idx));
+        return node != nullptr && octree_->isNodeOccupied(node);
     }
 
     bool OctoPlanner3D::isOccupiedLeafCell(const GridIndex & idx) const
@@ -1915,26 +1953,6 @@ namespace global_planner
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
         const auto low = worldToGrid(p.x() - radius, p.y() - radius, p.z() - below);
         const auto high = worldToGrid(p.x() + radius, p.y() + radius, p.z() + above);
-        if (external_preblocked_cells_.empty()) {
-            const int bottom=static_cast<int>(std::floor((p.z()-below+1e-7)/r));
-            const int top=static_cast<int>(std::ceil((p.z()+above-1e-7)/r))-1;
-            if (!artifact_->surface->regionOccupied(low.x,low.y,high.x,high.y,bottom,top))
-                return TraversabilityFailure::None;
-            for (int x=low.x; x<=high.x; ++x) {
-                const double dx=std::max({x*r-p.x(),0.0,p.x()-(x+1)*r});
-                for (int y=low.y; y<=high.y; ++y) {
-                    const double dy=std::max({y*r-p.y(),0.0,p.y()-(y+1)*r});
-                    if (dx*dx+dy*dy>radius*radius+1e-9) continue;
-                    auto z=artifact_->surface->below(x,y,top+1);
-                    if (!z || *z<bottom) continue;
-                    if (!start_exemption_) return TraversabilityFailure::OccupiedBody;
-                    for (; z && *z>=bottom; z=artifact_->surface->below(x,y,*z))
-                        if (!start_exemption_({(x+.5)*r,(y+.5)*r,(*z+.5)*r},r))
-                            return TraversabilityFailure::OccupiedBody;
-                }
-            }
-            return TraversabilityFailure::None;
-        }
         for (int x = low.x; x <= high.x; ++x) {
             const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
             for (int y = low.y; y <= high.y; ++y) {

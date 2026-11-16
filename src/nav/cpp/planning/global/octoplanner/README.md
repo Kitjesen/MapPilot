@@ -7,7 +7,7 @@ default 3D global planner.
 navd
   -> GlobalPlanRequest / GlobalPlanResult
   -> octoplanner3d_runtime
-  -> PlannerArtifact (surface + sparse graph)
+  -> PlannerArtifact (Rust surface + sparse graph)
   -> vendor/planner
   -> system liboctomap
 ```
@@ -17,13 +17,13 @@ planner, while remaining a native C++ implementation:
 
 ```text
 OctoMap snapshot
-  -> SurfaceIndex       observed and inferred multi-level cells
-  -> SurfaceGraph       sparse nodes and corridor edges
-  -> PlannerArtifact    one map-bound asset reused by route queries
+  -> Rust MLS            observed and inferred multi-level cells
+  -> Rust graph          sparse nodes and corridor edges
+  -> PlannerArtifact     one map-bound asset reused by route queries
   -> OctoPlanner3D      endpoint attachment and route search
 ```
 
-`PlannerArtifact` owns the prepared surface and graph together. A map or
+`PlannerArtifact` owns the Rust prepared surface and graph together. A map or
 preparation-geometry change rebuilds that asset; query-only changes such as
 goal tolerance, snap radius, iteration budget, or same-floor preference update
 the existing graph query. This avoids rebuilding static geometry for every
@@ -37,18 +37,19 @@ four-neighbor surface edges, wall-distance node placement, a multi-source
 Voronoi partition, and predecessor corridors. On the fixed arrival-box map,
 with DimOS-compatible floor step conversion, the Rust native graph reports
 29 nodes, 45 edges, and 2 components. DimOS reports 29 nodes, 47 edges, and 2
-components. The current C++ production graph reports 36 nodes, 43 edges, and
-9 components. Rust corridors pass the same C++ endpoint, body, support, step,
+components. The former C++ graph reported 36 nodes, 43 edges, and 9
+components. Rust corridors pass the same C++ endpoint, body, support, step,
 slope, and continuous sweep checks after geometry-aware edge filtering.
 
-The production `PlannerArtifact` now holds a Rust graph handle. `startPlan()`
-queries Rust first, converts its cells to executable body poses, and sends the
-candidate through the existing C++ metric, support, body, step, slope, and
-continuous-sweep checks. A rejected Rust route falls back to the C++ graph.
-The C++ `SurfaceIndex` and `SurfaceGraph` remain for surface queries, fallback,
-and cache compatibility until Rust surface queries and cache restore are matched.
-Support `below` and inferred-surface lookups already read the Rust handle. Raw
-OctoMap occupancy and continuous world-height fitting remain native geometry data.
+The production `PlannerArtifact` now holds a Rust MLS graph handle. `startPlan()` queries Rust first, converts its cells to executable
+body poses, and sends the candidate through the existing C++ metric, support,
+body, step, slope, and continuous-sweep checks. A rejected Rust route falls back
+to the 3-D grid search. The C++ `SurfaceGraph` remains only for explicit legacy
+callers. New `.6` prepared artifacts restore the Rust graph directly and skip
+normal C++ graph construction. Raw OctoMap occupancy, support lookup, and continuous world-height
+fitting remain native geometry data.
+The C++ GeometryGate remains the final motion admission boundary for robot radius,
+clearance, support, step, slope, swept collision, no-go, start, and goal checks.
 Route height fitting now also reads the Rust `height` query. When the geometry
 adapter rejects a Rust route, the request uses the existing C++ fallback or the
 outer replanning cycle. Dynamic path truncation belongs to the local execution
@@ -59,8 +60,10 @@ The migration boundary and removal order are recorded in
 `PreparedArtifactHandle` holds a Rust-side `PlannerState` through the C ABI.
 The migration smoke test covers artifact creation, surface and graph export,
 graph-only query, limited endpoint query, regional update, stable revision, and
-destruction. Production `PlannerSession` still keeps the C++ surface and graph
-as the geometry/query fallback while Rust is the first graph candidate.
+destruction. Production `PlannerSession` keeps raw OctoMap occupancy as the
+geometry boundary while Rust owns surface preparation and graph queries. The
+legacy C++ graph remains only for explicit compatibility callers; new prepared
+caches contain only the Rust artifact.
 
 `vendor/` contains only the four OctoPlanner3D files used by the product:
 the constrained planner header/source and the optional offline PCD converter
@@ -108,8 +111,8 @@ This changes the derived graph, not the saved OctoMap or the completion limits.
 
 ## Persistent preparation and query controls
 
-`PlannerSession` saves the completed `PlannerArtifact` (support columns,
-occupancy lookup blocks, and the validated sparse graph) in
+`PlannerSession` saves the completed Rust MLS artifact (observed/inferred
+surface cells, nodes, edges and corridors) in
 `<map-directory>/.nav/profile-N.bin` after the
 first successful preparation. Later processes restore that artifact instead
 of fitting the same holes and constructing the same graph again. Preparation
@@ -179,20 +182,17 @@ retry does not rebuild it, and the next request starts at nominal spacing.
 This coarse-first search is a LingTu extension; the pinned upstream searches
 the OctoMap grid directly.
 
-The shared Maps SurfaceIndex selects bounded internal holes independently for
-each expected height sheet, fits the observed boundary and excludes candidates
-whose original 3D ground cell is known free. The existing radius setting is
-0.20 m; maximum hole area is 0.16 m² and the surface-fit slope limit is 0.7
-(rise/run), separate from robot climb limits. Open boundaries and oversized
-holes are not completed. Inferred support remains separate from measured
-OctoMap occupancy; it never becomes new fitting evidence. Support queries and
-smoothing use the prepared observed/inferred column and retain vertical
-tolerance; they no longer perform a second angular-neighbor fill. The obsolete
-`support_radius_cells` / `--octo-support-radius-cells` / environment setting was
-removed from current configs, launch adapters and tools. Recreate old RunPlans;
-use the physical surface radius and area options for completion. Direct-only
-mode disables inference.
-Map or surface-option changes rebuild the index and graph; this is a complete
+The Rust MLS surface uses the DimOS-compatible
+surface rules. Each occupied column keeps cells with the configured robot
+headroom, each height sheet receives an L1 closing, and newly closed cells must
+remain standable and have nearby occupied support. Closing is performed per Z
+sheet, so it does not join separate stair surfaces. Raw occupied and known-free
+evidence remains available to the body and motion safety layers. Surface
+generation no longer applies a second plane fit, residual threshold, hole-area
+filter, or known-free inference rejection. The old `support_radius_cells` /
+`--octo-support-radius-cells` / environment setting remains removed from
+current configs, launch adapters and tools. Direct-only mode disables closing.
+Map or surface-option changes rebuild the Rust artifact and graph; this is a complete
 rebuild, not per-frame regional updating. The original DimOS workflow at
 `26144f7fd8424bdc33ab97dcd58e9497f2d413ee` and bounded-hole selection from
 elevation_mapping_cupy `d9e1c9fe42ea3d463519333a443da99f680adde8` inform this

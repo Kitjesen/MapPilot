@@ -54,6 +54,11 @@ int main() try {
   require(handle.below(3, 0, 0) == std::optional<std::int32_t>(0) &&
               !handle.inferred(3, 0, 0, 0),
           "Rust MLS surface queries changed");
+  require(handle.occupied(3, 0, 0, 0), "Rust MLS occupied query changed");
+  require(handle.occupiedBelow(3, 0, 1) == std::optional<std::int32_t>(0),
+          "Rust MLS occupied-below query changed");
+  require(handle.regionOccupied(LtMlsRegion{2, 3, 0, 0, 0, 0}),
+          "Rust MLS region query changed");
   require(handle.height(0.35, 0.025, 0.0, 0.05, resolution) ==
               std::optional<double>(0.0),
           "Rust MLS height query changed");
@@ -65,9 +70,20 @@ int main() try {
   require(!artifact_route.empty() && artifact_route.front() == SurfaceCell{0, 0, 0} &&
               artifact_route.back() == SurfaceCell{11, 0, 0},
           "Rust MLS artifact graph query did not return a route");
+  const auto route_check = handle.checkRoute(
+      artifact_route, LtMlsRouteCheckConfig{0, 0, 1, 1.0F, 0, {}});
+  require(route_check.valid && route_check.failed_segment < 0,
+          "Rust MLS route check rejected a valid route");
   const auto limited_route = handle.query({0, 0, 0}, {11, 0, 0}, 12);
   require(limited_route == artifact_route,
           "Rust MLS limited graph query changed an attached route");
+  bool budget_rejected = false;
+  try {
+    (void)handle.query({0, 0, 0}, {11, 0, 0}, 12, 1);
+  } catch (const std::exception&) {
+    budget_rejected = true;
+  }
+  require(budget_rejected, "Rust MLS graph query ignored its iteration budget");
   const auto update = handle.update({1, 1, 0, 1, 0, 0}, {{1, 0, 0}}, {});
   require(update.revision == 8 && !update.graph_rebuilt_globally,
           "Rust MLS artifact update did not use local graph repair");

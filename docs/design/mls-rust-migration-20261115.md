@@ -8,6 +8,55 @@ step、slope 和 continuous sweep 合同。
 
 ## 当前对比
 
+## GeometryGate 的有效配置
+
+Rust graph 只产生候选 surface route。正式 `navd` 会在每一段候选和起终点连接上
+复用 C++ GeometryGate。参数的有效来源按优先级落在 RobotConfig、选定 Product 的
+`native_nav.global` 和运行时环境覆盖，不由 Rust graph 自己决定。
+
+| 检查 | 有效配置来源 | Go2 当前值 | Thunder V4 当前值 |
+| --- | --- | ---: | ---: |
+| 机器人水平半径 | RobotConfig `geometry.collision_cylinder_radius`，SCAN 后与 `octoplanner3d_robot_radius` 取较大值 | 0.25 m | 0.32 m |
+| 机身下方净空 | RobotConfig `geometry.collision_clearance_below`，按 SCAN 体素分辨率向上取整 | 0.10 m | 0.05 m |
+| 机身上方净空 | RobotConfig `geometry.collision_clearance_above`，按 SCAN 体素分辨率向上取整 | 0.24 m | 0.35 m |
+| 支撑高度 | RobotConfig `geometry.support_height` | 0.35 m | 0.435 m |
+| 支撑高度容差 | RobotConfig `geometry.support_height_tolerance` | 0.05 m | 0.10 m |
+| 地面支撑 | `config/system/settings/global.yaml` 或 Product 覆盖 | true | true |
+| 最大步高 | `native_nav.global.max_step_height_m` | 0.45 m 默认 | 0.45 m 默认 |
+| 最大坡度 | Product 根据 RobotConfig 倾角限制解析为 `tan(tilt_limit_deg)` | 约 0.577 | 约 0.577 |
+| 终点误差 | Product `native_nav.global.terminal_*` | 0.15 m | 0.15 m |
+| no-go | mapd/map store 的 `NoGoRegion`，按请求注入 | 地图数据 | 地图数据 |
+
+`PlannerConfig` 头文件中的 `robot_radius=0.20` 只是 C++ standalone 默认值。正式
+Product 会在 `build.cpp` 的 SCAN 配置阶段用 RobotConfig 碰撞 profile 覆盖它，不能
+把这个 standalone 默认值当作 Go2 或 Thunder 的现场半径。
+
+GeometryGate 的具体调用顺序是 `routeConnectionFree()` → `queryWorld()`、
+`isStepWithinLimits()`、`sweptRouteFree()`。起点和终点还会经过
+`isStartConnectionAllowed()`、`resolveGoal()` 和 `resolvePlanEndpoints()`。
+
+## 本轮已落地
+
+- Rust 补面接收精确物理半径，非整数地图分辨率不会放宽洞宽或边缘距离。
+- OctoMap 提供原始占据证据，Rust artifact 独占表面、支撑查询和图路线。
+- prepared cache 升到 `.6`，只保存 Rust observed/inferred surface、node、edge、corridor 和 ABI 版本。
+命中 `.6` 时直接安装 prepared surface 和 Rust graph，跳过重复构图和 C++ SurfaceGraph。
+  graph 的重复构建。旧 `.4` cache 按格式失效并重建。
+- Rust 图查询接收全局 `max_iterations`，预算耗尽会进入原有回退链。
+- 全局诊断区分 Rust 查询失败、C++ 几何拒绝和回退原因。
+- Rust 回退结果现在同时输出 `rust_query_failures`、
+  `rust_geometry_rejections` 和 `rust_other_failures`，统计范围是一条路线请求。
+- 区域图修复会保留仍存在的 surface cell 对应的稳定 node ID，并在失效窗口外留出
+  一圈连接带，避免只重建窗口内部而丢失边界连接候选。
+- 局部 Voronoi 修复会把修复窗口内仍有效的旧 node 作为固定 ownership seed，
+  再重算窗口内的多源 Dijkstra、predecessor corridor 和受影响边。
+- Rust 已增加首个 `check_route()` ABI，并在表面对照工具中与 C++ verifier 做同一路线 A/B 输出；它当前覆盖表面、occupied、step、slope 和单个 no-go，连续 swept-path 仍待迁移。
+- 默认 surface extraction 已收敛到 DimOS 规则，Rust 表面使用列净空、逐 Z closing 和 nearby support。原始 occupied / known-free 仍由 OctoMap 几何层保留。
+
+本轮验证为 Rust 18 个单元测试、MLS backend smoke、prepared surface smoke、prepared
+cache smoke 和 mapd region contract test 全部通过。C++ SurfaceIndex 已从生产
+PlannerArtifact、prepared cache 和 OctoPlanner 构建目标移除，旧 cache 会按格式失效并重建。
+
 同一份 arrival-box OctoMap 的现有结果：
 
 | 阶段 | DimOS | LingTu Rust | LingTu C++ |
@@ -20,9 +69,9 @@ step、slope 和 continuous sweep 合同。
 | geometry contract | 未提供 LingTu body 合同 | C++ 复核通过 | 原生通过 |
 
 Rust graph 已经接入生产 `PlannerArtifact` 的候选查询。端点使用 Rust 图查询和
-配置的吸附半径，C++ 负责把候选点转换为机身姿态并做几何复核。当前仍缺少 Rust
-surface 查询替换、prepared cache 的 Rust 序列化，以及把几何拒绝重新交给 Rust
-继续选路的完整 detour 查询。
+配置的吸附半径，C++ 负责把候选点转换为机身姿态并做几何复核。`.6` prepared cache
+已经保存并恢复 Rust graph。当前仍缺少把几何拒绝重新交给 Rust 继续选路的完整
+detour 查询。
 
 ## 目标边界
 
@@ -48,8 +97,8 @@ C++ 继续拥有：
 - DDS、PlannerSession 和现有 nav endpoint；
 - 最终可执行路线复核。
 
-这不是保留两套表面图长期并行。C++ 的 SurfaceIndex/SurfaceGraph 只在迁移期间作为
-对照和几何适配边界，Rust 通过固定接口后再删除 C++ 算法实现。
+生产链和 OctoPlanner 构建目标只使用 Rust 表面和图。原始占据和机身几何仍由
+OctoMap 查询，避免把表面准备和执行碰撞重复维护。
 
 ## 三个替换接口
 
@@ -72,9 +121,8 @@ height(x, y, z, tolerance)
 surface iteration
 ```
 
-生产支撑查询已经使用 Rust handle 的 `below` 和 `inferred`，路线平滑和图路线高度
-修正也已经使用 Rust `height`。原始占据、body 净空和 continuous sweep 仍直接读取
-OctoMap。当前没有让两份表面结果在同一个判断中混用。
+生产支撑查询从 Rust artifact 读取，原始占据、body 净空和 continuous sweep 直接读取
+OctoMap。Rust artifact 负责表面图、节点、corridor 和路线查询。
 
 ### GraphArtifact
 
@@ -95,8 +143,8 @@ DimOS `truncate_to_safe` 的职责边界，不在同一次 global query 中循�
 
 ### PlannerArtifact
 
-Rust handle 持有 graph、surface cell 和 revision。生产 `PlannerArtifact` 仍同时持有
-C++ `SurfaceIndex`、C++ `SurfaceGraph` 回退和 Rust graph handle。C++ `PlannerSession`
+Rust handle 持有 graph、surface cell 和 revision。生产 `PlannerArtifact` 只持有 Rust
+graph handle；旧 prepared artifact 按 `.6` 版本失效并重建。C++ `PlannerSession`
 负责：
 
 ```text
@@ -107,8 +155,11 @@ query cancellation
 route result
 ```
 
-地图没有变化时复用同一个 Rust graph handle。Rust `update_region` 已可用并通过
-smoke，但当前 mapd 仍以新 OctoMap 重新准备整张生产 artifact，尚未把区域 delta 接入。
+地图没有变化时复用同一个 Rust graph handle。`.6` cache 命中时直接恢复 prepared surface
+和这个 handle，不重新构图。
+mapd 已提供 `RegionUpdate` 转换契约，包含 resolution、边界、occupied、known-free、
+content epoch、reset epoch、sequence 和 generation。nav 还没有把这个契约接到持有
+`PlannerState` 的生产适配层，因此当前地图变化仍会重新准备整张生产 artifact。
 
 ## 迁移顺序
 
@@ -117,14 +168,15 @@ smoke，但当前 mapd 仍以新 OctoMap 重新准备整张生产 artifact，尚
 3. C++ geometry adapter 负责机身姿态转换、endpoint 连接和最终路线复核。
 4. 在 arrival-box、body-depth/align、stairs、multifloor 和 nav_3d_course 上做同图
    surface、graph、route 和 geometry 对照。
-5. 将 Rust surface 查询和 prepared cache 接到同一生产 artifact。
-6. 删除 C++ SurfaceGraph，再删除 C++ SurfaceIndex 的算法实现。
+5. 将 mapd `RegionUpdate` 接到持有 Rust `PlannerState` 的 nav 适配层。
+6. 把几何拒绝后的 detour 查询接回 Rust graph。
+7. 迁移完成。后续只需在固定地图上持续做 Rust 表面与执行几何回归。
 
 ## 当前不切换生产的原因
 
-当前 Rust graph 已经在 arrival-box 的生产 `startPlan()` 路径通过 C++ 几何合同。
-C++ SurfaceGraph 仍作为回退和对照，Rust surface 查询与 prepared cache 也仍未替换。
-这两个边界完成后，才能删除 C++ 图算法。
+当前 Rust graph 已经在 arrival-box 的生产 `startPlan()` 路径通过 C++ 几何合同，
+并且 `.6` cache 已能直接恢复 Rust graph。mapd 区域 delta 和几何拒绝后的 Rust detour
+仍未接入，但它们不再要求 C++ SurfaceIndex 参与准备阶段。
 
 迁移完成的最低证据是：
 

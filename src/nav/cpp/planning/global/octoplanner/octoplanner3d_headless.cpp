@@ -556,6 +556,13 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
             << (result.used_surface_graph ? "true" : "false") << ','
             << "\"used_rust_graph\":"
             << (result.used_rust_graph ? "true" : "false") << ','
+            << "\"rust_fallback\":"
+            << (result.rust_fallback ? "true" : "false") << ','
+            << "\"rust_failure_kind\":\"" << result.rust_failure_kind << "\","
+            << "\"rust_failure\":\"" << result.rust_failure << "\","
+            << "\"rust_query_failures\":" << result.rust_query_failures << ','
+            << "\"rust_geometry_rejections\":" << result.rust_geometry_rejections << ','
+            << "\"rust_other_failures\":" << result.rust_other_failures << ','
             << "\"goal_error_m\":" << result.goal_error_m << ','
             << "\"goal_xy_error_m\":" << result.goal_xy_error_m << ','
             << "\"goal_z_error_m\":" << result.goal_z_error_m << ','

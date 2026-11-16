@@ -464,6 +464,12 @@ PlanResult runPreparedPlanner(
   result.options = request.options;
   result.used_surface_graph = search_info.used_surface_graph;
   result.used_rust_graph = search_info.used_rust_graph;
+  result.rust_fallback = search_info.rust_fallback;
+  result.rust_failure_kind = search_info.rust_failure_kind;
+  result.rust_failure = search_info.rust_failure;
+  result.rust_query_failures = search_info.rust_query_failures;
+  result.rust_geometry_rejections = search_info.rust_geometry_rejections;
+  result.rust_other_failures = search_info.rust_other_failures;
   copyOverlayIdentity(request, result);
   result.cancelled = search_info.outcome == global_planner::OctoPlanner3D::SearchInfo::Outcome::Cancelled ||
                      (cancel_check && cancel_check());
