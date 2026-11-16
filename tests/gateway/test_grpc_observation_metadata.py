@@ -54,7 +54,7 @@ def test_calibration_preserves_source_optics_without_jpeg():
 
 def test_default_dds_source_reads_shm_calibration_through_grpc(tmp_path):
     from drivers.real.camera.dds_module import DdsCameraModule
-    from drivers.real.camera.shm import StreamKind
+    from runtime.transport.camera_shm import StreamKind
     from tests.drivers.test_camera_shm import write_committed_frame
 
     info_path = tmp_path / "camera_info.shm"

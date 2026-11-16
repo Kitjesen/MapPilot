@@ -26,7 +26,6 @@ from sim.scripts.mujoco.evidence import (
 )
 
 import lingtu.sim.switch as sim_switch
-from drivers.real.camera.shm import ShmFrameWriter, StreamKind
 from lingtu.assembly.compile_plan import compile_run_plan
 from lingtu.assembly.graph import RuntimeGraph
 from lingtu.assembly.graph.loader import load_runtime_graph
@@ -44,6 +43,7 @@ from lingtu.sim.stop import (
     process_launch_id,
 )
 from lingtu.switch_contracts import ProcessReport
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
 
 EXPECTED_PRODUCTS = (
     "teleop",

@@ -205,10 +205,10 @@ void TestHitInFreeSpace() {
   assert(grid.InflatedContains(2.2, 0.1, 0.1));
   for (int scan = 0; scan < 3; ++scan) {
     grid.Update(Frame({0.1F, 2.2F, 0.1F}, 30 + scan));
-    assert(!grid.InflatedContains(2.2, 0.1, 0.1));
+    assert(grid.InflatedContains(2.2, 0.1, 0.1));
   }
   grid.Update(Frame({}, 40));
-  assert(!grid.InflatedContains(2.2, 0.1, 0.1));
+  assert(grid.InflatedContains(2.2, 0.1, 0.1));
 
   // Later free observations continue updating the unchanged probability model.
   grid.Update(Frame({3.2F, 0.1F, 0.1F}, 50));
@@ -279,13 +279,13 @@ void TestEvidenceStates() {
   grid.Update(Frame({}, 20));
   check(OccupancyState::kOccupied);
   grid.Update(Frame({.1F, 2.2F, .1F}, 30));
-  check(OccupancyState::kUnknown);
+  check(OccupancyState::kOccupied);
   assert(grid.OccupancyProbability(2.2, .1, .1) == probability);
   grid.Update(Frame({3.2F, .1F, .1F}, 40));
   check(OccupancyState::kFree);
 }
 
-void TestLiveFrame() {
+void TestUnobservedHitIsRetained() {
   RollingOccupancyConfig config;
   config.auto_roll = false;
   RollingOccupancyGrid grid(config);
@@ -295,7 +295,7 @@ void TestLiveFrame() {
   assert(grid.InflatedContains(1.025, .025, .525));
   const auto probability = grid.OccupancyProbability(1.025, .025, .525);
   grid.Update(Frame({1.025F, 1.025F, .525F}, 200000000, .025F, .025F, .525F));
-  assert(!grid.InflatedContains(1.025, .025, .525));
+  assert(grid.InflatedContains(1.025, .025, .525));
   assert(grid.OccupancyProbability(1.025, .025, .525) == probability);
   const std::vector<float> old_position{1.025F, .025F, .525F};
   assert(grid.ObservedFreeVoxels(Frame(old_position, 1).cloud, .05F).front() == 0U);
@@ -304,13 +304,16 @@ void TestLiveFrame() {
   const auto y = static_cast<std::size_t>(std::floor((.025 - snapshot.origin_y_m) / snapshot.resolution_m));
   const auto z = static_cast<std::size_t>(std::floor((.525 - snapshot.origin_z_m) / snapshot.resolution_m));
   const auto index = (z * snapshot.size_y + y) * snapshot.size_x + x;
-  assert((snapshot.measured_occupied_bits[index / 8U] & (1U << (index % 8U))) == 0U);
+  assert((snapshot.measured_occupied_bits[index / 8U] & (1U << (index % 8U))) != 0U);
   assert((snapshot.known_free_bits[index / 8U] & (1U << (index % 8U))) == 0U);
   assert(grid.InflatedContains(1.025, 1.025, .525));
   assert(grid.StateAt(-1.025, -.025, .525) == OccupancyState::kUnknown);
   grid.Update(Frame({1.025F, 1.025F, .525F}, 300000000, .025F, .025F, .525F));
   assert(grid.Contains(1.025, 1.025, .525));
   grid.Update(Frame({}, 400000000, .025F, .025F, .525F));
+  assert(grid.InflatedContains(1.025, 1.025, .525));
+  grid.Update(Frame({2.025F, .025F, .525F}, 500000000, .025F, .025F, .525F));
+  assert(!grid.InflatedContains(1.025, .025, .525));
   assert(grid.InflatedContains(1.025, 1.025, .525));
 }
 
@@ -513,11 +516,11 @@ void TestLiveHitHistory() {
   grid.Update(Frame({2.2F, 0.1F, 0.1F, 2.2F, 0.1F, 0.1F}, 20));
   assert(grid.Generation() == first);
   grid.Update(Frame({0.1F, 2.2F, 0.1F}, 30));
-  assert(!grid.InflatedContains(2.2, 0.1, 0.1));
+  assert(grid.InflatedContains(2.2, 0.1, 0.1));
   assert(grid.InflatedContains(0.1, 2.2, 0.1));
   assert(grid.Generation() == first + 1U);
   grid.Update(Frame({}, 40));
-  assert(grid.InflatedSnapshot().occupied_cells == 1U);
+  assert(grid.InflatedSnapshot().occupied_cells == 2U);
   assert(grid.Generation() == first + 1U);
   grid.Update(Frame({3.2F, 0.1F, 0.1F, 0.1F, 3.2F, 0.1F}, 50));
   assert(!grid.InflatedContains(2.2, 0.1, 0.1));
@@ -1084,7 +1087,7 @@ void TestNewHitIsMeasuredEvenWithFreeSpaceHistory() {
 
 int main() {
   TestEvidenceStates();
-  TestLiveFrame();
+  TestUnobservedHitIsRetained();
   TestHitBoundsFollowTheRollingOccupancy();
   TestNewHitIsMeasuredEvenWithFreeSpaceHistory();
   TestHitInFreeSpace();

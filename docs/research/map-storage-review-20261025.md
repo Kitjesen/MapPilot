@@ -35,14 +35,14 @@
 源：`src/maps/include/lingtu/maps/layers/rolling_occupancy.hpp:159,233`。
 
 - 主数据是`std::vector<Cell>`。Cell保存`double log_odds`、`uint16_t hits/misses`、
-  `int64_t last_observed_ns`、`bool observed`、`bool current_hit`、`bool ray_free`。
-  2026-11-17 候选另用上一帧命中索引列表更新临时碰撞；确认的历史占据不随帧删除。
+  `int64_t last_observed_ns`、`bool observed`、`bool unresolved_hit`、`bool ray_free`。
+  实际命中保留到同格被真实 free ray 清除，或已有 decay/reset/window 规则清除。
 - 两个`uint32_t`数组保存射线投票计数；五个`uint64_t`位集加速observed、raw occupied、
   known free、collision seeds、inflated查询；`uint16_t inflation_counts_`处理膨胀重叠。
 - ring坐标让局部窗口滚动，不需要每次把整块数组搬移。移出窗口的历史会丢出实时窗口；
   该窗口不是永久全局地图。
 - 未观测与自由不同。`StateFor()`在未观测时返回unknown；raw occupied/free都没有
-  置位时，Body查询不会把它当成已验证自由。当前未解决的hit也可以保持这种未确认状态。
+  置位时，Body查询不会把它当成已验证自由。未解决的 hit 保持 occupied。
 - 默认200×200×100、0.05m来自类默认值，实际Product/环境可以覆盖；不能把默认值
   当作每台设备都已读取验证的配置。
 

@@ -233,7 +233,7 @@ def test_product_map_selection_is_retained_for_rollback(plan, tmp_path, monkeypa
     assert calls[0][1]["initial_pose"] == rollback[0][1]["initial_pose"] == tuple(nav._load_manifest(MANIFEST)["initial_pose"])
 
 
-@pytest.mark.parametrize("failure", [None, "missing_leg", "middle_error", "middle_identity"])
+@pytest.mark.parametrize("failure", [None, "missing_leg", "middle_error", "middle_identity", "middle_stationary"])
 def test_sequence_post_stop_checks_every_leg_and_final_world_goal(plan, tmp_path, monkeypatch, failure):
     criteria = nav._load_manifest(MANIFEST)
     criteria["goals"] = [
@@ -244,7 +244,7 @@ def test_sequence_post_stop_checks_every_leg_and_final_world_goal(plan, tmp_path
     legs = [
         {"goal": goal["goal"], "task_id": f"task-{index}",
          "terminal": {"state": 4, "task_id": f"task-{index}"},
-         "evidence": {"physical_goal_error_m": [0.1]}}
+         "evidence": {"physical_goal_error_m": [2.0, 0.1]}}
         for index, goal in enumerate(criteria["goals"])
     ]
     if failure == "missing_leg":
@@ -253,6 +253,8 @@ def test_sequence_post_stop_checks_every_leg_and_final_world_goal(plan, tmp_path
         legs[1]["evidence"]["physical_goal_error_m"] = [2.0]
     elif failure == "middle_identity":
         legs[1]["terminal"]["task_id"] = "another-task"
+    elif failure == "middle_stationary":
+        legs[1]["evidence"]["physical_goal_error_m"] = [0.1, 0.1]
     scenario = {"criteria": criteria, "legs": legs,
                 "goal_status": {"state": 4}, "ready_fraction": 1.0}
     motion = {"end_position_m": [5, 4, .5], "path_length_xy_m": 6,
@@ -263,7 +265,8 @@ def test_sequence_post_stop_checks_every_leg_and_final_world_goal(plan, tmp_path
     (tmp_path / "mujoco_feeder.stop.json").write_text(json.dumps({
         "product_session_id": SESSION, "terminal_ack": True, "outcome": "zero_applied"}))
     if failure:
-        with pytest.raises(RuntimeError, match="nav (leg|sequence)"):
+        expected = "leg_1_insufficient_displacement" if failure == "middle_stationary" else "nav (leg|sequence)"
+        with pytest.raises(RuntimeError, match=expected):
             product._check_nav_goal(tmp_path, plan, (), scenario, SESSION)
     else:
         result = product._check_nav_goal(tmp_path, plan, (), scenario, SESSION)

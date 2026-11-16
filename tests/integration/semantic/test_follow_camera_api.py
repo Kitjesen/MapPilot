@@ -14,7 +14,6 @@ pytest.importorskip("fastapi")
 
 from decision.modules.visual_servo import VisualServoModule
 from drivers.real.camera.dds_module import DdsCameraModule
-from drivers.real.camera.shm import ShmFrameWriter, StreamKind
 from gateway.gateway_module import GatewayModule
 from gateway.schemas import FollowTaskCancelRequest, VisualServoRequest
 from perception.backends import RgbdObservationSource
@@ -27,6 +26,7 @@ from runtime.msgs.nav import (
     NavigationState,
     Odometry,
 )
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
 
 WIDTH = 640
 HEIGHT = 480

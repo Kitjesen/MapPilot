@@ -24,7 +24,6 @@ from sim.scripts.mujoco.product_acceptance import (  # noqa: E402
     validate_product_contract,
 )
 
-from drivers.real.camera.shm import ShmFrameReader, StreamKind  # noqa: E402
 from lingtu.product_lock import CURRENT_RUN_FILE_NAME  # noqa: E402
 from lingtu.sdk.client import LingTuClient  # noqa: E402
 from lingtu.sim.acceptance import validate_runner_plan  # noqa: E402
@@ -37,6 +36,7 @@ from lingtu.sim.identity import (  # noqa: E402
 )
 from lingtu.sim.readiness import load_typed_readiness, readiness_expectation_for_process  # noqa: E402
 from lingtu.sim.switch import _load_committed_plan  # noqa: E402
+from runtime.transport.camera_shm import ShmFrameReader, StreamKind  # noqa: E402
 
 DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "map.json"
 REPORT_SCHEMA = "lingtu.mujoco.map_native_acceptance.report.v1"

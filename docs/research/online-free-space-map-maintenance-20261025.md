@@ -35,7 +35,7 @@ Occupied 做机体相交判断，与实时 SCAN 的共享机体查询一致。Un
 | 射线怎样更新 | 有效端点提供 hit；穿过体素提供 miss；超量程截断处不制造障碍命中；每帧累计后更新 log-odds | `src/maps/cpp/layers/rolling_occupancy.cpp:968` |
 | 正式 SCAN 配置 | 0.05 m，200×200×100，即 10×10×5 m；射线最大 5 m；p_hit=.85、p_miss=.30、p_occ=.80 | `src/lingtu/assembly/config/native_navigation.py:99` |
 | 障碍是否随时间默认消失 | 否，`LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S=0`；250 ms 是 decay 调度间隔，不是障碍寿命 | `native_nav.py:120`、`rolling_occupancy.cpp:881` |
-| 新障碍会不会被历史 free 压住 | 2026-11-17 候选将 `current_hit` 限于当前帧；历史占据仍按概率保留，`ray_free` 单独记录真实清空证据，临时命中消失不发布 known-free | [当前语义与验收边界](../../src/maps/README.md#live-collision-evidence) |
+| 新障碍会不会被历史 free 压住 | `unresolved_hit` 让新命中立即阻挡并保留到真实清除射线或已有 decay/reset/window 规则生效；`ray_free` 单独记录真实清空证据 | [当前语义与验收边界](../../src/maps/README.md#live-collision-evidence) |
 | 移入窗口的数据 | 初始化为 unknown，不是 free | `rolling_occupancy.cpp:619`、`:657` |
 | 是否用同 XY 的点推断整根柱子自由 | 当前 rolling occupancy 不读取 column_carving 字段；mapd 的扩展表面层也默认关闭列清除，nav 还关闭扩展层 | `src/maps/include/lingtu/maps/mapd/engine.hpp:99`、`rolling_occupancy.cpp` |
 | 正式保存地图 | SaveMap 要求当前为 `map` Product；抓取 SLAM 来源，重建导航包后提交。不是直接把 rolling bitmap 覆盖进旧地图 | `src/maps/cpp/mapd/save.cpp:65`、`src/maps/cpp/save.cpp:2020` |

@@ -126,7 +126,8 @@ def test_sensor_ingress_keeps_dds_work_off_the_control_thread() -> None:
     loop = _read(LOOP_PATH)
     assert "class SensorMailbox" in loop
     assert "if (!hasSensorData(batch))" in loop
-    assert "latest_.swap(batch)" in loop
+    assert "result.swap(latest_)" in loop
+    assert "latest_ = std::move(batch)" in loop
     assert "sensor_mailbox.stop();" in loop
 
 

@@ -359,7 +359,6 @@ void RollingOccupancyGrid::Reset(
   std::fill(cells_.begin(), cells_.end(),
             Cell{config_.min_log_odds - kUnknownLogOddsOffset});
   hit_bounds_.clear();
-  current_hits_.clear();
   std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
   std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
   std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -464,7 +463,7 @@ OccupancyState RollingOccupancyGrid::StateFor(const Cell& cell) const {
   if (!cell.observed) {
     return OccupancyState::kUnknown;
   }
-  if (cell.current_hit || cell.log_odds > occupied_log_odds_threshold_) {
+  if (cell.unresolved_hit || cell.log_odds > occupied_log_odds_threshold_) {
     return OccupancyState::kOccupied;
   }
   // Low occupancy confidence alone is not an observation of free space.
@@ -619,7 +618,6 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
     std::fill(cells_.begin(), cells_.end(),
               Cell{config_.min_log_odds - kUnknownLogOddsOffset});
     hit_bounds_.clear();
-    current_hits_.clear();
     std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
     std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
     std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -1093,24 +1091,15 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
       map_min_z + config_.size_z - std::int64_t{1},
       global_cell(static_cast<double>(frame.sensor_origin_z_m) + local_range_z));
 
-  // Replace live hits without clearing accumulated occupancy or adding free votes.
-  // Defer touched cells until fusion so unchanged hits do not rebuild inflation.
-  if (stats.accepted_points > 0U) {
-    for (const std::size_t physical : current_hits_) {
-      cells_[physical].current_hit = false;
-      if (ray_total_counts_[physical] == 0U) RefreshMembership(physical);
-    }
-    current_hits_.clear();
-  }
   for (const std::size_t physical : touched_indices) {
     const std::uint32_t hits = ray_hit_counts_[physical];
     const std::uint32_t total = ray_total_counts_[physical];
     const bool hit = hits >= total - hits;
     Cell& cell = cells_[physical];
-    // A new endpoint blocks immediately, even before historical occupancy rises.
-    cell.current_hit = hits > 0U;
+    // A new endpoint blocks immediately. Only a measured ray through this cell
+    // can resolve it; a scan looking elsewhere supplies no clearing evidence.
+    cell.unresolved_hit = hits > 0U;
     cell.ray_free = hits == 0U;
-    if (cell.current_hit) current_hits_.push_back(physical);
     cell.observed = true;
     const double update = hit ? config_.hit_log_odds : -config_.miss_log_odds;
     if (update >= 0.0 && cell.log_odds >= config_.max_log_odds) {

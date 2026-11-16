@@ -379,9 +379,11 @@ VisualServo checks the exact task, retained frame, review verdict and current
 observation before binding the chosen target. The method is not an Agent/MCP
 skill: the model cannot approve its own recommendation. Existing direct Follow
 callers retain their behavior unless they request confirmation.
-Model-driven execution currently uses the Agents SDK providers, including Kimi.
-The Codex App Server and ACP branches do not yet forward LingTu tool definitions
-or handlers. The explicit query/cancel phrases are handled before model dispatch.
+Model-driven execution uses the Agents SDK providers, including Kimi.
+Codex App Server forwards registered LingTu tools through its native dynamic
+tools and the same dispatcher; real-account end-to-end verification remains
+pending. ACP does not yet forward LingTu tool definitions or handlers.
+The explicit query/cancel phrases are handled before model dispatch.
 
 Follow is an owned execution rather than a stream of anonymous visual-servo
 commands. Start it with `POST /api/v1/visual_servo` using `mode=follow` and a
@@ -619,13 +621,13 @@ _Visual servo Module._
 
 | Tool | Module | Parameters | Returns | Description |
 | --- | --- | --- | --- | --- |
-| `start_follow` | `VisualServoModule` | `description: str`, `target_id: str`, `request_id: str`, `client_id: str` | `dict` | Start following one visually described person or an existing tracker identity. Provide description or target_id. accepted=true is only admission, not successful following. Unbound references such as me or him require a visual description or a selected target_id. Retain follow_task_id and product_session_id from the receipt and query get_follow_task; use cancel_follow_task with the same pair to stop this task. |
+| `start_follow` | `VisualServoModule` | `description: str`, `target_id: str`, `request_id: str`, `client_id: str`, `require_confirmation: bool` | `dict` | Start following one visually described person or an existing tracker identity. Provide description or target_id. accepted=true is only admission, not successful following. Unbound references such as me or him require a visual description or a selected target_id. Retain follow_task_id and product_session_id from the receipt and query get_follow_task; use cancel_follow_task with the same pair to stop this task. |
 | `get_follow_task` | `VisualServoModule` | `follow_task_id: str`, `product_session_id: str` | `dict` | Query one Follow execution using the exact follow_task_id and product_session_id from start_follow. When found=true, inspect phase for tracking progress and terminal/result/reason for completion. found=false is unknown, not success. Only the last 64 Host executions are retained; no restart recovery. |
 | `cancel_follow_task` | `VisualServoModule` | `follow_task_id: str`, `product_session_id: str`, `reason: str`, `request_id: str`, `client_id: str` | `dict` | Request cancellation of exactly the referenced Follow execution. accepted=true acknowledges the request; it does not prove motion has stopped. Query get_follow_task with the same IDs until terminal=true, after owned native children terminate. |
-| `find_object` | `VisualServoModule` | `target: str` | `str` | Trigger visual find mode for a target object. |
-| `follow_person` | `VisualServoModule` | `description: str`, `request_id: str`, `client_id: str` | `dict` | Trigger person following mode. |
-| `stop_servo` | `VisualServoModule` | `follow_task_id: str`, `product_session_id: str` | `dict` | Cancel Follow by reference, or stop the current object approach. |
-| `get_servo_status` | `VisualServoModule` | — | `dict` | Return current servo state. |
+| `find_object` | `VisualServoModule` | `target: str` | `str` | Find and approach a visual target. This returns a command result, not proof that the target was reached. Use get_servo_status for the current state. |
+| `follow_person` | `VisualServoModule` | `description: str`, `request_id: str`, `client_id: str` | `dict` | Start an Agent-owned continuous follow task. accepted=true means the task was admitted. Use the returned task reference and get_follow_task to inspect execution. |
+| `stop_servo` | `VisualServoModule` | `follow_task_id: str`, `product_session_id: str` | `dict` | Request cancellation of a visual task. The response confirms the cancellation request. Query the task or servo status until the terminal state is reported. |
+| `get_servo_status` | `VisualServoModule` | — | `dict` | Read the current visual task, target, navigation state, and machine-readable reason. |
 
 ## src/decision/modules/vla.py
 _VLA navigation module._
@@ -660,6 +662,8 @@ _LingTu MCP Server -Model Context Protocol for AI agent control._
 | `get_health` | `MCPServerModule` | — | `str` | Return full system health: modules, connections, message counts. |
 | `list_modules` | `MCPServerModule` | — | `str` | List all deployed modules with layer, port counts, and running state. |
 | `get_config` | `MCPServerModule` | — | `str` | Return robot driver limits, geometry, and safety thresholds. |
+| `capture_camera` | `MCPServerModule` | — | `dict` | Capture one fresh JPEG from the selected robot camera. Returns an MCP image content block when a frame is available; a configured source without a fresh frame is an explicit failure. |
+| `get_camera_status` | `MCPServerModule` | — | `dict` | Read camera and video readiness without opening a stream or changing camera settings. |
 | `get_robot_position` | `MCPServerModule` | — | `str` | Return the robot's current position (x, y, z) and yaw in map frame. |
 | `get_scene_graph` | `MCPServerModule` | — | `str` | Return the current flat or hierarchical scene graph snapshot. |
 | `detect_objects` | `MCPServerModule` | `query: str` | `str` | Search the current scene for objects matching *query* (case-insensitive). |
@@ -832,6 +836,20 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/navigation/tasks/{task_id}/resume` | Request continuation of the same paused navigation task | `ControlCommandResponse` | `post_navigation_task_resume` |
 | `POST /api/v1/navigation/tasks/{task_id}/speed-limit` | Update the active task speed limit while retaining its route | `ControlCommandResponse` | `post_navigation_task_speed_limit` |
 
+### src/gateway/routes/agent_workspace.py
+
+| Route | Summary | Response model | Handler |
+| --- | --- | --- | --- |
+| `GET /api/v1/agent/environments` | — | `—` | `list_agent_environments` |
+| `POST /api/v1/agent/environments` | — | `—` | `create_agent_environment` |
+| `DELETE /api/v1/agent/environments/{environment_id}` | — | `—` | `delete_agent_environment` |
+| `GET /api/v1/agent/workspaces` | — | `—` | `list_agent_workspaces` |
+| `POST /api/v1/agent/workspaces` | — | `—` | `create_agent_workspace` |
+| `DELETE /api/v1/agent/workspaces/{workspace_id}` | — | `—` | `delete_agent_workspace` |
+| `GET /api/v1/agent/workspaces/{workspace_id}/checkpoints` | — | `—` | `list_agent_checkpoints` |
+| `POST /api/v1/agent/workspaces/{workspace_id}/checkpoints` | — | `—` | `create_agent_checkpoint` |
+| `POST /api/v1/agent/workspaces/{workspace_id}/checkpoints/{checkpoint_id}/restore` | — | `—` | `restore_agent_checkpoint` |
+
 ### src/gateway/routes/amap.py
 
 | Route | Summary | Response model | Handler |
@@ -898,12 +916,15 @@ Each source file has one complete table; the rows are the route contract.
 | `POST /api/v1/agent/conversations/{conversation_id}/share` | — | `—` | `share_conversation` |
 | `GET /api/v1/agent/conversations/{conversation_id}/turns/{turn_id}` | — | `—` | `get_conversation_turn` |
 | `GET /api/v1/agent/options` | — | `—` | `get_conversation_options` |
+| `GET /api/v1/agent/providers` | — | `—` | `get_agent_providers` |
 | `GET /api/v1/agent/runs/{run_id}` | Read the current Agent run by identity | `—` | `get_agent_run` |
 | `POST /api/v1/agent/runs/{run_id}/cancel` | Cancel only the referenced Agent run | `ControlCommandResponse` | `cancel_agent_run` |
 | `GET /api/v1/agent/shares/{token}` | — | `—` | `get_shared_conversation` |
 | `POST /api/v1/estop/reset` | Explicitly release the native software emergency-stop latch | `ControlCommandResponse` | `post_estop_reset` |
 | `GET /api/v1/follow/{follow_task_id}` | Read one Follow execution | `—` | `get_follow_task` |
 | `POST /api/v1/follow/{follow_task_id}/cancel` | Cancel one Follow execution | `ControlCommandResponse` | `cancel_follow_task` |
+| `POST /api/v1/follow/{follow_task_id}/confirm` | Confirm the person selected by the operator | `—` | `confirm_follow_target` |
+| `GET /api/v1/follow/{follow_task_id}/selection` | Read the frame and candidates for operator confirmation | `—` | `get_follow_selection` |
 | `POST /api/v1/instruction` | Natural language navigation instruction | `ControlCommandResponse` | `post_instruction` |
 | `POST /api/v1/lease` | Acquire/release/renew control lease | `LeaseResponse` | `post_lease` |
 | `POST /api/v1/mode` | Switch operating mode | `ControlCommandResponse` | `post_mode` |
@@ -934,16 +955,6 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/readiness` | Client readiness snapshot | `ReadinessResponse` | `api_readiness` |
 | `GET /health` | Liveness probe | `LivenessResponse` | `liveness_health` |
 | `GET /ready` | Readiness probe | `ReadinessResponse` | `readiness_ready` |
-
-`GET /api/v1/health` includes an `issues` array for motion-affecting navigation
-facts and an `advisories` array for diagnostic-only observations. Each item has
-a numeric `code`, a stable `name`, `source`, `reason`, `impact`, `severity`,
-`message`, and `operator_action`. The complete numeric registry is in
-[docs/error-codes.md](error-codes.md). `motion_blocking` and `motion_hold`
-describe a command-path effect, `motion_degrading` describes a degraded timing
-condition, and `diagnostic_only` is observable without changing motion
-permission. Code `21001` is returned in `advisories` and does not by itself
-hold or block the robot.
 
 ### src/gateway/routes/inspection.py
 
@@ -1096,7 +1107,10 @@ hold or block the robot.
 | --- | --- | --- | --- |
 | `GET /api/v1/app/bootstrap` | — | `—` | `bootstrap` |
 | `GET /api/v1/app/capabilities` | — | `—` | `capabilities` |
+| `GET /api/v1/camera/depth/snapshot` | Colorized depth preview | `—` | `depth_snapshot` |
 | `GET /api/v1/readiness` | — | `—` | `readiness` |
 | `GET /api/v1/state` | — | `—` | `state` |
+| `POST /mcp` | — | `—` | `camera_mcp` |
+| `GET /mcp/capabilities` | — | `—` | `camera_mcp_capabilities` |
 | `GET /video-probe/` | — | `—` | `probe_index` |
 | `GET /video-probe/{asset}` | — | `—` | `probe_asset` |

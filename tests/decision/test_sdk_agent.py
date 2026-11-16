@@ -19,6 +19,7 @@ from openai.types.responses import (
 
 from decision.llm.client import LLMConfig
 from decision.tasks.sdk_agent import run_turn
+from tests.decision.codex_fixture import codex_server
 
 
 def message(text):
@@ -429,64 +430,43 @@ async def test_clarification_returns_choices_and_preserves_freeform_question():
 
 
 @pytest.mark.asyncio
-async def test_codex_direct_responses_retains_owned_tools_and_history(monkeypatch):
-    from decision.llm import codex
-
-    model = FakeModel([[call("inspect", {"target": "map"})], [message("地图已检查")]])
-    captured = []
-    monkeypatch.setattr(codex.account, "access_token", lambda: "private-test-token")
-
-    def create(**kwargs):
-        captured.append((kwargs["model"], str(kwargs["openai_client"].base_url)))
-        return model
-
-    monkeypatch.setattr("agents.models.openai_responses.OpenAIResponsesModel", create)
+async def test_codex_native_tools_retain_owned_dispatch_and_history(codex_server):
     invoke = AsyncMock(return_value={"ok": True})
     history = [{"role": "user", "content": "上一次"}, {"role": "assistant", "content": "已记录"}]
     result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke, history=history)
-    assert captured == [("gpt-6.1-sol", "https://chatgpt.com/backend-api/codex/")]
     invoke.assert_awaited_once_with("inspect", {"target": "map"}, "call_1")
     assert result.kind == "reply" and result.text == "地图已检查"
     assert result.model_items[:len(history)] == history
-    assert all(setting.store is False for setting in model.settings)
-    assert all(setting.temperature is None for setting in model.settings)
+    requests = codex_server.messages()
+    thread = next(item["params"] for item in requests if item.get("method") == "thread/start")
+    assert thread["model"] == "gpt-6.1-sol"
+    assert thread["baseInstructions"] == "Help the operator"
+    assert thread["sandbox"] == "workspace-write" and thread["approvalPolicy"] == "on-request"
+    assert "inspect" in {tool["name"] for tool in thread["dynamicTools"]}
+    started = next(item["params"] for item in requests if item.get("method") == "turn/start")
+    assert "上一次" in json.dumps(started["input"], ensure_ascii=False)
+    assert any(item.get("type") == "function_call_output" for item in result.model_items)
+    followup = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke, history=result.model_items)
+    assert followup.kind == "reply"
+    second = [item["params"] for item in codex_server.messages() if item.get("method") == "turn/start"][-1]
+    replay = json.dumps(second["input"], ensure_ascii=False)
+    assert "assistant tool inspect (call_1)" in replay
+    assert "tool call_1" in replay and 'ok' in replay
 
 
 @pytest.mark.asyncio
-async def test_codex_actual_sdk_http_stream_carries_token_and_tool_result(monkeypatch):
-    import httpx
-    import openai
-
-    from decision.llm import codex
-
-    requests = []
-    original = openai.AsyncOpenAI
-
-    def respond(request):
-        requests.append(request)
-        output = [call("inspect", {"target": "map"})] if len(requests) == 1 else [message("已检查")]
-        event = ResponseCompletedEvent(type="response.completed", sequence_number=1,
-            response=Response.model_construct(id=f"response-{len(requests)}", object="response", model="gpt-6.1-sol",
-                created_at=0, status="completed", output=output, usage=None))
-        return httpx.Response(200, headers={"content-type": "text/event-stream"},
-                              text="data: " + event.model_dump_json() + "\n\n")
-
-    monkeypatch.setattr(openai, "AsyncOpenAI", lambda **kwargs: original(**kwargs,
-                        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    monkeypatch.setattr(codex.account, "access_token", lambda: "private-http-test-token")
+async def test_codex_native_duplicate_call_preserves_single_owned_execution(codex_server):
+    codex_server.scenario["duplicate"] = True
     invoke = AsyncMock(return_value={"ok": True})
     result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke)
-    assert result.text == "已检查"
-    assert len(requests) == 2
-    for request in requests:
-        assert str(request.url) == "https://chatgpt.com/backend-api/codex/responses"
-        assert request.headers["authorization"] == "Bearer private-http-test-token"
-        body = json.loads(request.content)
-        assert body["stream"] is True and body["store"] is False
-        assert body["model"] == "gpt-6.1-sol" and body["instructions"] == "Help the operator"
-        assert "temperature" not in body and "max_output_tokens" not in body
-    assert any(item.get("type") == "function_call_output" for item in json.loads(requests[1].content)["input"])
-    invoke.assert_awaited_once()
+    assert result.kind == "reply" and result.text == "地图已检查"
+    invoke.assert_awaited_once_with("inspect", {"target": "map"}, "call_1")
+    responses = [item["result"] for item in codex_server.messages()
+                 if not item.get("method") and "result" in item]
+    assert len(responses) == 2 and responses[0] == responses[1]
+    assert responses[0]["success"] is True
+    assert json.loads(responses[0]["contentItems"][0]["text"]) == {"ok": True}
+    assert codex_server.server._reader.is_alive()
 
 
 @pytest.mark.asyncio

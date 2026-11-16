@@ -433,7 +433,10 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
     assert len(observed) == 1
     assert observed[0].source == "mapd"
     assert observed[0].sequence == 7
-    assert len(observed[0].layers) == 10
+    assert {layer["id"] for layer in observed[0].layers} == {
+        "maps.live_cloud", "maps.voxel_cloud", "maps.accumulated_cloud",
+        "maps.occupancy", "maps.elevation", "maps.esdf",
+    }
     assert observed[0].layers[0]["point_count"] == 1
     occupancy = next(
         layer
@@ -441,12 +444,6 @@ def test_host_bus_projects_map_scene_only_after_aligned_mapd_state() -> None:
         if layer["id"] == "maps.occupancy"
     )
     assert occupancy["grid"].shape == (1, 2)
-    surface = next(layer for layer in observed[0].layers if layer["id"] == "maps.surface_projection")
-    assert surface["grid"].tolist() == [[-1, 0, 100]]
-    assert "topic" not in surface
-    ground_height = next(layer for layer in observed[0].layers if layer["id"] == "maps.ground_height")
-    assert ground_height["grid"].ravel().tolist() == pytest.approx([0.1, 0.2])
-    assert "topic" not in ground_height
     health = bus.health()["map_scene"]
     assert health["cursor"] == ["mapd-boot", 7]
     assert health["generation"] == 5

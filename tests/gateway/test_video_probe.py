@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import struct
 import time
 
 import httpx
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
 from gateway.video_probe import create_app
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
 
 
 @pytest.fixture
@@ -132,6 +134,39 @@ def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environmen
     response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
     assert response.status_code == 503
     assert response.json()["sensor"] == "depth"
+
+
+@pytest.mark.parametrize("age_s", [0, 5])
+def test_depth_snapshot_reads_fresh_shm_and_rejects_stale_frames(video_environment, tmp_path, monkeypatch, age_s):
+    path = tmp_path / "depth.shm"
+    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", str(path))
+    timestamp_ns = time.time_ns() - age_s * 1_000_000_000
+    with ShmFrameWriter(path, stream_kind=StreamKind.DEPTH, slot_capacity=12) as writer:
+        writer.publish(
+            timestamp_ns=timestamp_ns,
+            width=2,
+            height=2,
+            stride=6,
+            encoding="16UC1",
+            frame_id="camera_depth_link",
+            payload=struct.pack("<6H", 1000, 1500, 60000, 2000, 2500, 60000),
+            depth_scale=0.001,
+        )
+        response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
+
+    if age_s:
+        payload = response.json()
+        assert response.status_code == 503
+        assert payload["success"] is False
+        assert "stale threshold" in payload["error"]
+    else:
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-depth-width"] == "2"
+        assert response.headers["x-depth-height"] == "2"
+        assert 1.0 <= float(response.headers["x-depth-near-m"]) < float(response.headers["x-depth-far-m"]) <= 2.5
+        assert response.content.startswith(b"\xff\xd8\xff")
 
 
 def test_media_authorization_is_kept(video_environment, monkeypatch):

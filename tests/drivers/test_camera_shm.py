@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from drivers.real.camera.shm import (
+from runtime.transport.camera_shm import (
     FrameChanged,
     FrameCorrupt,
     FrameNotReady,
@@ -474,10 +474,10 @@ def test_portable_writer_rejects_zero_timestamp_without_committing(tmp_path):
 
 def test_cpp_camera_service_uses_shm_as_default_image_data_plane():
     import yaml
+    from scripts.build.settings import generate
 
     from lingtu.assembly.config.camera import camera_environment
     from runtime.config import CameraConfig
-    from scripts.build.settings import generate
 
     source = Path("src/drivers/real/camera/native/camera_dds.cpp").read_text(encoding="utf-8")
     contract = Path("src/drivers/real/camera/native/shm_frame_ring.hpp").read_text(encoding="utf-8")

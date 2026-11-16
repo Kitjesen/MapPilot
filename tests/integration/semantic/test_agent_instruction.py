@@ -198,7 +198,7 @@ def test_http_controls_preserve_real_owner_state_with_safety_stop(app):
         assert terminal["task_status"]["state"] == "cancelled"
         unsupported = send("恢复任务", run.run_id).json()
         assert unsupported["accepted"] is False
-        assert unsupported["reason"] == "unsupported_control"
+        assert unsupported["reason"] == "task_not_running"
         assert app.agent._active_run is run
         assert len(calls) == 1
 
