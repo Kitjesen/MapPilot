@@ -200,5 +200,5 @@ class RobotConfig:
         cfg.robot_xml = "packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
         from sim.catalog import resolve_robot_default_policy
 
-        cfg.policy_onnx = str(resolve_robot_default_policy(Path(__file__).resolve().parents[4])["artifact"])
+        cfg.policy_onnx = str(resolve_robot_default_policy(Path(__file__).resolve().parents[4], "thunderv4@1.0.3")["artifact"])
         return cfg

@@ -35,7 +35,7 @@ POLICIES = ROOT / "sim/packages/controllers/doso/thunder_v4/locomotion/policy"
 POLICY_PATHS = {
     "4998": POLICIES / "policy_4998.onnx",
     "1119": POLICIES / "policy_1119.onnx",
-    "cts_moe": resolve_robot_default_policy(ROOT)["artifact"],
+    "cts_moe": resolve_robot_default_policy(ROOT, "thunderv4@1.0.3")["artifact"],
 }
 FEET = {"FR_foot", "FL_foot", "RR_foot", "RL_foot"}
 

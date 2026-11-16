@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from sim.runtime.recording import SimulationRecordingWriter
 from sim.runtime.replay.visual import (
     VisualReplayConfig,
     VisualReplayError,
+    _prepare_capture_directory,
+    _valid_pngs,
     run_visual_replay,
 )
 
@@ -25,6 +28,17 @@ SESSION = (
     / "session.yaml"
 )
 PNG = b"\x89PNG\r\n\x1a\nfixture"
+
+
+def test_capture_uses_its_empty_directory_not_filesystem_clock_precision(tmp_path: Path) -> None:
+    directory = tmp_path / "frames"
+    _prepare_capture_directory(directory)
+    frame = directory / "frame_000000.png"
+    frame.write_bytes(PNG)
+    os.utime(frame, (1, 1))
+    assert _valid_pngs(directory) == (frame.resolve(),)
+    with pytest.raises(VisualReplayError, match="must be empty"):
+        _prepare_capture_directory(directory)
 
 
 def _snapshot(

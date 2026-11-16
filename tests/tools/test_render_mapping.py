@@ -73,7 +73,7 @@ def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_p
     trajectory = tmp_path / "estimated.map.tum"
     trajectory.write_text("1 0 0 0 0 0 0 1\n2 1 2 3 0 0 0 1\n", encoding="ascii")
     report = MODULE.render(map_dir, trajectory, tmp_path / "figures", "Synthetic rendering test only", max_points=3)
-    assert report["font"] == {"family": "Arial", "size_pt": 10}
+    assert report["font"] == {"family": MODULE.plt.rcParams["font.family"][0], "size_pt": 10}
     assert report["execution_validated"] is False
     assert report["planning"]["status"] == "not_run"
     assert len(report["files"]) == 6

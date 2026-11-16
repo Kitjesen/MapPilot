@@ -2315,7 +2315,7 @@ def _resolve_policy_path_for_drive(drive_mode: str, value: str) -> Path | None:
         return candidate
     if str(drive_mode or "").strip().lower() != "policy":
         return None
-    return resolve_robot_default_policy(ROOT)["artifact"]
+    return resolve_robot_default_policy(ROOT, "thunderv4@1.0.3")["artifact"]
 
 
 def _configure_policy_cpu_threads(

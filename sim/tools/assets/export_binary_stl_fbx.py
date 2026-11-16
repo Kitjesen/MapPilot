@@ -241,13 +241,12 @@ def _open_regular_nofollow(path: Path, *, context: str) -> int:
     return descriptor
 
 
-def _stable_file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
+def _stable_file_identity(metadata: os.stat_result) -> tuple[int, int, int, int]:
     return (
         metadata.st_dev,
         metadata.st_ino,
         metadata.st_size,
         metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
     )
 
 
