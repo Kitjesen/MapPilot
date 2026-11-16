@@ -94,8 +94,8 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | 原 `scan_execution_clock_discontinuity` | **2026-11-06 已删除执行器中的这条停车分支。** 正向调度间隔不再单独清除轨迹；参考按实际时间前进，命令变化继续受原有限加速度约束 | [当前时钟适配说明](../../src/nav/cpp/planning/local/scan/upstream/UPSTREAM.md#execution-clock-cleanup-2026-11-06)。仿真时钟倒退仍由输入入口拒绝，显式暂停仍冻结参考 |
 | `collision_map_invalid`、分辨率不一致、`body_raw_evidence_missing`、无效 Body/yaw | 局部返回 InvalidInput | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp:46)。组合模型不能把已经膨胀的格再次当原始实测障碍 |
 | 实测 occupied 与机身/扫掠相交，或扩展机身越出局部 AABB | 候选碰撞返回 1，数据范围不足返回 -1 | [grid.cpp](../../src/nav/cpp/planning/local/scan/grid.cpp:450)。窗口内未知空气跳过；窗口外缺数据与窗口内未知不能混为一谈 |
-| `scan_local_target_blocked`、`scan_target_rejected`、`scan_initialization_failed`、`scan_replan_failed`、首次 Pending | 没有可执行轨迹时零输出；仍安全的旧尾段可以继续 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:520)。候选失败机制主要继承 SCAN；不是每次重规划均停车 |
-| `scan_emergency_stop`、`scan_speed_transition_blocked` | 近期预测会碰撞，或换轨/降速过渡不可行 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:425)、[planner_fsm.cpp](../../src/nav/cpp/planning/local/scan/upstream/plan_manage/planner_fsm.cpp:309)。官方有未来碰撞急停，交接与过渡由适配扩展 |
+| `aegis_goal_blocked`、`aegis_goal_rejected`、`aegis_init_failed`、`aegis_replan_failed`、首次 Pending | 没有可执行轨迹时零输出；仍安全的旧尾段可以继续 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:520)。候选失败机制主要继承 SCAN；不是每次重规划均停车 |
+| `aegis_estop`、`aegis_speed_blocked` | 近期预测会碰撞，或换轨/降速过渡不可行 | [backend.cpp](../../src/nav/cpp/planning/local/scan/backend.cpp:425)、[planner_fsm.cpp](../../src/nav/cpp/planning/local/scan/upstream/plan_manage/planner_fsm.cpp:309)。官方有未来碰撞急停，交接与过渡由适配扩展 |
 | heading 对齐、外部 hold、速度目标为 0、safetyStop、无效样条/跟踪输入 | 可能只停止 XY 保留 yaw，也可能全零 | [closed_loop_controller.cpp](../../src/nav/cpp/planning/local/scan/upstream/plan_manage/closed_loop_controller.cpp:62)、[follower.cpp](../../src/nav/cpp/tracking/follower.cpp:389)。大朝向误差先转后走是官方已有行为 |
 | `settling_before_goal_yaw`、`settling_before_pose_turn`、`aligning_goal_yaw`、`pose_turn_blocked`、`settling_at_goal` | 姿态阶段交接或终点确认期间暂停平移/等待低速 | [executor.cpp](../../src/nav/cpp/navigation/executor.cpp:684)。普通内部路点不应套最终到点精度。最终到点确认包含位置、高度、必要朝向和一次有效低速观测，不再累计 0.5 s |
 | 受阻/无进展触发 Recovery；候选为空、不安全、离轨或无进展 | 停止当前动作，使用当前几何继续检查下一候选 | [recovery.cpp](../../src/nav/cpp/navigation/recovery.cpp)、[executor.cpp](../../src/nav/cpp/navigation/executor.cpp)。已删除额外观测版本等待；当前实测障碍仍能拒绝所有候选 |
@@ -125,7 +125,7 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | 持续控制环 deadline miss | 临时保持零命令，调度恢复后自动释放自身保持，保留路线 | [guard.cpp](../../src/nav/cpp/endpoint/nav/control/guard.cpp)、[loop.cpp](../../src/nav/cpp/endpoint/nav/app/loop.cpp)。不再建立人工接管锁；P95 与历史 miss-ratio 警告本身不建锁 |
 | 速度平滑器无效/超时或 commit 失败 | 最终输出零 | [final.cpp](../../src/nav/cpp/endpoint/nav/control/final.cpp)。属于运行故障，不应报几何无路 |
 | 命令过期；普通遥控平移小于最小运动量 | 零或限幅；自主跟踪在此将 min_motion 设为 0 | [command.cpp](../../src/nav/cpp/endpoint/nav/safety/command.cpp)、[autonomy.cpp](../../src/nav/cpp/endpoint/nav/control/autonomy.cpp)。限速/限加速度本身通常只改变输出，不是拒绝规划 |
-| 实际运动或待发送命令的制动扫掠阻塞 | `scan_actual_motion_blocked`；可缩放时 `scan_actual_motion_limited` | [main.cpp](../../src/nav/cpp/endpoint/nav/main.cpp:1245)。两者输入不同；有轨迹仍可能在这里停止，应追到同一份碰撞证据 |
+| 实际运动或待发送命令的制动扫掠阻塞 | `aegis_move_blocked`；可缩放时 `aegis_move_limited` | [main.cpp](../../src/nav/cpp/endpoint/nav/main.cpp:1245)。两者输入不同；有轨迹仍可能在这里停止，应追到同一份碰撞证据 |
 | 零输出发送失败、停车确认尚未完成、驱动拒绝零命令、急停状态无法保存/清除 | 暂不宣布停车或恢复完成 | [stop.cpp](../../src/nav/cpp/endpoint/nav/safety/stop.cpp:307)。不能以请求已受理代替实际确认 |
 | 驱动命令 frame 无效、速度非有限、命令来源/序号/时效无效；watchdog 超时 | 驱动拒绝或停车 | [core.cpp](../../src/drivers/real/motion/core.cpp)、[command_freshness_gate.cpp](../../src/drivers/real/motion/command_freshness_gate.cpp)。驱动不负责重新判断全局路线 |
 

@@ -350,6 +350,19 @@ yet a durable, restart-recoverable Mission executor.
 
 ## Follow task lifecycle
 
+The Web conversation in the `tracking` Product exposes `follow_person(description)`.
+It calls `VisualServo.start_follow` directly; no SemanticPlanner is required.
+The reply carries `run_id`, `follow_task_id`, `product_session_id`, and the current
+phase. Follow admission is not evidence of person selection or robot movement.
+Later turns use `get_agent_status` to query the same Follow through `navigation`,
+or `cancel_agent_task(run_id)` to cancel it. Ordinary conversation leaves it
+running. The direct phrases `跟随状态`, `停止跟随`, and `stop following` also work.
+Existing conversation permissions and Gateway motion admission still apply.
+This integration uses the existing conversation routes, not a second execution API.
+Model-driven execution currently uses the Agents SDK providers, including Kimi.
+The Codex App Server and ACP branches do not yet forward LingTu tool definitions
+or handlers. The explicit query/cancel phrases are handled before model dispatch.
+
 Follow is an owned execution rather than a stream of anonymous visual-servo
 commands. Start it with `POST /api/v1/visual_servo` using `mode=follow` and a
 `target` description or explicit `target_id`. A successful receipt returns both
@@ -901,6 +914,16 @@ Each source file has one complete table; the rows are the route contract.
 | `GET /api/v1/readiness` | Client readiness snapshot | `ReadinessResponse` | `api_readiness` |
 | `GET /health` | Liveness probe | `LivenessResponse` | `liveness_health` |
 | `GET /ready` | Readiness probe | `ReadinessResponse` | `readiness_ready` |
+
+`GET /api/v1/health` includes an `issues` array for motion-affecting navigation
+facts and an `advisories` array for diagnostic-only observations. Each item has
+a numeric `code`, a stable `name`, `source`, `reason`, `impact`, `severity`,
+`message`, and `operator_action`. The complete numeric registry is in
+[docs/error-codes.md](error-codes.md). `motion_blocking` and `motion_hold`
+describe a command-path effect, `motion_degrading` describes a degraded timing
+condition, and `diagnostic_only` is observable without changing motion
+permission. Code `21001` is returned in `advisories` and does not by itself
+hold or block the robot.
 
 ### src/gateway/routes/inspection.py
 

@@ -222,7 +222,7 @@ NX 证据：`/home/unitree/field-candidate-20260927/start-gate-{tests,deploy82,f
 49 项相关回归、lint、TypeScript/Vite 构建通过；静态更新至
 `app-mFGjGO1F.js`，HTTP 已确认，浏览器仍需刷新。回退入口与组件源码包为 NX
 `/home/unitree/field-candidate-20260927/web-before-key-response.tar.gz`，旧 chunk 保留。
-调整前记录还存在 `scan_actual_motion_blocked`、`dynamic_limits_after_retiming`
+调整前记录还存在 `aegis_move_blocked`、`dynamic_limits_after_retiming`
 和 `collision_at_trajectory_start`，不能声称升加速度已经修复这些停车原因。
 30 秒只读采样没有活动遥控输入，不能据此报告运动响应改善；本轮没有发送运动。
 

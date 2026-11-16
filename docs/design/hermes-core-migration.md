@@ -10,36 +10,37 @@ Hermes 是一套完整应用，不是单个模型。我们需要模型认证、�
 
 此前 `HermesRuntime` / `hermes_turn` 桥接已删除：它依赖用户本机 Hermes 安装、由 Host 启动进程、丢弃领域工具，且阻塞 HTTP 请求不能取消远端执行。将这条桥接改名为 core 并不等于源码迁移。以前 `/v1/models` 的探测只证明相应本机安装能启动，不能当作固定 v0.23.1、真实模型推理或机器人任务的验收。
 
-## 已迁入：Codex 登录与直接模型调用
+## 已迁入：Codex App Server
 
 固定参考 NousResearch/hermes-agent v0.23.1，提交 `3b421578588243f920886e6fe79a6faa87ea026e`。
 
-- `src/decision/llm/codex.py`：从 Hermes 设备码请求、轮询、授权码交换和刷新流程适配。
+- `src/decision/llm/codex.py`：保留 Hermes 设备码协议的历史适配，供迁移和回退参考，不再作为生产 Codex 主入口。
+- `src/decision/llm/codex_app_server.py`：生产 Codex 通过 `codex app-server --stdio` 接入，账号、CODEX_HOME、thread、turn 和 App Server 事件由 Codex CLI 负责。
 - `src/decision/llm/CODEX_NOTICE.md`、`LICENSE.hermes.txt`：上游文件、差异和 MIT 版权；纳入 Python 包数据。
 - `src/decision/llm/conversation_models.py`：将 `codex:gpt-6.1-sol` 与 API Key 的 `gpt-6.1-sol` 区分。
-- `src/decision/tasks/sdk_agent.py`：选择 Codex 时直接请求 `https://chatgpt.com/backend-api/codex/responses`，由原 SDK 循环处理工具，`store=false`，没有 Hermes 中转。
+- `src/decision/tasks/sdk_agent.py`：选择 Codex 时通过 App Server 的 `thread/start` 和 `turn/start`，读取 `item/agentMessage/delta` 与 `turn/completed`，不再直接请求 Codex Responses。
 - `src/decision/tasks/conversation_inputs.py`：Codex 思考设置、图片输入与授权检查；默认 Kimi 连接不可用时仍允许选择已授权 Codex。
-- `web/src/components/agentConversation/ModelConnections.tsx`：底部聊天栏“管理模型连接”，设备码、官方页面、等待、取消、过期、重试和断开。
+- `web/src/components/agentConversation/ModelConnections.tsx`：底部聊天栏“管理模型连接”，官方授权页、等待、取消、过期、重试和断开。
 
 流程：
 
 ```text
-点击管理模型连接 → 登录 → 官方页面输入设备码
- → LingTu 换取并保存自己的授权 → 选择 GPT-6.1 Sol · Codex
- → OpenAI Responses → 现有工具确认/调用 → 现有历史和对话卡片
+点击管理模型连接 → Codex App Server 的 account/login/start
+ → 官方授权页 → CODEX_HOME 登录状态 → 选择 GPT-6.1 Sol · Codex
+ → thread/start → turn/start → App Server 增量事件 → 现有历史和对话卡片
 ```
 
-登录字段不是聊天消息，不进入模型上下文或分享内容。凭据位于 `$XDG_STATE_HOME/lingtu/model_accounts/codex.json`，未设置 XDG_STATE_HOME 时使用用户目录 `.local/state/lingtu/model_accounts/codex.json`；不读取或修改 `~/.codex`、`~/.hermes`。单 Host 锁负责授权、取消和令牌刷新；令牌先写临时文件再原子替换。退出只删除 LingTu 自有凭据，不等于提供商撤销全部客户端授权。
+登录字段不是聊天消息，不进入模型上下文或分享内容。Codex 凭据和配置由 Codex CLI 的 `CODEX_HOME` 管理；LingTu 不读取、复制或替换 `~/.codex` 中的凭据。单 Host 进程负责 App Server 的启动、JSON-RPC 请求和关闭；退出通过 `account/logout` 交给 Codex。
 
 ### HTTP 接口
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/v1/agent/connections/codex` | 授权状态；不返回令牌，不主动刷新 |
-| POST | `/api/v1/agent/connections/codex/login` | 创建设备码会话 |
-| POST | `/api/v1/agent/connections/codex/login/{id}/poll` | 按服务器间隔推进授权；成功时保存凭据 |
-| DELETE | `/api/v1/agent/connections/codex/login/{id}` | 取消尚未完成的授权 |
-| DELETE | `/api/v1/agent/connections/codex` | 删除 LingTu 自有授权 |
+| GET | `/api/v1/agent/connections/codex` | 读取 Codex App Server 的账号状态；不返回凭据 |
+| POST | `/api/v1/agent/connections/codex/login` | 调用 `account/login/start`，返回官方授权页 |
+| POST | `/api/v1/agent/connections/codex/login/{id}/poll` | 读取 App Server 账号状态，确认登录是否完成 |
+| DELETE | `/api/v1/agent/connections/codex/login/{id}` | 调用 `account/login/cancel` |
+| DELETE | `/api/v1/agent/connections/codex` | 调用 `account/logout` |
 
 接口沿现有 Gateway 鉴权和 Agent Module 入口，不新增公开免鉴权路径。模型连接面板可在模型列表未加载时打开，但后端运行模式仍须提供 AgentPlannerModule。
 
@@ -47,7 +48,7 @@ Hermes 是一套完整应用，不是单个模型。我们需要模型认证、�
 
 授权成功不等于模型权限、额度或推理已验证。`codex:gpt-6.1-sol` 是配置的候选模型，实际可用性由账号和服务器决定。本轮只完成模拟上游的授权状态机、真实 SDK 的 HTTP/SSE 契约、工具调用和 UI 回归；没有对用户账户发起授权或消耗模型额度。
 
-这次复用的是 Hermes Codex 设备码协议，不是 OpenAI 新版 SIWC 动态应用注册。新 SIWC 的 client_id、resource、scope 和推理地址不能混用在此流程。商业分发/远程托管需另按提供商接入安排确认。
+生产主路径不再复用 Hermes Codex 设备码协议，也不把 LingTu 自己保存的 token 当作 Codex 主凭据；它启动官方 `codex app-server`，让 Codex CLI 管理 CODEX_HOME 和账号。Hermes 设备码代码保留为历史回退实现。商业分发/远程托管仍需另按提供商接入安排确认。
 
 ## 功能清单
 

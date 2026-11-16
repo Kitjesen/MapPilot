@@ -2417,13 +2417,10 @@ the NX release used above:
   nonempty cached snapshot short-circuited subsequent requests indefinitely
   when there was no WebSocket consumer. Two snapshot-route regression tests
   pass. The recorded SHM stream was current and was not affected by this bug.
-- `config/system/products/tracking.yaml` now declares `tick_hz: 100.0`, so an
-  explicit SCAN selection satisfies the native compiler's frequency contract.
-  The default backend remains CMU. Both backend selections compile in the new
-  regression test, which also preserves the required map and critical modules.
-  The declaration also changes the default CMU loop to 100 Hz; its NX CPU cost
-  has not been measured. It is not described as a behavior-preserving cadence
-  change or as completed field deployment.
+- `tracking` now uses the generic 20 Hz control cadence with its default CMU
+  backend. Selecting SCAN promotes the Product to its required 100 Hz cadence
+  before native compilation. Both backend selections compile in the regression
+  test, which also preserves the required map and critical modules.
 
 Ruff and the affected diff checks pass. ProductControl remains on the existing
 `real / map / camera` run throughout the recording.
@@ -2695,6 +2692,65 @@ The next slice remains weak-candidate input, real source-time dynamics, and
 identity/reference recovery. Long-term motion-only reacquisition, RGB-D occluder
 contamination and cross-frame VLM reference freshness remain open. The fixes
 above must not be described as resolving all identity recovery failures.
+
+## Kimi selection recovery and recorded-crop checks, 2026-11-16
+
+An unavailable camera observation during initial VLM selection advanced the
+intent generation but left `VisualServoModule._follow_select_running` set.
+The old worker correctly discarded its reply, including its final cleanup,
+so subsequent valid observations kept waiting for a worker that had ended.
+The new regression reproduced this failure before the repair.
+
+The module now owns the initial selection future alongside the existing
+identity-verification future. Camera interruption, context changes, the
+perception watchdog and task cancellation clear and cancel that future.
+Fresh observations can restart selection within the same Follow task. The
+existing generation check prevents a superseded worker from clearing a newer
+request. Selection still waits for a fresh accepted observation before
+publishing a navigation goal.
+
+The SDK transport tests now exercise the current task-reference cancellation
+API and paired image/detection timestamps. They check that stopping Follow
+closes the pending HTTP stream while the Host stays running, and that a
+rejected candidate can be reconsidered on a later observation.
+The five affected Follow, person-tracker and SDK transport suites pass
+181 tests. Ruff passes on the changed Python files and experiment runner.
+
+Twelve real Moonshot `kimi-k3` calls exercised the production selector and
+`verify_candidate` using saved MOT17-09 crops. The six input sets came from
+`build/person-follow/verified/llm-calls.json`. MOT labels were used only for
+post-run attribution. The runnable experiment and full responses are retained
+at `build/person-follow/kimi-20261116/run.py` and its `result.json`.
+
+| Source frame, zero-based | Candidates | Selected crop | Verification or independent probe | Combined call time |
+| --- | --- | --- | --- | --- |
+| 0 | 8 | 6 | MATCH | 47.74 s |
+| 28 | 10 | 9 | MATCH against original reference | 11.29 s |
+| 118 | 7 | 0 | Historical crop 5 rejected with OTHER | 15.76 s |
+| 133 | 9 | 0 | Historical crop 5 rejected with OTHER | 11.65 s |
+| 163 | 9 | 0 | Historical crop 5 rejected with OTHER | 13.18 s |
+| 178 | 11 | 8 | MATCH against original reference | 16.65 s |
+
+The independent probes in rows selecting zero tested the prior replay's
+candidate. They did not authorize a target. Frame 133 has zero ground-truth
+visibility. Its occluder overlaps the annotated target box at IoU 0.644, so
+the raw box-attribution score of five out of six cannot establish visual
+selection accuracy. Inspection of the retained crops shows the blue-shirt,
+black-bag occluder in crop 8. Frame 178 crops 7 and 8 both contain the original
+target, and Kimi selected crop 8. These sampled decisions do not measure
+continuous tracking accuracy or identity-switch rate.
+
+The twelve calls had a median wall time of 7.88 s and a maximum of 38.05 s.
+This offline diagnostic measured request completion without the Host's outer
+deadline. Production still imposes a 30 s total selection-and-verification
+deadline, so the 47.74 s initial sequence would time out there. This latency
+supports event-triggered identity checks while local tracking consumes fresh
+observations.
+
+The configured research GPU SSH endpoint refused this connection, so Qwen
+was not rerun. Earlier Qwen evidence remains historical and was collected
+on a separate GPU server. This change has no new NX deployment or physical
+robot-following evidence.
 
 ## Sources
 

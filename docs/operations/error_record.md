@@ -124,7 +124,7 @@
   本次是仿真真值定位和 22 部件隔离模型，不能外推到 Go2 实机。
 - 一份失败快照（仿真时刻 26.785 s）记录 SCAN 候选起始碰撞
   `collision_at_trajectory_start`，对应机器人位置约 (1.956, -0.248, 0.436)；
-  末段交替出现恢复转动与 `scan_actual_motion_blocked`。
+  末段交替出现恢复转动与 `aegis_move_blocked`。
   这只能定位失败环节，尚不能证明该次占据来自移动箱体残影或错误射线清除。
   mapd 最终状态记录 processed_observations=226，generation=226；更新持续不等于
   箱体原位置已被自由射线覆盖。复测未录制视频。

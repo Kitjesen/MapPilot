@@ -69,7 +69,7 @@
 
 ## 当前 LingTu 代码的实际边界
 
-- `src/maps/include/lingtu/maps/layers/ground_surface.hpp::EstimateGroundSurface`
+- `src/maps/include/lingtu/maps/legacy/ground_surface.hpp::EstimateGroundSurface`（legacy）
   用兼容邻域精化已有表面，但要求当前格具有自己的支持样本，因此不补空单元。
 - `src/nav/cpp/planning/global/octoplanner/vendor/planner/src/global_planner.cpp::hasGroundSupport`
   在非 direct-support 模式可利用围住查询点的多个方向支撑，小范围容忍采样缺口；

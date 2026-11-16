@@ -380,8 +380,18 @@ IMU 的角速度和线加速度按单位分组，默认逐轴堆叠，可以切�
 - `view_robot_card` returns a read-only view marker for robot, joints, IMU, or navigation. It does not touch the robot or start a recording. The composer offers these entries.
 - Opening mounts existing NumericCard/ImuPanel or the state reader; closing unmounts polling. IMU recording remains Host-owned and requires explicit stop; collapsing never ends a record.
 - Robot/navigation display uses `/api/v1/state` and the existing navigation freshness/presentation helpers, with a seven-second local receipt expiry. Read failures clear displayed state. This card is observational; existing navigation controls retain command ownership.
+- A running Agent-owned navigation task can be queried with `get_agent_status`, paused with the exact `暂停` control phrase, resumed with `继续` or `恢复任务`, and cancelled with the existing stop controls. Pause and resume resolve the current Agent owner to its native task ID before calling `nav.goals.submit_pause/submit_resume`; a stale conversation or another task cannot control it. Native ACK and later goal status remain the source of execution state.
 - Embedded camera is edge-to-edge 16:9, proportional cover (including rotated WebRTC). It can crop edges; standalone video remains contain. Existing visibility/unmount cleanup is retained.
 - Preview at `/tests/conversation-style-preview.html` uses local fixtures only, including clearly marked camera frames and synthetic joint faults; it never forwards robot requests.
 
 - Verification: 56 focused frontend tests and 11 workbench tests passed. Camera browser check proves full-width cover and release/reconnect; four-card browser check proves mount/unmount polling, fault display, and no recording/motion writes. Independent preview: http://127.0.0.1:47684/tests/observation-card-preview.html.
 - Full build passed before concurrent Bot edits; final whole-project typecheck is blocked by missing `services/botShapes.ts` in that separate work. No robot deployment or real camera peer tested here.
+
+
+### MCP camera capability (2026-11-13)
+
+- `MCPServerModule` now exposes read-only `capture_camera` and `get_camera_status` skills. They use the existing Gateway camera owner; they do not open ROS devices, start a second publisher, change camera settings, or authorize motion.
+- `capture_camera` returns metadata in structured content and a standard MCP image content block (`image/jpeg`, `image/png`, or `image/webp`) when the Gateway has a valid data URL. The image is removed from text JSON so models do not receive a large base64 string as prose.
+- A configured camera source without a fresh frame is returned as an explicit failure from the existing snapshot owner. `get_camera_status` is the diagnostic call before retrying.
+- The Sunrise host probe on 2026-11-13 reached SSH and found `rdk-gs130w-camera.service`, but `/image_combine_jpeg` produced no messages for 12 seconds; the service logged repeated codec/websocket no-image errors. Its port 8090 MCP endpoint was closed. This is a remote camera-source failure, not evidence of a LingTu MCP image or UI failure.
+- MCP server tests cover discovery, the image content block, Gateway-owner delegation, and official Agents SDK protocol access.

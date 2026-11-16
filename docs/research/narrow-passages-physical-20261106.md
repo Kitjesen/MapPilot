@@ -56,7 +56,7 @@ health在到达时冻结，这不是末尾进程退出污染；简单去重不�
 不能全部归因于SCAN起步。仿真40.64s首次纯转向，41.26～41.96s有平移命令；
 41.98s之后持续全零到48.24s结束。
 
-最后快照134～136是`scan_emergency_stop`、`local_near_field_stop`，输入门仍ready，
+最后快照134～136是`aegis_estop`、`local_near_field_stop`，输入门仍ready，
 最终控制收到的已是零命令。最新优化尝试还分别报`collision_at_trajectory_start`与
 `rebound_restart_limit`。这是全局接通后局部仍失败，不能用通道加宽成功覆盖原缺陷。
 

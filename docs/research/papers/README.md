@@ -1,12 +1,14 @@
 # Downloaded papers
 
-These PDFs were downloaded or retained through 2026-10-08 for local engineering reference.
+These PDFs were downloaded or retained through 2026-11-16 for local engineering reference.
 The links in the table point to the paper's public source. The local copy is
 only a reference artifact; the repository does not treat a paper prototype as
 an implemented LingTu capability.
 
 | Local file | Paper | Why it matters to LingTu | Source |
 | --- | --- | --- | --- |
+| [op-follower.pdf](op-follower.pdf) | OP-Follower (JFR 2026), author-hosted PDF, 15 pages | Onboard Go2 person following, asynchronous perception, delay prediction and 50 Hz control | [Author PDF](https://op-follower.github.io/static/pdfs/OP_Follower-1.pdf), [publication](https://doi.org/10.1002/rob.70363) |
+| [tpt-bench-v2.pdf](tpt-bench-v2.pdf) | TPT-Bench, author-linked arXiv v2 dated 2025-07-09, 16 pages; journal publication in IJRR 2026 | Long-term robot-view person tracking, target absence and re-identification evaluation | [Downloaded preprint](https://arxiv.org/pdf/2505.07446v2), [journal record](https://doi.org/10.1177/02783649261447308) |
 | [hov-sg.pdf](hov-sg.pdf) | HOV-SG: Hierarchical Open-Vocabulary 3D Scene Graphs | Room/floor/object hierarchy and language queries | [arXiv](https://arxiv.org/abs/2403.17846) |
 | [orionnav.pdf](orionnav.pdf) | OrionNav | Onboard semantic mapping and hierarchical scene-graph navigation on a quadruped | [arXiv](https://arxiv.org/abs/2410.06239) |
 | [clio.pdf](clio.pdf) | Clio | Task-driven semantic compression instead of saving every feature | [arXiv](https://arxiv.org/abs/2404.13696) |
@@ -26,3 +28,20 @@ Other references that remain online-only are listed in the design document,
 including ASHiTA, OpenGS-SLAM, Point2Graph, Khronos, DovSG, osmAG-LLM, and
 the MCP representation-layer work. They are not copied into the repository
 because the downloaded set is enough to support the current design decision.
+
+## Person-follow source downloads, 2026-11-16
+
+| Project | Local checkout | Revision | Contents checked |
+| --- | --- | --- | --- |
+| [TPT-BENCH-TOOLS](https://github.com/MedlarTea/TPT-BENCH-TOOLS) | `third_party/research/TPT-BENCH-TOOLS` | `2488f8bb50f757930c5131688fa60eb273e2611f` | Evaluation scripts, dataset loaders, panoramic projection, rosbag extraction and tracking visualization |
+| [DobotTrack](https://github.com/Dobot-Team/dobot_track) | `third_party/research/dobot_track` | `0a99a9554c6564cd8d4bde0f896c3c48bf3f8cc4` | Q-identity history compression, InternVL3-1B configuration, training/evaluation and Orin deployment source |
+
+The OP-Follower author account exposes only `OP-Follower.github.io` at this
+check. Its project page and paper link to demonstration material. An official
+algorithm source repository was not found. The website repository was not
+cloned as algorithm code.
+
+Both PDFs passed title, page-count and per-page text extraction checks. The
+TPT download is the public preprint linked by the authors. The full TPT dataset
+and DobotTrack model weights have not been downloaded, and the external
+algorithms have not been installed, run or integrated into LingTu.

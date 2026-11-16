@@ -25,6 +25,7 @@ and which capabilities still need qualification. The shared delivery workflow is
 | Find what each design document records and when to use it | [Design document index](design/README.md) |
 | Understand the current twin-cylinder envelope, geometry sources, turning posture and historical Body decisions | [Collision model and motion posture](design/navigation-body-model-and-motion-posture.md) |
 | Trace confirmed navigation errors, their dates, fixes and deployment limits | [Error record](operations/error_record.md) |
+| Look up stable numeric runtime error codes and motion impact | [Numeric error codes](error-codes.md) |
 | Follow Product lifecycle and native dataflow | [Runtime](runtime.md) |
 | Change code or simplify a directory | [Development](development.md) |
 | Integrate REST, MCP, or SDK clients | [API](api.md) |

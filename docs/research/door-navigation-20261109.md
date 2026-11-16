@@ -93,8 +93,8 @@ raycast 前作用，测距噪声在 raycast 后作用，因而返回点可以偏
 
 ## 本轮代码修改与验证
 
-- FinalControl 保留原有两条制动逻辑，仅区分 `scan_actual_motion_blocked`
-  与新增 `scan_command_motion_blocked`。
+- FinalControl 保留原有两条制动逻辑，仅区分 `aegis_move_blocked`
+  与新增 `aegis_cmd_blocked`。
 - 自主控制同时识别这两个原因，保留暂停、零命令和恢复反馈；仿真查看器同步提示。
 - 保存路线 benchmark 同步原因分类。临时探针已从正式源码删除。
 - 原生 navd、自主控制测试、遥控控制测试构建成功；两个测试程序通过。
