@@ -411,6 +411,3 @@ install(TARGETS
     COMPONENT lingtu_runtime
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT lingtu_runtime)
-
-
-\n
