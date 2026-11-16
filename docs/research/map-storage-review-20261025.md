@@ -35,7 +35,8 @@
 源：`src/maps/include/lingtu/maps/layers/rolling_occupancy.hpp:159,233`。
 
 - 主数据是`std::vector<Cell>`。Cell保存`double log_odds`、`uint16_t hits/misses`、
-  `int64_t last_observed_ns`、`bool observed`、`bool unresolved_hit`。
+  `int64_t last_observed_ns`、`bool observed`、`bool current_hit`、`bool ray_free`。
+  2026-11-17 候选另用上一帧命中索引列表更新临时碰撞；确认的历史占据不随帧删除。
 - 两个`uint32_t`数组保存射线投票计数；五个`uint64_t`位集加速observed、raw occupied、
   known free、collision seeds、inflated查询；`uint16_t inflation_counts_`处理膨胀重叠。
 - ring坐标让局部窗口滚动，不需要每次把整块数组搬移。移出窗口的历史会丢出实时窗口；
