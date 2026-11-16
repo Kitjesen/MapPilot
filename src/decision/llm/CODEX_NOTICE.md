@@ -12,7 +12,7 @@ grant from NousResearch/hermes-agent v0.23.1, commit
 Original copyright (c) 2025 Nous Research. The original MIT license is retained
 in `LICENSE.hermes.txt` and must accompany distributed copies.
 
-Local changes:
+Local changes for the legacy fallback:
 
 - Python 3.10-compatible implementation using the already installed httpx.
 - LingTu-owned account storage, no borrowed Hermes/Codex CLI credentials.
@@ -24,8 +24,8 @@ Local changes:
 - Requests execute through LingTu's existing Responses tool loop. Robot tool
   admission, approvals, cancellation and completion evidence keep their owners.
 
-This is the Hermes Codex device-code route, not the newer SIWC dynamic client
-registration flow. It does not establish approval for commercial distribution,
-account eligibility, model entitlement, or successful inference. The configured
-model is a selectable candidate; upstream can reject it. A real authorized
-inference remains the acceptance gate.
+Production Codex now uses `codex app-server --stdio` through
+`codex_app_server.py`; that process owns `CODEX_HOME`, account login, thread,
+turn, and approval protocol. This file documents only the retained Hermes
+device-code fallback. Neither route establishes approval for commercial
+distribution, account eligibility, model entitlement, or successful inference.

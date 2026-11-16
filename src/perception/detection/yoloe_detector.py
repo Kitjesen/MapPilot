@@ -41,6 +41,7 @@ class YOLOEDetector(DetectorBase):
         confidence: float = 0.3,
         iou_threshold: float = 0.5,
         device: str = "",
+        model_path: str = "",
         tensorrt: bool = False,
         max_detections: int = 30,
         mask_downsample: int = 1,
@@ -49,6 +50,7 @@ class YOLOEDetector(DetectorBase):
         self.confidence = confidence
         self.iou_threshold = iou_threshold
         self.device = device
+        self.model_path = model_path
         self.tensorrt = tensorrt
         self.max_detections = max_detections
         self.mask_downsample = mask_downsample
@@ -72,7 +74,7 @@ class YOLOEDetector(DetectorBase):
         try:
             from ultralytics import YOLO
 
-            model_name = f"yoloe-11{self.model_size}-seg.pt"
+            model_name = self.model_path or f"yoloe-11{self.model_size}-seg.pt"
             logger.info(
                 "Loading YOLO-E seg: %s, device=%s, tensorrt=%s",
                 model_name, self.device or "auto", self.tensorrt,

@@ -39,6 +39,14 @@ class _Commands:
         return NavigationCommandReceipt(accepted=True, kind=NavigationCommandKind.TASK_CANCEL,
                                         task_id=task_id, request_id=request_id, reason="", endpoint_timestamp_s=100.0)
 
+    def pause_task(self, task_id, reason, *, request_id):
+        return NavigationCommandReceipt(accepted=True, kind=NavigationCommandKind.PAUSE_TASK,
+                                        task_id=task_id, request_id=request_id, reason="", endpoint_timestamp_s=100.0)
+
+    def resume_task(self, task_id, reason, *, request_id):
+        return NavigationCommandReceipt(accepted=True, kind=NavigationCommandKind.RESUME_TASK,
+                                        task_id=task_id, request_id=request_id, reason="", endpoint_timestamp_s=100.0)
+
 
 @pytest.fixture
 def harness(monkeypatch):

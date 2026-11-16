@@ -359,6 +359,28 @@ class TestOSNetReIDEncoder:
 
 
 class TestPersonTrackerReID:
+    @pytest.mark.parametrize("clip,osnet,dino,expected", [
+        (False, False, False, "none"),
+        (True, False, False, "clip"),
+        (False, True, False, "osnet"),
+        (True, True, False, "clip_osnet"),
+        (False, False, True, "dino"),
+        (True, False, True, "dino"),
+        (False, True, True, "dino"),
+        (True, True, True, "dino"),
+    ])
+    def test_status_reports_attached_appearance_encoders(self, clip, osnet, dino, expected):
+        tracker = PersonTracker()
+        tracker.lock_target(_person_obj(1.0, 0.0))
+        if clip:
+            tracker.set_clip_encoder(MagicMock())
+        if osnet:
+            tracker.set_osnet_encoder(MagicMock())
+        if dino:
+            tracker.set_dino_encoder(MagicMock())
+
+        assert tracker.status()["appearance_backend"] == expected
+
     def test_adaptive_threshold_tracks_crowd_density(self):
         tracker = PersonTracker()
         assert tracker._adaptive_reid_threshold(2) == pytest.approx(0.55)

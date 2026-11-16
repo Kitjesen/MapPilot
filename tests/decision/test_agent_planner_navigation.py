@@ -93,6 +93,55 @@ def test_follow_selection_does_not_use_object_search_confirmation_gate(agent):
     assert run.object_query_instruction == ""
 
 
+def test_conversation_follow_returns_after_follow_admission_without_semantic_planner(agent):
+    from decision.modules.visual_servo import VisualServoModule
+
+    servo = VisualServoModule(product_session_id="tracking-session")
+    agent.module.on_system_modules({"VisualServoModule": servo})
+    run = agent.module._active_run
+    result = asyncio.run(agent.module._tool_start_follow_person("person in red", run=run))
+    payload = json.loads(result)
+    assert payload["accepted"] is True and payload["phase"] == "selecting"
+    assert payload["execution_confirmed"] is False
+    assert payload["run_id"] == run.run_id
+    assert run.follow_ref == {"follow_task_id": payload["follow_task_id"], "product_session_id": "tracking-session"}
+    assert run.persistent_task and run.follow_submitted and run.motion_submitted
+    agent.planner.submit_owned_instruction.assert_not_called()
+
+    again = json.loads(asyncio.run(agent.module._tool_start_follow_person("person in blue", run=run)))
+    assert again["reason"] == "task_active"
+    assert run.follow_ref["follow_task_id"] == payload["follow_task_id"]
+    assert json.loads(asyncio.run(agent.module._submit_motion(run, instruction="find chair")))["reason"] == "task_active"
+
+
+@pytest.mark.parametrize("description,loaded,reason", [
+    ("person in red", False, "visual_servo_unavailable"),
+    ("我", True, "follow_target_ambiguous"),
+])
+def test_rejected_follow_never_claims_persistent_ownership(agent, description, loaded, reason):
+    from decision.modules.visual_servo import VisualServoModule
+
+    agent.module.on_system_modules({"VisualServoModule": VisualServoModule()} if loaded else {})
+    run = agent.module._active_run
+    receipt = json.loads(asyncio.run(agent.module._tool_start_follow_person(description, run=run)))
+    assert receipt["accepted"] is False and receipt["reason"] == reason
+    assert not run.persistent_task and not run.motion_submitted and run.follow_ref is None
+
+
+def test_busy_follow_receipt_cannot_transfer_another_operators_task_to_agent(agent):
+    from decision.modules.visual_servo import VisualServoModule
+
+    servo = VisualServoModule()
+    other = servo.start_follow(description="person in blue")
+    agent.module.on_system_modules({"VisualServoModule": servo})
+    run = agent.module._active_run
+    receipt = json.loads(asyncio.run(agent.module._tool_start_follow_person("person in red", run=run)))
+    assert receipt["reason"] == "follow_busy"
+    assert run.follow_ref is None and not run.motion_submitted
+    agent.module.cancel_agent_task(run.run_id)
+    assert servo.get_follow_task(other["follow_task_id"], other["product_session_id"])["state"] == "running"
+
+
 def test_object_tool_without_semantic_planner_does_not_bypass_preview(agent):
     agent.module.on_system_modules({})
     assert "unavailable" in asyncio.run(agent.module._tool_navigate_to_object("chair")).lower()

@@ -21,7 +21,12 @@ import httpx
 ISSUER = "https://auth.openai.com"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 BASE_URL = "https://chatgpt.com/backend-api/codex"
-MODELS = {"codex:gpt-6.1-sol": "GPT-6.1 Sol · Codex"}
+MODELS = {
+    "codex:gpt-6-astra": "GPT-6 Astra · Codex",
+    "codex:gpt-6.1-sol": "GPT-6.1 Sol · Codex",
+    "codex:gpt-6.1-terra": "GPT-6.1 Terra · Codex",
+    "codex:gpt-6-luna": "GPT-6 Luna · Codex",
+}
 
 
 class CodexAccount:

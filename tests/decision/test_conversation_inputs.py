@@ -131,6 +131,30 @@ def test_other_providers_use_their_own_credentials_and_protocol_settings(config,
     assert config.backend == "kimi" and config.api_key_env == "MOONSHOT_API_KEY"
 
 
+def test_grok_and_acp_models_have_separate_connection_contracts(config, monkeypatch):
+    from decision.llm.conversation_models import conversation_config
+
+    monkeypatch.setenv("XAI_API_KEY", "test-xai")
+    grok = conversation_config(config, "grok-4.7")
+    assert grok.backend == "grok" and grok.base_url == "https://api.x.ai/v1"
+    inputs.validate_conversation_selection(config, "grok-4.7", "default", [])
+    assert inputs._model_option(grok, grok.model)["image_input"] is False
+    monkeypatch.setenv("LINGTU_ACP_COMMAND", "python")
+    acp = conversation_config(config, "acp:grok")
+    assert acp.backend == "acp" and acp.model == "grok"
+    assert inputs._model_option(acp, acp.model)["image_input"] is False
+
+
+def test_kilo_uses_its_acp_command(config, monkeypatch):
+    from decision.llm.conversation_models import conversation_config
+
+    monkeypatch.setattr("decision.llm.acp.acp_command_available", lambda _config: True)
+    kilo = conversation_config(config, "acp:kilo")
+    assert kilo.backend == "acp" and kilo.model == "kilo"
+    assert kilo.command == "kilo" and kilo.command_args == ("acp",)
+    inputs.validate_conversation_selection(config, "acp:kilo", "default", [])
+
+
 def test_missing_provider_credentials_are_visible_and_rejected(config, monkeypatch):
     from decision.llm.conversation_models import provider_choices
 
@@ -141,13 +165,13 @@ def test_missing_provider_credentials_are_visible_and_rejected(config, monkeypat
 
 
 def test_codex_subscription_is_distinct_from_api_key_and_keeps_images(config, monkeypatch):
-    from decision.llm.codex import account
+    from decision.llm.codex_app_server import app_server
     from decision.llm.conversation_models import conversation_config
 
-    monkeypatch.setattr(account, "status", lambda: {"connected": False})
+    monkeypatch.setattr(app_server, "status", lambda: {"connected": False})
     with pytest.raises(ValueError, match="登录"):
         inputs.validate_conversation_selection(config, "codex:gpt-6.1-sol", "default", [])
-    monkeypatch.setattr(account, "status", lambda: {"connected": True})
+    monkeypatch.setattr(app_server, "status", lambda: {"connected": True})
     inputs.validate_conversation_selection(config, "codex:gpt-6.1-sol", "high", [{"mime_type": "image/png"}])
     chosen = conversation_config(config, "codex:gpt-6.1-sol")
     assert chosen.backend == "codex" and chosen.model == "gpt-6.1-sol"
@@ -157,11 +181,11 @@ def test_codex_subscription_is_distinct_from_api_key_and_keeps_images(config, mo
 
 @pytest.mark.parametrize("connected", [False, True])
 def test_unavailable_default_does_not_block_codex_login(config, monkeypatch, connected):
-    from decision.llm.codex import account
+    from decision.llm.codex_app_server import app_server
 
-    monkeypatch.setattr(account, "status", lambda: {"connected": connected})
+    monkeypatch.setattr(app_server, "status", lambda: {"connected": connected})
     monkeypatch.setattr(inputs, "_client", Mock(side_effect=ValueError("default unavailable")))
     options = inputs.get_conversation_options(config)
     assert options["models"][0]["configured"] is False
     assert next(row for row in options["models"] if row["provider"] == "codex")["configured"] is connected
-    assert {row["provider"] for row in options["models"]} == {"moonshot", "openai", "claude", "qwen", "codex"}
+    assert {row["provider"] for row in options["models"]} == {"moonshot", "openai", "claude", "qwen", "grok", "acp", "codex"}

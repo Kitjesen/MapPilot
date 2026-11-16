@@ -42,6 +42,11 @@ use the same pipeline with the `sim_scene` observation provider. This is an
 implementation substitution inside one Module interface, not a second
 simulation-specific perception graph.
 
+The standalone MuJoCo RGB-D follow diagnostic uses the same `yoloe` detector
+registry entry as its image-based pedestrian path. The real Product
+configuration remains authoritative on hardware. Synthetic colour data only
+belongs to projection tests.
+
 ## Configuration ownership
 
 Assembly reads `runtime.config.get_config()` once and constructs immutable

@@ -442,13 +442,14 @@ def test_follow_selection_reuses_the_host_api_loop_and_sends_numbered_crops(
         transport.reasoning = "Candidate 1 is not the requested person"
         transport.error = reply == "api_error"
         for _ in range(2):
-            servo._on_servo_target("stop")
-            servo._on_servo_target("follow:gray shirt and pink bag")
+            receipt = servo.start_follow(description="gray shirt and pink bag")
+            assert receipt["accepted"]
             servo._run_vlm_select_sync(
                 servo._target_label, crops, persons, servo._intent_generation,
             )
             selected = servo._person_tracker.status()
             assert (selected["id"] if selected else None) == expected_id
+            assert servo.cancel_follow_task(receipt["follow_task_id"], receipt["product_session_id"])["accepted"]
         expected_requests = 1 + 2 * requests_per_selection
         assert len(transport.requests) == expected_requests
         assert loops == [module._loop] * expected_requests
@@ -517,20 +518,22 @@ def test_follow_reselection_requires_pair_match_against_original_crop(transport)
         verification_content = json.loads(
             transport.requests[request_start + 1].content
         )["messages"][0]["content"]
-        assert any(part.get("text") == "Original target crop:" for part in verification_content)
+        assert any(part.get("text", "").startswith("Original target crop") for part in verification_content)
         assert len([part for part in verification_content if part["type"] == "image_url"]) == 2
     finally:
         servo.stop()
         module.stop()
 
 
-def test_kimi_checks_the_description_even_with_one_confirmed_person(transport):
+def test_kimi_rejects_then_retries_one_confirmed_person(transport):
     transport.text = "0"
     module = LLMModule(backend="kimi", model="kimi-k3")
     module.setup()
     servo = VisualServoModule()
     servo.on_system_modules({"LLMModule": module})
     servo._latest_bgr = np.zeros((64, 64, 3), dtype=np.uint8)
+    servo._latest_bgr_ts = 1.0
+    servo._latest_detection_ts = 1.0
     servo._on_servo_target("follow:purple jacket and yellow hat")
     done = threading.Event()
     select = servo._run_vlm_select_sync
@@ -542,16 +545,27 @@ def test_kimi_checks_the_description_even_with_one_confirmed_person(transport):
             done.set()
 
     servo._run_vlm_select_sync = finish
+    persons = [{"id": "person-a", "label": "person", "position": [3.0, 0.0, 1.0],
+                "bbox": [0, 0, 32, 48]}]
     try:
         servo._try_select_follow_target(
-            [{"id": "person-a", "label": "person", "position": [3.0, 0.0, 1.0],
-              "bbox": [0, 0, 32, 48]}],
+            persons,
             single_person_confirmed=True,
         )
         assert done.wait(3.0)
         assert len(transport.requests) == 1
         assert not servo._person_tracker.target_selected
         assert servo._follow_select_method == "unavailable"
+
+        done.clear()
+        transport.texts = ["1", "MATCH"]
+        servo._latest_bgr_ts = 2.0
+        servo._latest_detection_ts = 2.0
+        servo._tick_follow(scene_objects=persons)
+        assert done.wait(3.0)
+        assert len(transport.requests) == 3
+        assert servo._person_tracker.status()["id"] == "person-a"
+        assert servo._follow_select_method == "vlm"
     finally:
         servo.stop()
         module.stop()
@@ -589,7 +603,7 @@ def test_stop_discards_a_late_person_reply_and_host_shutdown_closes_it(transport
     module.setup()
     servo = VisualServoModule()
     servo.on_system_modules({"LLMModule": module})
-    servo._on_servo_target("follow:gray shirt and pink bag")
+    receipt = servo.start_follow(description="gray shirt and pink bag")
     worker = threading.Thread(target=servo._run_vlm_select_sync, args=(
         servo._target_label, [np.zeros((32, 24, 3), dtype=np.uint8)],
         [{"id": "person-a", "position": [3.0, 0.0, 1.0]}], servo._intent_generation,
@@ -597,11 +611,12 @@ def test_stop_discards_a_late_person_reply_and_host_shutdown_closes_it(transport
     worker.start()
     try:
         assert reading.wait(3.0)
-        servo._on_servo_target("stop")
+        assert servo.cancel_follow_task(receipt["follow_task_id"], receipt["product_session_id"])["accepted"]
         sdk = module.client._client
         if shutdown_host:
             module.stop()
         else:
+            assert closed.wait(1.0), "Stopping Follow left the selection request open"
             module._loop.call_soon_threadsafe(release.set)
             worker.join(timeout=3.0)
     finally:

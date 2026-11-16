@@ -274,7 +274,7 @@ def test_backend_resource_is_closed_once_by_identity() -> None:
 
 
 def test_canonical_registry_has_all_supported_detectors() -> None:
-    expected = {"yoloe", "yolo_world", "bpu", "grounding_dino", "sim_scene"}
+    expected = {"yoloe", "yolo_world", "yolo_trt", "bpu", "grounding_dino", "sim_scene"}
 
     assert expected <= set(list_plugins("detector"))
     assert get("detector", "yoloe").create(DetectorSpec()).model_size == "l"

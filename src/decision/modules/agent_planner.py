@@ -24,6 +24,7 @@ import importlib.util
 import json as _json
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -76,10 +77,12 @@ class AgentRun:
     future: concurrent.futures.Future | None = None
     planner: Any = None
     planner_revision: int | None = None
+    follow_ref: dict[str, str] | None = None
     motion_attempted: bool = False
     motion_submitted: bool = False
     motion_success: bool = False
     follow_submitted: bool = False
+    persistent_task: bool = False
     requires_execution_evidence: bool = True
     requires_object_confirmation: bool = False
     object_confirmed: bool = False
@@ -378,11 +381,39 @@ class AgentPlannerModule(Module, layer=4):
 
     @staticmethod
     def _motion_was_superseded(run: AgentRun) -> bool:
-        if run.planner is None:
+        if run.planner is None or run.follow_ref is not None:
             return False
         if not run.motion_submitted:
             return run.planner.instruction_revision() != run.planner_revision
         return run.planner.owned_instruction_status(run.run_id).get("state") == "SUPERSEDED"
+
+    @staticmethod
+    def _motion_status(run: AgentRun) -> dict | None:
+        if run.planner is None or not run.motion_submitted:
+            return None
+        if run.follow_ref is None:
+            return run.planner.owned_instruction_status(run.run_id)
+        status = run.planner.get_follow_task(**run.follow_ref)
+        found = status.get("found") is True
+        terminal = found and status.get("terminal") is True
+        details = status.get("details") or {}
+        return {
+            **run.follow_ref, **status,
+            "owned": found, "terminal": terminal,
+            "state": status.get("state", "FOLLOW_UNKNOWN"),
+            "success": terminal and status.get("result") in {"success", "completed"},
+            # Follow ends only after its owned native navigation children end.
+            "stop_confirmed": terminal,
+            "task_id": details.get("navigation_task_id") or next(reversed(status.get("children", {})), ""),
+        }
+
+    @staticmethod
+    def _cancel_run_motion(run: AgentRun, reason: str) -> bool:
+        if run.planner is None:
+            return False
+        if run.follow_ref is not None:
+            return run.planner.cancel_follow_task(**run.follow_ref, reason=reason).get("accepted") is True
+        return run.planner.cancel_owned_instruction(run.run_id, reason)
 
     def _cancel_active_run(self, reason: str) -> bool:
         with self._run_lock:
@@ -393,8 +424,7 @@ class AgentPlannerModule(Module, layer=4):
             run.failure_reason = reason
             if run.future is not None:
                 run.future.cancel()
-            if run.planner is not None:
-                run.planner.cancel_owned_instruction(run.run_id, reason)
+            self._cancel_run_motion(run, reason)
             return True
 
     async def _execute_run(self, run: AgentRun):
@@ -412,8 +442,8 @@ class AgentPlannerModule(Module, layer=4):
                     refusal or (state.failure_reason if state is not None else "") or "llm_unavailable"
                 )
                 run.summary = str(state.summary if state is not None else "")
-                if not success and run.planner is not None:
-                    run.planner.cancel_owned_instruction(run.run_id, "agent_failed")
+                if not success:
+                    self._cancel_run_motion(run, "agent_failed")
                 self.planner_status.publish("AGENT_DONE" if success else "AGENT_FAILED")
                 if success and run.requires_object_confirmation and run.object_confirmed:
                     message = "已找到与指令相符的候选目标，并完成视觉确认。"
@@ -427,16 +457,14 @@ class AgentPlannerModule(Module, layer=4):
                            run_id=run.run_id)
                 return state
         except asyncio.CancelledError:
-            if run.planner is not None:
-                run.planner.cancel_owned_instruction(run.run_id, "agent_cancelled")
+            self._cancel_run_motion(run, "agent_cancelled")
             if self._run_is_current(run):
                 run.cancelled, run.state = True, "cancelled"
                 run.failure_reason = "cancelled"
                 self.planner_status.publish("AGENT_CANCELLED")
         except Exception:
             logger.exception("Agent loop failed")
-            if run.planner is not None:
-                run.planner.cancel_owned_instruction(run.run_id, "agent_error")
+            self._cancel_run_motion(run, "agent_error")
             if self._run_is_current(run):
                 run.state = "failed"
                 run.failure_reason = "agent_error"
@@ -459,14 +487,14 @@ class AgentPlannerModule(Module, layer=4):
                 self._conversations = ConversationStore(self._conversation_db_path)
             return self._conversations
 
-    def create_conversation(self) -> dict:
-        return self._conversation_store().create()
+    def create_conversation(self, bot_id: str | None = None) -> dict:
+        return self._conversation_store().create(bot_id)
 
-    def list_conversations(self, archived: bool = False) -> dict:
-        return self._conversation_store().list(archived)
+    def list_conversations(self, archived: bool = False, bot_id: str | None = None) -> dict:
+        return self._conversation_store().list(archived, bot_id)
 
-    def search_conversations(self, query: str, archived: bool = False) -> dict:
-        return self._conversation_store().search(query, archived)
+    def search_conversations(self, query: str, archived: bool = False, bot_id: str | None = None) -> dict:
+        return self._conversation_store().search(query, archived, bot_id)
 
     def fork_conversation(self, conversation_id: str, message_id: str) -> dict:
         return self._conversation_store().fork(conversation_id, message_id)
@@ -520,19 +548,28 @@ class AgentPlannerModule(Module, layer=4):
         return {**get_conversation_options(self._llm_client.config),
                 "permission_modes": ["read_only", "default", "full_access"], "default_permission_mode": "default"}
 
+    def get_agent_providers(self) -> dict:
+        """Describe external ACP providers without installing or authenticating them."""
+        from decision.llm.acp import acp_provider_statuses
+        from decision.tasks.conversation import ConversationError
+
+        if self._closed or self._llm_client is None:
+            raise ConversationError("agent_unavailable")
+        return {"providers": acp_provider_statuses(self._llm_client.config)}
+
     def codex_connection(self, action: str = "status", login_id: str = "") -> dict:
-        from decision.llm.codex import account
+        from decision.llm.codex_app_server import app_server
 
         if action == "status":
-            return account.status()
+            return app_server.status()
         if action == "start":
-            return account.start()
+            return app_server.start_login()
         if action == "poll":
-            return account.poll(login_id)
+            return app_server.poll_login(login_id)
         if action == "cancel":
-            return account.cancel(login_id)
+            return app_server.cancel_login(login_id)
         if action == "disconnect":
-            return account.disconnect()
+            return app_server.disconnect()
         raise ValueError("unknown_connection_action")
 
     def upload_conversation_attachment(self, conversation_id: str, attachment_id: str,
@@ -632,14 +669,18 @@ class AgentPlannerModule(Module, layer=4):
         from decision.context.compression import prepare_context
         from decision.context.transcript import HISTORY_TOOLS
         from decision.mcp.client import Connections
+        from decision.tasks.activity import activity_type, normalize_activity_state
         from decision.tasks.agent import AGENT_TOOLS
         from decision.tasks.conversation import validate_tool_arguments
         from decision.tasks.preferences import PREFERENCE_TOOLS
+        from decision.tasks.robot_memory import BOT_MEMORY_TOOLS, ROBOT_MEMORY_TOOLS
         from decision.tasks.sdk_agent import run_turn
         from decision.tasks.skills import SKILL_TOOLS, execute_skill_tool
         from decision.tasks.web import WEB_TOOLS, execute_web_tool
 
         store = self._conversation_store()
+        conversation_bot_id = str(store.metadata(conversation_id).get("bot_id") or "lingtu-default")
+        robot_owner_id = os.environ.get("LINGTU_ROBOT_ID") or os.environ.get("DOSO_DEVICE_ID") or "default"
         run = None
         history = []
         mcp_stack = AsyncExitStack()
@@ -655,8 +696,13 @@ class AgentPlannerModule(Module, layer=4):
         last_stream_publish = 0.0
 
         def message(role, value, kind=None, *, message_id=None, metadata=None):
+            details = dict(metadata or {})
+            if role in {"assistant", "tool"}:
+                details.setdefault("activity_type", activity_type(kind or "", role=role))
+                details.setdefault("activity_state", normalize_activity_state(details.get("status")))
             event = store.append(conversation_id, turn_id, role, str(value), kind=kind,
-                                 run_id=run.run_id if run else None, message_id=message_id, metadata=metadata)
+                                 run_id=run.run_id if run else None, message_id=message_id,
+                                 metadata=details or None)
             self.agent_message.publish({**event, "ts": time.time(), "phase": kind or ""})
             return event
 
@@ -668,20 +714,25 @@ class AgentPlannerModule(Module, layer=4):
             if store.turn(conversation_id, turn_id)["state"] != "running":
                 return
             if stream_message is None:
-                stream_message = message("assistant", stream_text, "reply", metadata={"status": "streaming"})
+                stream_message = message("assistant", stream_text, "reply", metadata={
+                    "status": "streaming", "activity_state": "running"})
             else:
                 stream_message = store.update_message(conversation_id, stream_message["id"], stream_text,
-                                                      {"status": "streaming"})
+                                                      {"status": "streaming", "activity_type": "model",
+                                                       "activity_state": "running"})
                 self.agent_message.publish({**stream_message, "ts": time.time(), "phase": "reply"})
             last_stream_publish = time.monotonic()
 
         def finish_turn(state, kind, value, model_items, failure_reason="", metadata=None):
             if stream_timer is not None:
                 stream_timer.cancel()
+            final_metadata = {**(metadata or {}), "status": state,
+                              "activity_type": "model",
+                              "activity_state": normalize_activity_state(state)}
             if stream_message is None and state != "cancelled":
-                message("assistant", value, kind, metadata={**(metadata or {}), "status": state})
+                message("assistant", value, kind, metadata=final_metadata)
             event = store.finish(conversation_id, turn_id, state=state, kind=kind, text=value,
-                                 model_items=model_items, failure_reason=failure_reason, metadata=metadata)
+                                 model_items=model_items, failure_reason=failure_reason, metadata=final_metadata)
             if event is not None:
                 self.agent_message.publish({**event, "ts": time.time(), "phase": kind})
 
@@ -704,10 +755,14 @@ class AgentPlannerModule(Module, layer=4):
                 self.planner_status.publish("AGENT_RUNNING")
                 return {"accepted": True, "run_id": run.run_id}
 
-        async def execute_tool(name, args, tool_call_id):
+        async def execute_tool(name, args, tool_call_id, set_activity_state):
             nonlocal blocked
             if store.turn(conversation_id, turn_id)["state"] != "running":
                 raise asyncio.CancelledError
+            if name in {"read_bot_memory", "remember_bot_memory", "update_bot_memory", "forget_bot_memory"}:
+                args = {**args, "domain": "bot", "owner_id": conversation_bot_id}
+            elif name in {"read_robot_memory", "remember_robot_memory", "update_robot_memory", "forget_robot_memory"}:
+                args = {**args, "domain": "robot", "owner_id": robot_owner_id}
             schema = next((tool["function"]["parameters"] for tool in tools
                            if tool["function"]["name"] == name), None)
             # MCP owns its full JSON Schema, including additionalProperties and nested unions.
@@ -718,6 +773,7 @@ class AgentPlannerModule(Module, layer=4):
             motions = {
                 "navigate_to": self._tool_navigate_to, "navigate_to_object": self._tool_navigate_to_object,
                 "navigate_to_deg": self._tool_navigate_to_deg, "find_object": self._tool_find_object,
+                "follow_person": self._tool_start_follow_person,
             }
             writes = name in motions or any(tool.get("writes") and tool["function"]["name"] == name
                                             for tool in tools)
@@ -728,11 +784,15 @@ class AgentPlannerModule(Module, layer=4):
                     blocked = "permission_read_only"
                 elif permission_mode == "default":
                     approval = store.request_approval(conversation_id, turn_id, tool_call_id, name, args)
+                    if approval["state"] == "pending":
+                        set_activity_state("awaiting")
                     while approval["state"] == "pending":
                         await asyncio.sleep(0.05)
                         approval = store.approval(conversation_id, approval["approval_id"])
                     if approval["state"] != "approved":
                         blocked = "approval_denied" if approval["state"] == "denied" else "approval_closed"
+                    else:
+                        set_activity_state("running")
                 if store.turn(conversation_id, turn_id)["state"] != "running":
                     raise asyncio.CancelledError
                 if blocked:
@@ -762,11 +822,29 @@ class AgentPlannerModule(Module, layer=4):
                 result = store.read_context_turn(conversation_id, **args)
             elif name in {"remember_preference", "update_preference", "forget_preference"}:
                 result = store.edit_preference(name.removesuffix("_preference"), **args)
+            elif name == "read_robot_memory":
+                result = store.read_robot_memory(**args)
+            elif name == "remember_robot_memory":
+                result = store.remember_robot_memory(**args)
+            elif name == "update_robot_memory":
+                result = store.update_robot_memory(**args)
+            elif name == "forget_robot_memory":
+                result = store.forget_robot_memory(**args)
+            elif name == "read_bot_memory":
+                result = store.read_bot_memory(**args)
+            elif name == "remember_bot_memory":
+                result = store.remember_bot_memory(**args)
+            elif name == "update_bot_memory":
+                result = store.update_bot_memory(**args)
+            elif name == "forget_bot_memory":
+                result = store.forget_bot_memory(**args)
             elif name == "get_model_connections":
                 options = await asyncio.to_thread(self.get_conversation_options)
                 result = {"models": [{**item, "configured": item.get("configured", True)} for item in options["models"]]}
             elif name == "get_agent_status":
                 result = self.get_agent_status()
+            elif name == "cancel_agent_task":
+                result = self.cancel_agent_task(**args)
             elif name == "detect_object":
                 result = self._tool_detect_object(**args)
             elif name == "query_memory":
@@ -778,27 +856,39 @@ class AgentPlannerModule(Module, layer=4):
         async def invoke_tool(name, args, tool_call_id):
             message_id = f"tool-{turn_id}-{tool_call_id}"
             started = time.perf_counter()
-            metadata = {"tool_call_id": tool_call_id, "started_at": time.time(), "status": "running"}
+            metadata = {"tool_call_id": tool_call_id, "started_at": time.time(), "status": "running",
+                        "activity_type": activity_type(name), "activity_state": "started"}
             display_name = next((tool.get("display_name") for tool in tools if tool["function"]["name"] == name), None)
             if display_name:
                 metadata["display_name"] = display_name
             message("tool", "执行中", name, message_id=message_id, metadata=metadata)
+
+            def set_activity_state(state):
+                metadata["activity_state"] = normalize_activity_state(state, awaiting=state == "awaiting")
+                metadata["status"] = "running" if metadata["activity_state"] in {"started", "running", "awaiting"} else metadata["activity_state"]
+                event = store.update_message(conversation_id, message_id, "执行中", metadata)
+                self.agent_message.publish({**event, "ts": time.time(), "phase": name})
+
+            set_activity_state("running")
             result = None
             try:
-                result = await execute_tool(name, args, tool_call_id)
+                result = await execute_tool(name, args, tool_call_id, set_activity_state)
                 return result
             except asyncio.CancelledError:
                 metadata["status"] = "cancelled"
+                metadata["activity_state"] = "cancelled"
                 result = {"error": "本次调用已中断；已提交的外部操作需要查询实际结果。"}
                 raise
             except Exception as exc:
                 metadata["status"] = "failed"
+                metadata["activity_state"] = "failed"
                 result = {"error": str(exc)}
                 raise
             finally:
                 metadata["duration_ms"] = round((time.perf_counter() - started) * 1000)
                 if metadata["status"] == "running":
                     metadata["status"] = "completed"
+                    metadata["activity_state"] = "completed"
                 value = result if isinstance(result, str) else _json.dumps(result, ensure_ascii=False)
                 event = store.update_message(conversation_id, message_id, value, metadata)
                 self.agent_message.publish({**event, "ts": time.time(), "phase": name})
@@ -827,8 +917,17 @@ class AgentPlannerModule(Module, layer=4):
                 control = self.handle_instruction_control(text)
                 status = control["task_status"]
                 if operation == "query":
-                    result_text = (f"当前任务：{status.get('instruction') or '无'}。状态：{status['state']}。"
-                                   f"运动完成反馈：{'已确认' if status.get('motion_success') else '未确认'}。")
+                    navigation = status.get("navigation") or {}
+                    phase = ("cancelling" if navigation.get("state") == "cancelling" else
+                             navigation.get("phase") or navigation.get("state") or status["state"])
+                    label = {"selecting": "正在选择人员", "following": "正在跟随",
+                             "reacquiring": "正在重新识别人员", "lost": "跟随目标丢失",
+                             "cancelling": "等待取消确认", "cancelled": "已取消"}.get(phase, phase)
+                    result_text = f"当前任务：{status.get('instruction') or '无'}。状态：{label}。"
+                    if not navigation.get("follow_task_id"):
+                        result_text += f"运动完成反馈：{'已确认' if status.get('motion_success') else '未确认'}。"
+                    if navigation.get("reason"):
+                        result_text += f"原因：{navigation['reason']}。"
                 elif operation == "cancel" and control.get("accepted"):
                     result_text = "已请求取消当前任务。" + ("停止已确认。" if status.get("stop_confirmed") else "停止尚未确认。")
                 elif control.get("accepted"):
@@ -842,18 +941,24 @@ class AgentPlannerModule(Module, layer=4):
                 store.finish(conversation_id, turn_id, state="completed", kind="control", text=result_text,
                              model_items=[])
                 return
-            allowed = {"navigate_to", "navigate_to_object", "navigate_to_deg", "find_object",
+            allowed = {"navigate_to", "navigate_to_object", "navigate_to_deg", "find_object", "follow_person",
                        "detect_object", "query_memory"}
             tools = [tool for tool in AGENT_TOOLS if tool["function"]["name"] in allowed] + (domain_tools or [])
             tools.extend(WEB_TOOLS)
             tools.extend(SKILL_TOOLS)
             tools.extend(PREFERENCE_TOOLS)
+            tools.extend(ROBOT_MEMORY_TOOLS)
+            tools.extend(BOT_MEMORY_TOOLS)
             tools.extend(HISTORY_TOOLS)
             mcp = await mcp_stack.enter_async_context(Connections())
             tools.extend(mcp.tools)
             tools.append({"type": "function", "function": {"name": "get_agent_status",
                 "description": "Read the current task and its actual execution evidence.",
                 "parameters": {"type": "object", "properties": {}}}})
+            tools.append({"type": "function", "writes": True, "function": {"name": "cancel_agent_task",
+                "description": "Cancel the exact run_id returned by get_agent_status. Query again until stop_confirmed; cancellation admission is not physical stop evidence.",
+                "parameters": {"type": "object", "properties": {"run_id": {"type": "string"}},
+                               "required": ["run_id"]}}})
             tools.append({"type": "function", "function": {"name": "get_model_connections",
                 "description": "Show real configured model connections and missing server configuration. Never claim OAuth or a plugin is connected without evidence.",
                 "parameters": {"type": "object", "properties": {}}}})
@@ -870,7 +975,7 @@ class AgentPlannerModule(Module, layer=4):
                 "Ask for clarification when the target or requested action is ambiguous. "
                 "For a bounded choice, use ask_user with 2 to 4 concise options; the UI provides Other input. "
                 "Do not ask duplicate permission questions: the tool approval controls already handle writes and motion. "
-                "Conversation does not start or replace a motion task. Only owned motion tools can do that. "
+                "Conversation can start a stored inspection route only through start_inspection_route; its result is submission acceptance, not arrival or inspection completion. Other motion tools remain owned motion tools. "
                 "History copied into a conversation branch is historical discussion, not current robot state or permission to replay actions. "
                 "When task_active is returned, keep the user's proposed change as a draft and explain "
                 "that the current task continues. Never claim execution complete without completion evidence. "
@@ -879,8 +984,9 @@ class AgentPlannerModule(Module, layer=4):
                 "Draft steps do not grant permission or start motion or persistent writes; generating a plan is not task completion. "
                 f"This turn's permission mode is {permission_mode}. Read-only mode forbids motion, Python execution and persistent map/location writes. "
                 "Default mode asks the operator to approve each motion, Python execution or persistent write tool. A denied action must not be retried. "
-                "Continuous following is unavailable in this conversation API. Explain this limitation and keep "
-                "the proposal as a draft. Never substitute a navigation goal for continuous following. "
+                "Continuous following is available only through follow_person when the configured VisualServo adapter can select and track the described person. Require visible clothing or appearance; 'me' or 'him' alone is ambiguous. Admission does not mean the person is selected or motion has begun. The follow task remains active across conversation turns; use get_agent_status to read its phase and cancel_agent_task with that run_id to stop it. Never restart it just to answer a follow-up question. "
+                "During an Agent-owned navigation or follow task, get_agent_status reports the live native task state. The operator can pause, resume, or cancel a supported navigation task through the exact control phrases; do not create a replacement goal to simulate pause or resume. "
+                "When a task is incomplete, reason from get_agent_status and the native task evidence before choosing the next step. If the native task explicitly remains resumable, continue that task through its existing control path; never submit a replacement goal. If it is failed, interrupted, or not resumable, gather read-only evidence or explain the blocker first. Retry a failed read-only observation at most once; never repeat a motion or persistent write tool without a new user request and its normal approval. "
                 "Use get_robot_capabilities before sensor tasks. Select the configured adapter; never guess robot endpoints, joint counts, units or clocks. "
                 "Use open_sensor_monitor to open sensor cards beside chat; catalog shows available sources and display settings. It does not record or reconfigure devices. "
                 "Use open_imu_monitor for continuous IMU monitoring. Only IMU cards support persistent Host recording; other numeric cards export browser display samples. "
@@ -910,7 +1016,13 @@ class AgentPlannerModule(Module, layer=4):
                 "This snapshot stays fixed during this turn and refreshes next turn: "
                 + _json.dumps(store.preferences(), ensure_ascii=False)
             )
+            instructions += (
+                "\nRobot memory is layered as operator, spatial, episodic, procedural and working. "
+                "Read robot memory before changing it; save only when the operator explicitly asks. "
+                "Memories never grant motion permission and never replace current sensor evidence. "
+            )
             specialist_messages = {}
+            codex_messages = {}
 
             def conversation_event(event):
                 nonlocal stream_text, stream_item, reset_stream, stream_timer
@@ -938,12 +1050,32 @@ class AgentPlannerModule(Module, layer=4):
                         flush_stream()
                     reset_stream = True
                     return
+                if event_type == "codex_event":
+                    method = str(event.get("method") or "codex")
+                    params = event.get("params") or {}
+                    subject = ((params.get("item") or {}).get("id")
+                               or (params.get("turn") or {}).get("id")
+                               or method)
+                    identity = f"codex-{turn_id}-{subject}"
+                    status = "completed" if method in {"item/completed", "turn/plan/updated"} else "running"
+                    metadata = {"status": status, "activity_type": "model", "activity_state": normalize_activity_state(status),
+                                "method": method, "codex": True}
+                    value = _json.dumps(params, ensure_ascii=False)
+                    if identity not in codex_messages:
+                        codex_messages[identity] = True
+                        message("tool", value, "codex_event", message_id=identity, metadata=metadata)
+                    else:
+                        updated = store.update_message(conversation_id, identity, value, metadata)
+                        self.agent_message.publish({**updated, "ts": time.time(), "phase": "codex_event"})
+                    return
                 if event_type != "specialist":
                     return
                 identity = f"specialist-{turn_id}-{event['id']}"
                 value = _json.dumps({"specialist": event["name"], "task": event["task"],
                     "summary": event.get("summary", ""), "evidence": event.get("evidence", [])}, ensure_ascii=False)
-                metadata = {"status": event["status"], "tool_call_id": event["id"]}
+                metadata = {"status": event["status"], "activity_type": "tool",
+                            "activity_state": normalize_activity_state(event["status"]),
+                            "tool_call_id": event["id"]}
                 if "started_at" in event:
                     metadata["started_at"] = event["started_at"]
                 if "duration_ms" in event:
@@ -954,6 +1086,22 @@ class AgentPlannerModule(Module, layer=4):
                 else:
                     updated = store.update_message(conversation_id, identity, value, metadata)
                     self.agent_message.publish({**updated, "ts": time.time(), "phase": "specialist_review"})
+
+            def codex_approval(request):
+                request_id = str(request.get("id") or f"codex-{turn_id}")
+                method = str(request.get("method") or "codex_action")
+                arguments = request.get("params") or {}
+                approval = store.request_approval(conversation_id, turn_id, request_id,
+                                                  f"codex:{method.rsplit('/', 1)[-1]}", arguments)
+                message("tool", "等待确认外部 Agent 操作", "approval",
+                        message_id=f"approval-{approval['approval_id']}",
+                        metadata={**approval, "method": method})
+                while approval["state"] == "pending":
+                    if store.turn(conversation_id, turn_id)["state"] != "running":
+                        return "decline"
+                    time.sleep(0.05)
+                    approval = store.approval(conversation_id, approval["approval_id"])
+                return "accept" if approval["state"] == "approved" else "decline"
 
             def context_event(event):
                 identity = f"context-{turn_id}"
@@ -972,7 +1120,8 @@ class AgentPlannerModule(Module, layer=4):
             result = await run_turn(text=model_text, history=history, instructions=instructions, tools=tools,
                 invoke_tool=invoke_tool, config=self._llm_client.config, on_event=conversation_event,
                 completion_check=completion_check, max_turns=self._max_steps, timeout=self._timeout,
-                selected_model=model, reasoning=reasoning, attachments=attachments or [], conversation_turn_id=turn_id)
+                selected_model=model, reasoning=reasoning, permission_mode=permission_mode,
+                approval_handler=codex_approval, attachments=attachments or [], conversation_turn_id=turn_id)
             if store.turn(conversation_id, turn_id)["state"] != "running":
                 raise asyncio.CancelledError
             kind, result_text, failure = result.kind, result.text, result.failure_reason
@@ -989,13 +1138,20 @@ class AgentPlannerModule(Module, layer=4):
                     refusal = self._completion_refusal(run) if kind == "task_complete" else None
                     if kind == "task_complete" and refusal:
                         kind, failure, result_text = "failed", refusal, f"任务未完成：{refusal}"
-                    success = run.motion_success and kind != "failed" and not failure
-                    run.state = "done" if success else "failed"
-                    run.summary = result_text
-                    run.failure_reason = failure or ("" if success else "motion_not_completed")
-                    if not success and run.planner is not None:
-                        run.planner.cancel_owned_instruction(run.run_id, "agent_failed")
-                    self.planner_status.publish("AGENT_DONE" if success else "AGENT_FAILED")
+                    if run.persistent_task and not failure and kind != "failed":
+                        run.state = "running"
+                        run.summary = result_text
+                        run.failure_reason = ""
+                        self.get_agent_status()
+                        self.planner_status.publish(f"AGENT_{run.state.upper()}")
+                    else:
+                        success = run.motion_success and kind != "failed" and not failure
+                        run.state = "done" if success else "failed"
+                        run.summary = result_text
+                        run.failure_reason = failure or ("" if success else "motion_not_completed")
+                        if not success:
+                            self._cancel_run_motion(run, "agent_failed")
+                        self.planner_status.publish("AGENT_DONE" if success else "AGENT_FAILED")
             model_items = result.model_items[len(history):]
             if result_text != result.text:
                 model_items.append({"role": "assistant", "content": result_text})
@@ -1057,6 +1213,8 @@ class AgentPlannerModule(Module, layer=4):
     def _completion_refusal(run: AgentRun) -> str | None:
         """Reject a claimed success without evidence for execution tasks."""
         if not run.requires_execution_evidence:
+            return None
+        if run.persistent_task:
             return None
         if not run.motion_attempted:
             return "The task requires execution evidence, but no execution tool was called."
@@ -1124,15 +1282,17 @@ class AgentPlannerModule(Module, layer=4):
         normalized = re.sub(r"\s+", " ", str(text).strip().lower()).strip("。！？!?.,，；;")
         controls = {
             "query": {"现在在干什么", "你现在在干什么", "现在在做什么", "现在什么状态", "当前任务", "任务状态",
-                      "当前状态", "为什么不走", "为什么停止",
+                      "当前状态", "跟随状态", "为什么不走", "为什么停止",
                       "进展如何", "找到没有", "找到没", "current status", "task status", "what are you doing"},
             "cancel": {"停", "停下", "停止", "停下来", "不用跟了", "别跟了", "取消", "取消任务", "停止任务",
-                       "结束当前任务", "取消当前任务", "停止当前任务",
-                       "结束任务", "不用找了", "stop", "cancel", "cancel task"},
+                       "结束当前任务", "取消当前任务", "停止当前任务", "停止跟随", "取消跟随", "请停止跟随",
+                       "结束任务", "不用找了", "stop", "cancel", "cancel task", "stop following"},
             "keep": {"继续跟着他", "继续跟着我", "继续跟随", "继续找", "保持当前任务", "保持跟随",
                      "keep following", "keep searching"},
-            "pause": {"暂停", "暂停一下", "暂停任务", "等我一下", "pause", "pause task"},
-            "resume": {"继续", "继续任务", "恢复", "恢复任务", "resume", "resume task"},
+            "pause": {"暂停", "暂停一下", "暂停任务", "暂停导航", "暂停当前导航", "请暂停导航",
+                       "等我一下", "pause", "pause task"},
+            "resume": {"继续", "继续任务", "继续导航", "继续当前导航", "恢复", "恢复任务", "恢复导航",
+                        "请恢复导航", "resume", "resume task"},
         }
         return next((operation for operation, phrases in controls.items() if normalized in phrases), None)
 
@@ -1148,8 +1308,6 @@ class AgentPlannerModule(Module, layer=4):
                       "execution_confirmed": False, "motor_confirmed": False}
             if expected_run_id and expected_run_id != status.get("run_id"):
                 return {**result, "reason": "not_current"}
-            if operation in {"pause", "resume"}:
-                return {**result, "reason": "unsupported_control"}
             if operation is None:
                 return {**result, "reason": "unsupported_control"}
             if operation == "query":
@@ -1158,6 +1316,26 @@ class AgentPlannerModule(Module, layer=4):
                 return {**result, "reason": "no_current_task"}
             if operation == "keep" and status["state"] != "running":
                 return {**result, "reason": "task_not_running"}
+            if operation in {"pause", "resume"}:
+                run = self._active_run
+                if run is None or run.state != "running":
+                    return {**result, "reason": "task_not_running"}
+                if not run.motion_submitted or run.planner is None:
+                    return {**result, "reason": "navigation_not_submitted"}
+                control = getattr(run.planner, f"{operation}_owned_instruction", None)
+                if not callable(control):
+                    return {**result, "reason": "navigation_control_unavailable"}
+                receipt = control(run.run_id, f"agent_{operation}")
+                if not isinstance(receipt, dict):
+                    return {**result, "reason": "navigation_control_invalid"}
+                accepted = receipt.get("accepted") is True
+                return {
+                    **result,
+                    **receipt,
+                    "accepted": accepted,
+                    "ok": accepted,
+                    "task_status": _json.loads(self.get_agent_status()),
+                }
             if operation == "cancel":
                 cancelled = _json.loads(self.cancel_agent_task(status["run_id"]))
                 result.update(cancelled)
@@ -1176,13 +1354,23 @@ class AgentPlannerModule(Module, layer=4):
                 return _json.dumps({"cancel_requested": False, "reason": "not_current"})
             if self._active_run.state == "done":
                 return _json.dumps({"cancel_requested": False, "reason": "task_not_running"})
-            self._cancel_active_run("agent_user_cancel")
+            if self._active_run.cancelled and self._active_run.follow_ref is not None:
+                self._cancel_run_motion(self._active_run, "agent_user_cancel")
+            else:
+                self._cancel_active_run("agent_user_cancel")
             self.planner_status.publish("AGENT_CANCELLED")
             run = self._active_run
-            navigation = (
-                run.planner.owned_instruction_status(run.run_id)
-                if run.planner and run.motion_submitted else None
-            )
+            navigation = self._motion_status(run)
+            native_goal = None
+            if isinstance(navigation, dict):
+                request_id = str(navigation.get("request_id") or "")
+                native_goal = self._navigation_goal_status_by_request.get(request_id)
+                task_id = str(navigation.get("task_id") or "")
+                if task_id:
+                    matches = [item for item in self._navigation_goal_status_by_request.values()
+                               if str(item.get("task_id") or "") == task_id]
+                    if matches:
+                        native_goal = max(matches, key=lambda item: int(item.get("sequence") or 0))
             stop_confirmed = (
                 not run.motion_submitted
                 or (navigation is not None and navigation.get("stop_confirmed") is True)
@@ -1191,6 +1379,8 @@ class AgentPlannerModule(Module, layer=4):
                 "cancel_requested": True,
                 "stop_confirmed": stop_confirmed,
                 "navigation": navigation,
+                "native_navigation_status": native_goal,
+                "navigation_state": self._last_nav_state or "IDLE",
             })
 
     @skill
@@ -1200,10 +1390,23 @@ class AgentPlannerModule(Module, layer=4):
             run = self._active_run
             if run is None:
                 return _json.dumps({"state": "idle"})
-            navigation = (
-                run.planner.owned_instruction_status(run.run_id)
-                if run.planner and run.motion_submitted else None
-            )
+            navigation = self._motion_status(run)
+            if run.follow_ref is not None and run.state == "running" and navigation["terminal"]:
+                run.motion_success = navigation["success"]
+                run.state = ("done" if run.motion_success else
+                             "cancelled" if navigation.get("result") == "cancelled" else "failed")
+                run.cancelled = run.state == "cancelled"
+                run.failure_reason = str(navigation.get("reason") or "")
+            native_goal = None
+            if isinstance(navigation, dict):
+                request_id = str(navigation.get("request_id") or "")
+                native_goal = self._navigation_goal_status_by_request.get(request_id)
+                task_id = str(navigation.get("task_id") or "")
+                if task_id:
+                    matches = [item for item in self._navigation_goal_status_by_request.values()
+                               if str(item.get("task_id") or "") == task_id]
+                    if matches:
+                        native_goal = max(matches, key=lambda item: int(item.get("sequence") or 0))
             stop_confirmed = (
                 run.state in {"cancelled", "failed"}
                 and (
@@ -1215,11 +1418,15 @@ class AgentPlannerModule(Module, layer=4):
                 "run_id": run.run_id, "instruction": run.instruction,
                 "state": run.state, "motion_attempted": run.motion_attempted,
                 "motion_success": run.motion_success,
+                "follow_submitted": run.follow_submitted,
+                "persistent_task": run.persistent_task,
                 "requires_execution_evidence": run.requires_execution_evidence,
                 "failure_reason": run.failure_reason,
                 "summary": run.summary,
                 "stop_confirmed": stop_confirmed,
                 "navigation": navigation,
+                "native_navigation_status": native_goal,
+                "navigation_state": self._last_nav_state or "IDLE",
             })
 
     def _agent_context(self) -> dict:
@@ -1302,6 +1509,8 @@ class AgentPlannerModule(Module, layer=4):
         with self._run_lock:
             if not self._run_is_current(run) or self._motion_was_superseded(run):
                 raise asyncio.CancelledError
+            if run.follow_ref is not None:
+                return _json.dumps({"accepted": False, "reason": "task_active"})
             planner = self._backends.get("SemanticPlannerModule") if self._backends else None
             if planner is None:
                 return "Semantic navigation unavailable: SemanticPlannerModule is not loaded"
@@ -1338,11 +1547,41 @@ class AgentPlannerModule(Module, layer=4):
         run.follow_submitted = True
         return await self._submit_motion(run, instruction=f"follow {description}")
 
+    async def _tool_start_follow_person(self, description: str, *, run: AgentRun) -> str:
+        """Start a persistent follow task for conversation turns.
+
+        The conversation turn must finish so a later control turn can stop the
+        follow task. The native visual task remains owned by this Agent run.
+        """
+        with self._run_lock:
+            if not self._run_is_current(run) or self._motion_was_superseded(run):
+                raise asyncio.CancelledError
+            if run.motion_submitted and not run.motion_success:
+                return _json.dumps({"accepted": False, "reason": "task_active"})
+            servo = self._backends.get("VisualServoModule") if self._backends else None
+            if servo is None:
+                return _json.dumps({"accepted": False, "reason": "visual_servo_unavailable"})
+            run.motion_attempted = True
+            run.motion_success = False
+            result = servo.start_follow(description=description, request_id=run.run_id, client_id="agent")
+            if result.get("accepted") is not True:
+                return _json.dumps(result, ensure_ascii=False)
+            run.planner = servo
+            run.follow_ref = {key: result[key] for key in ("follow_task_id", "product_session_id")}
+            run.motion_submitted = run.follow_submitted = True
+            run.persistent_task = not result["terminal"]
+            return _json.dumps({
+                **result,
+                "phase": self._motion_status(run).get("phase", ""),
+                "managed_by": "agent",
+                "run_id": run.run_id,
+            }, ensure_ascii=False)
+
     def _tool_stop_servo(self, *, run: AgentRun) -> str:
         with self._run_lock:
             if not self._run_is_current(run):
                 raise asyncio.CancelledError
-            requested = run.planner is not None and run.planner.cancel_owned_instruction(run.run_id, "agent_stop_servo")
+            requested = self._cancel_run_motion(run, "agent_stop_servo")
             return _json.dumps({"cancel_requested": requested, "stop_confirmed": False})
 
     def _tool_detect_object(self, label: str) -> str:

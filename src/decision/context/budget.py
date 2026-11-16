@@ -3,8 +3,10 @@
 import math
 
 from decision.context.transcript import serialize
+from decision.tasks.activity import normalize_activity_state
 
 PROMPT_TOKEN_BUDGET = 24000  # LingTu working budget, not a provider's maximum window.
+CHARACTERS_PER_TOKEN = 3
 
 
 class ToolContextBudget:
@@ -14,12 +16,14 @@ class ToolContextBudget:
         self.on_event = on_event
         self.token_budget = token_budget
         self.input_tokens = None
+        self.output_tokens = None
         self.sent_characters = 0
         self.anchored_characters = 0
         self.demoted = {}
 
     def observe(self, usage):
-        self.input_tokens = usage.input_tokens
+        self.input_tokens = _usage_value(usage, "input_tokens")
+        self.output_tokens = _usage_value(usage, "output_tokens")
         self.anchored_characters = self.sent_characters
 
     def prepare(self, items):
@@ -28,7 +32,14 @@ class ToolContextBudget:
                     for item in items]
         characters = len(serialize(prepared))
         added_estimate = math.ceil(max(0, characters - self.anchored_characters) / 3)
-        if self.input_tokens is not None and self.input_tokens + added_estimate >= self.token_budget:
+        estimated_tokens = math.ceil(characters / CHARACTERS_PER_TOKEN)
+        if self.input_tokens is not None:
+            budget_tokens = self.input_tokens + added_estimate
+            basis = "provider_input_tokens_plus_new_text_estimate"
+        else:
+            budget_tokens = estimated_tokens
+            basis = "character_estimate"
+        if budget_tokens >= self.token_budget:
             outputs = [index for index, item in enumerate(prepared) if index >= self.history_length
                        and item.get("type") == "function_call_output"]
             newly_demoted = []
@@ -43,9 +54,15 @@ class ToolContextBudget:
                 prepared[index] = {**item, "output": reference}
                 newly_demoted.append(item["call_id"])
             if newly_demoted:
-                self.on_event({"type": "context_budget", "status": "completed", "scope": "in_loop",
-                    "basis": "provider_input_tokens_plus_new_text_estimate", "provider_input_tokens": self.input_tokens,
-                    "new_text_token_estimate": added_estimate, "budget_tokens": self.token_budget,
+                self.on_event({"type": "context_budget", "status": "completed", "activity_state": normalize_activity_state("completed"), "scope": "in_loop",
+                    "basis": basis, "provider_input_tokens": self.input_tokens,
+                    "new_text_token_estimate": added_estimate, "estimated_tokens": estimated_tokens,
+                    "observed_output_tokens": self.output_tokens, "budget_tokens": self.token_budget,
                     "demoted_call_ids": newly_demoted, "turn_id": self.turn_id})
         self.sent_characters = len(serialize(prepared))
         return prepared
+
+
+def _usage_value(usage, key: str):
+    value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+    return value if isinstance(value, int) and value >= 0 else None

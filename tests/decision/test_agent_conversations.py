@@ -75,7 +75,23 @@ def test_skill_tools_are_read_only_and_reach_conversation_history(agent, monkeyp
     tool_messages = [message for message in snapshot["messages"] if message["role"] == "tool"]
     assert [message["kind"] for message in tool_messages] == ["skills_list", "skill_view"]
     assert all(message["metadata"]["duration_ms"] >= 0 for message in tool_messages)
+    assert all(message["metadata"]["activity_type"] == "tool" for message in tool_messages)
+    assert all(message["metadata"]["activity_state"] == "completed" for message in tool_messages)
     assert not snapshot["approvals"] and agent._active_run is None
+
+
+def test_conversation_exposes_owned_person_follow_tool(agent, monkeypatch):
+    async def runner(tools, instructions, **kwargs):
+        names = {tool["function"]["name"] for tool in tools}
+        assert "follow_person" in names
+        assert "Continuous following is available only through follow_person" in instructions
+        assert "When a task is incomplete" in instructions
+        return TurnResult("reply", "可以跟随指定人员。", [])
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    cid = agent.create_conversation()["conversation_id"]
+    turn = submit(agent, cid, "follow-tool", "跟随穿红衣服的人", permission_mode="read_only")
+    assert turn["state"] == "completed"
 
 
 @pytest.mark.parametrize("permission,approved", [("read_only", None), ("default", False), ("default", True)])
@@ -133,6 +149,78 @@ def test_preferences_refresh_across_conversations_and_read_without_approval(agen
     assert not snapshot["approvals"] and agent._active_run is None
     tool_message = next(message for message in snapshot["messages"] if message["role"] == "tool")
     assert tool_message["metadata"]["duration_ms"] >= 0
+
+
+def test_robot_memory_is_layered_durable_queryable_and_explicitly_forgettable(tmp_path):
+    path = tmp_path / "robot-memory.db"
+    store = ConversationStore(path)
+    saved = store.remember_robot_memory(
+        layer="procedural", content="巡检前先读取当前地图版本。", source="operator", confidence=0.95,
+    )["memory"]
+    assert saved["layer"] == "procedural"
+    assert store.read_robot_memory(layer="procedural")["memories"][0]["content"] == "巡检前先读取当前地图版本。"
+    updated = store.update_robot_memory(memory_id=saved["id"], old_content=saved["content"],
+                                        content="巡检前先读取当前地图版本和定位状态。", source="operator")["memory"]
+    assert "定位状态" in updated["content"]
+    assert store.read_robot_memory(query="定位")["memories"][0]["id"] == saved["id"]
+    assert store.forget_robot_memory(memory_id=saved["id"], old_content=updated["content"])["removed"] is True
+    assert store.read_robot_memory()["memories"] == []
+    restarted = ConversationStore(path)
+    assert restarted.read_robot_memory()["memories"] == []
+    restarted.close()
+    store.close()
+
+
+def test_robot_memory_covers_all_layers_ttl_and_concurrent_edit_guard(tmp_path):
+    store = ConversationStore(tmp_path / "robot-memory-layers.db")
+    layers = ("operator", "spatial", "episodic", "procedural", "working")
+    saved = [store.remember_robot_memory(layer=layer, content=f"{layer} memory", source="test", ttl_seconds=60)["memory"]
+             for layer in layers]
+    assert {item["layer"] for item in store.read_robot_memory()["memories"]} == set(layers)
+    assert store.update_robot_memory(memory_id=saved[0]["id"], old_content="stale", content="should fail")["error"] == "robot_memory_changed"
+    with store._lock, store._db:
+        store._db.execute("UPDATE robot_memories SET expires_at=? WHERE id=?", (time.time() - 1, saved[-1]["id"]))
+    visible = store.read_robot_memory()["memories"]
+    assert {item["layer"] for item in visible} == set(layers[:-1])
+    conversation_id = store.create()["conversation_id"]
+    turn, _ = store.accept(conversation_id, "memory-history", "保留这条历史", None)
+    store.finish(conversation_id, turn["turn_id"], state="completed", kind="reply", text="已保留", model_items=[])
+    history_before = store.history(conversation_id)
+    store.forget_robot_memory(memory_id=saved[0]["id"], old_content=saved[0]["content"])
+    assert store.history(conversation_id) == history_before
+    store.close()
+
+
+def test_robot_memory_splits_bot_and_robot_domains_and_keeps_legacy_rows_visible(tmp_path):
+    store = ConversationStore(tmp_path / "robot-memory-domains.db")
+    bot = store.remember_bot_memory(layer="procedural", content="先确认地图版本", source="bot")['memory']
+    robot = store.remember_robot_memory(layer="spatial", content="东区入口", source="sensor")['memory']
+    assert bot["domain"] == "bot" and robot["domain"] == "robot"
+    assert [item["id"] for item in store.read_bot_memory()["memories"]] == [bot["id"]]
+    assert [item["id"] for item in store.read_robot_memory(domain="robot")["memories"]] == [robot["id"]]
+    assert {item["id"] for item in store.read_robot_memory()["memories"]} == {bot["id"], robot["id"]}
+    store.close()
+
+
+def test_bot_memory_tool_is_scoped_to_conversation_bot(agent, monkeypatch):
+    store = agent._conversation_store()
+    store.remember_bot_memory(layer="procedural", content="巡检 Bot 流程", source="test", owner_id="inspection")
+    store.remember_bot_memory(layer="procedural", content="导航 Bot 流程", source="test", owner_id="navigation")
+    store.remember_robot_memory(layer="spatial", content="机器人 A 区域", source="test", owner_id="robot-a")
+    store.remember_robot_memory(layer="spatial", content="机器人 B 区域", source="test", owner_id="robot-b")
+    monkeypatch.setenv("LINGTU_ROBOT_ID", "robot-a")
+
+    async def runner(invoke_tool, **kwargs):
+        bot_result = await invoke_tool("read_bot_memory", {"owner_id": "navigation"}, "memory-read-bot")
+        robot_result = await invoke_tool("read_robot_memory", {"owner_id": "robot-b"}, "memory-read-robot")
+        assert [item["content"] for item in bot_result["memories"]] == ["巡检 Bot 流程"]
+        assert [item["content"] for item in robot_result["memories"]] == ["机器人 A 区域"]
+        return TurnResult("reply", "已读取当前 Bot 记忆。", [])
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    cid = agent.create_conversation(bot_id="inspection")["conversation_id"]
+    turn = submit(agent, cid, "memory-scope", "读取当前 Bot 记忆", permission_mode="read_only")
+    assert turn["state"] == "completed"
 
 
 def test_web_tools_run_in_read_only_conversation_and_keep_timing(agent, monkeypatch):

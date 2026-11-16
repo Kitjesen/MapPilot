@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from decision.llm.client import LLMConfig, resolve_llm_backend
-from decision.llm.conversation_models import PROVIDERS, conversation_config, provider_choices
+from decision.llm.conversation_models import ACP_MODELS, PROVIDERS, conversation_config, provider_choices
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_ATTACHMENTS = 4
@@ -39,6 +39,8 @@ def _model_option(config: LLMConfig, model: str) -> dict:
     elif config.backend == "codex":
         reasoning += [{"id": key, "label": label} for key, label in
                       [("low", "低"), ("medium", "中"), ("high", "高"), ("xhigh", "更高")]]
+    elif config.backend == "acp":
+        reasoning = [{"id": "default", "label": "默认"}]
     elif resolve_llm_backend(config.backend) == "openai" and model in PROVIDERS["openai"][2]:
         reasoning += [{"id": key, "label": label} for key, label in
                       [("low", "低"), ("medium", "中"), ("high", "高"), ("xhigh", "更高"), ("max", "最高")]]
@@ -50,7 +52,8 @@ def _model_option(config: LLMConfig, model: str) -> dict:
     return {"attachment_accept": ",".join(sorted(extensions)), "id": model, "label": KIMI_MODELS.get(model, model), "reasoning": reasoning,
             "provider": resolve_llm_backend(config.backend),
             "image_input": config.backend == "codex" or (_moonshot(config) and model in KIMI_MODELS)
-                           or any(model in entry[2] for provider, entry in PROVIDERS.items() if provider != "qwen")}
+                           or any(model in entry[2] for provider, entry in PROVIDERS.items()
+                                  if provider not in {"qwen", "grok"})}
 
 
 def _client(config: LLMConfig, timeout: float = 20):
@@ -104,12 +107,21 @@ def validate_conversation_selection(config: LLMConfig, model: str | None, reason
     selected = model or config.model
     config = conversation_config(config, selected)
     if config.backend == "codex":
-        from decision.llm.codex import account
+        from decision.llm.codex_app_server import app_server
 
-        if not account.status()["connected"]:
-            raise ValueError("请先在模型连接中登录 ChatGPT / Codex。")
-    elif selected != config.model and not (_moonshot(config) and selected in KIMI_MODELS):
+        try:
+            connected = app_server.status()["connected"]
+        except Exception:
+            connected = False
+        if not connected:
+            raise ValueError("请先在 Codex App Server 中登录 ChatGPT。")
+    elif selected != config.model and not (_moonshot(config) and selected in KIMI_MODELS) and selected not in ACP_MODELS:
         raise ValueError("当前服务未配置这个模型。")
+    if config.backend == "acp":
+        from decision.llm.acp import acp_command_available
+
+        if not acp_command_available(config):
+            raise ValueError("请先配置可用的 ACP Agent 命令。")
     if any(selected in entry[2] for entry in PROVIDERS.values()) and not os.environ.get(config.api_key_env):
         raise ValueError(f"请在服务端配置 {config.api_key_env} 后使用这个模型。")
     option = _model_option(config, selected)

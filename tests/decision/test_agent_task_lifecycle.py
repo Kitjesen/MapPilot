@@ -461,6 +461,7 @@ def test_blank_or_closed_submission_does_not_return_an_old_run_identity(agent):
 @pytest.mark.parametrize(('text', 'operation'), [
     ('现在在干什么？', 'query'), ('继续跟着他', 'keep'), ('停下！', 'cancel'),
     ('不用跟了', 'cancel'), ('暂停一下', 'pause'), ('恢复任务', 'resume'),
+    ('暂停导航', 'pause'), ('恢复导航', 'resume'),
     ('当前状态', 'query'), ('为什么不走', 'query'), ('为什么停止', 'query'),
     ('结束当前任务', 'cancel'), ('取消当前任务', 'cancel'), ('停止当前任务', 'cancel'),
     ('别停', None), ('找到后停下', None),
@@ -483,8 +484,14 @@ def test_dialogue_controls_keep_identity_and_reject_stale_or_unsupported(agent):
         assert result['run_id'] == receipt['run_id']
         assert agent.module._active_run is run and not run.cancelled
     paused = agent.module.handle_instruction_control('暂停一下', run.run_id)
-    assert paused['accepted'] is False and paused['reason'] == 'unsupported_control'
+    assert paused['accepted'] is True and paused['operation'] == 'pause'
+    assert paused['task_id'] == agent.h.module._active_goal.task_id
     assert run.state == 'running'
+    agent.h.reach(NavigationGoalState.PAUSED)
+    resumed = agent.module.handle_instruction_control('恢复任务', run.run_id)
+    assert resumed['accepted'] is True and resumed['operation'] == 'resume'
+    stale_pause = agent.module.handle_instruction_control('暂停一下', 'old-run')
+    assert stale_pause['accepted'] is False and stale_pause['reason'] == 'not_current'
     stale = agent.module.handle_instruction_control('停下', 'old-run')
     assert stale['reason'] == 'not_current' and not run.cancelled
     stopped = agent.module.handle_instruction_control('停下', run.run_id)
@@ -536,7 +543,7 @@ def test_stale_dialogue_cancel_cannot_affect_new_run_or_resume_finished_run(agen
     old = json.loads(agent.module.run_agent_task('current status'))['run_id']
     agent.module._active_run.future.result(timeout=1)
     resumed = agent.module.handle_instruction_control('恢复任务', old)
-    assert resumed['accepted'] is False and resumed['reason'] == 'unsupported_control'
+    assert resumed['accepted'] is False and resumed['reason'] == 'task_not_running'
     assert agent.module._active_run.state == 'done'
     script(agent, tool('navigate_to', x=1, y=2, z=0.3))
     agent.h.goal_sent.clear()

@@ -355,6 +355,7 @@ class YOLOEDetectorProvider:
             confidence=spec.confidence,
             iou_threshold=spec.iou_threshold,
             device=spec.device,
+            model_path=spec.model_path,
             max_detections=spec.max_detections,
         )
 

@@ -1,6 +1,7 @@
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdint>
 #include <fstream>
@@ -12,6 +13,7 @@ namespace {
 
 constexpr std::int64_t kInputElements = 1LL * 3 * 640 * 640;
 constexpr std::int64_t kOutputElements = 1LL * 5 * 8400;
+constexpr std::int64_t kCandidates = 8400;
 
 class Logger final : public nvinfer1::ILogger {
  public:
@@ -44,7 +46,8 @@ bool IsInput(const nvinfer1::Dims& dims) {
 }
 
 bool IsOutput(const nvinfer1::Dims& dims) {
-  return dims.nbDims == 3 && dims.d[0] == 1 && dims.d[1] == 5 && dims.d[2] == 8400;
+  return dims.nbDims == 3 && dims.d[0] == 1 &&
+         (dims.d[1] == 5 || dims.d[1] == 84) && dims.d[2] == kCandidates;
 }
 
 class YoloEngine {
@@ -82,10 +85,11 @@ class YoloEngine {
         }
         input_index_ = binding;
       } else {
-        if (output_index_ != -1 || !IsOutput(dims) || volume != kOutputElements) {
+        if (output_index_ != -1 || !IsOutput(dims)) {
           throw std::runtime_error("unexpected YOLO TensorRT output contract");
         }
         output_index_ = binding;
+        output_channels_ = dims.d[1];
       }
     }
     if (input_index_ < 0 || output_index_ < 0) {
@@ -125,12 +129,27 @@ class YoloEngine {
       return 2;
     }
     if (!context_->enqueueV2(bindings_.data(), stream_, nullptr)) return 3;
-    if (cudaMemcpyAsync(output, bindings_[output_index_],
-                        static_cast<std::size_t>(kOutputElements) * sizeof(float),
+    raw_output_.resize(static_cast<std::size_t>(output_channels_) * kCandidates);
+    if (cudaMemcpyAsync(raw_output_.data(), bindings_[output_index_],
+                        raw_output_.size() * sizeof(float),
                         cudaMemcpyDeviceToHost, stream_) != cudaSuccess) {
       return 4;
     }
-    return cudaStreamSynchronize(stream_) == cudaSuccess ? 0 : 5;
+    if (cudaStreamSynchronize(stream_) != cudaSuccess) return 5;
+    if (output_channels_ == 5) {
+      std::copy(raw_output_.begin(), raw_output_.end(), output);
+    } else {
+      // Standard YOLO exports use 4 box channels plus COCO class scores.
+      // Expose the person class as the fixed 5th channel expected by Host.
+      for (std::int64_t candidate = 0; candidate < kCandidates; ++candidate) {
+        output[candidate] = raw_output_[candidate];
+        output[kCandidates + candidate] = raw_output_[kCandidates + candidate];
+        output[2 * kCandidates + candidate] = raw_output_[2 * kCandidates + candidate];
+        output[3 * kCandidates + candidate] = raw_output_[3 * kCandidates + candidate];
+        output[4 * kCandidates + candidate] = raw_output_[4 * kCandidates + candidate];
+      }
+    }
+    return 0;
   }
 
  private:
@@ -141,6 +160,8 @@ class YoloEngine {
   std::vector<void*> bindings_;
   int input_index_ = -1;
   int output_index_ = -1;
+  int output_channels_ = 0;
+  std::vector<float> raw_output_;
   cudaStream_t stream_ = nullptr;
 };
 

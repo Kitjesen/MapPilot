@@ -114,6 +114,8 @@ async def run_turn(
     model: Any = None,
     selected_model: str | None = None,
     reasoning: str = "default",
+    permission_mode: str = "default",
+    approval_handler: Callable[[dict], str] | None = None,
     attachments: list[dict] | None = None,
     allow_specialists: bool = True,
     conversation_turn_id: str | None = None,
@@ -145,6 +147,30 @@ async def run_turn(
 
     budget = ToolContextBudget(conversation_turn_id, len(history), on_event) if conversation_turn_id else None
     try:
+        if resolve_llm_backend(config.backend) == "codex":
+            from decision.llm.codex_app_server import app_server
+
+            reply = await asyncio.to_thread(
+                app_server.chat, input_items, model=config.model,
+                permission_mode=permission_mode,
+                on_event=on_event,
+                approval_handler=approval_handler,
+            )
+            metrics["first_text_ms"] = round((time.monotonic() - started) * 1000) if reply else None
+            metrics["model_responses"] = 1
+            metrics["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            return TurnResult("reply", reply, input_items, metrics=metrics)
+        if resolve_llm_backend(config.backend) == "acp":
+            from decision.llm.acp import AcpClient
+
+            reply = await AcpClient(config).chat(input_items, permission_mode=permission_mode,
+                                                 approval_handler=approval_handler)
+            metrics["first_text_ms"] = round((time.monotonic() - started) * 1000) if reply else None
+            metrics["model_responses"] = 1
+            metrics["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            if reply:
+                on_event({"type": "text_delta", "delta": reply})
+            return TurnResult("reply", reply, input_items, metrics=metrics)
         from agents import Agent, FunctionTool, RunConfig, Runner
         from agents.agent import ToolsToFinalOutputResult
         from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
@@ -275,12 +301,7 @@ async def run_turn(
             )
 
         if model is None:
-            if config.backend == "codex":
-                from decision.llm.codex import account
-
-                api_key = await asyncio.to_thread(account.access_token)
-            else:
-                api_key = os.environ.get(config.api_key_env, "")
+            api_key = os.environ.get(config.api_key_env, "")
             if not api_key:
                 raise ValueError(f"API key not found in env var '{config.api_key_env}'")
             client = AsyncOpenAI(
