@@ -1929,19 +1929,22 @@ class SemanticPlannerModule(Module, layer=4):
                 if robot is None or self._map_sample_is_stale(robot):
                     self.planner_status.publish("WAITING_FOR_MAP_POSE")
                     return
-                pose.ts = time.time()
-                # Native failure feedback may synchronously start a fresh retry.
-                self._pending_observation = None
-                self._observation_retry_after = 0.0
-                self._object_candidates[target.object_id] = "approaching"
-                if changing_view:
-                    self._current_goal_pose = pose
-                    self._dispatch_navigation_goal(pose, instruction=request.instruction, purpose="object",
-                                                   target=target, verification=state)
-                    return
-                dispatched = self._publish_goal_pose_once(request.instruction, pose, target=target)
-                if dispatched:
-                    self._chat("assistant", f"Approaching an observation position for {target.label}.", phase="observation")
+                with self._verification_lock:
+                    if not self._observation_request_is_current(request):
+                        return
+                    pose.ts = time.time()
+                    # Retire the preview and register its task before another verification retry.
+                    self._pending_observation = None
+                    self._observation_retry_after = 0.0
+                    self._object_candidates[target.object_id] = "approaching"
+                    if changing_view:
+                        self._current_goal_pose = pose
+                        self._dispatch_navigation_goal(pose, instruction=request.instruction, purpose="object",
+                                                       target=target, verification=state)
+                        return
+                    dispatched = self._publish_goal_pose_once(request.instruction, pose, target=target)
+                    if dispatched:
+                        self._chat("assistant", f"Approaching an observation position for {target.label}.", phase="observation")
                 return
             self._pending_observation = None
             self._object_candidates[request.target.object_id] = "path_blocked"
