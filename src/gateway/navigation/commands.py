@@ -38,6 +38,7 @@ def submit_goal(
     request_id: str | None = None,
     max_speed_mps: float | None = None,
     acceptance_radius_m: float | None = None,
+    map_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     goals = getattr(owner, "_goals", None)
     if goals is None:
@@ -49,7 +50,15 @@ def submit_goal(
     try:
         limits = {key: value for key, value in {"max_speed_mps": max_speed_mps,
                   "acceptance_radius_m": acceptance_radius_m}.items() if value is not None}
-        result = operation(goal, task_id=task_id, request_id=request_id, action="goal", **limits)
+        operation_kwargs: dict[str, Any] = {
+            "task_id": task_id,
+            "request_id": request_id,
+            "action": "goal",
+            **limits,
+        }
+        if map_identity:
+            operation_kwargs["map_identity"] = map_identity
+        result = operation(goal, **operation_kwargs)
     except Exception as exc:
         raise CommandBoundaryError(str(exc)) from exc
     native_ack = result.get("native_ack") if isinstance(result, Mapping) else None

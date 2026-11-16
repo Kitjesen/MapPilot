@@ -1,5 +1,5 @@
 #include "prepared.hpp"
-#include "surface_graph.hpp"
+#include "mls_backend.hpp"
 #include "lingtu/maps/io/binary.hpp"
 
 #include <chrono>
@@ -18,9 +18,9 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.2";
+constexpr const char* kFormat="lingtu.navigation.prepared.7";
 constexpr std::uint32_t kEndian=0x01020304U;
-struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
+struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,21> preparation; };
 
 Header readHeader(BinaryReader& in) {
   if(in.text()!=kFormat || in.value<std::uint32_t>()!=kEndian)
@@ -62,15 +62,21 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
     if(!lingtu::nav::plan::sameMapIdentity(header.map,identity) ||
         header.preparation!=config.preparation() || header.size!=std::filesystem::file_size(source) ||
         header.modified!=std::filesystem::last_write_time(source).time_since_epoch().count())return false;
-    auto surface=global_planner::SurfaceIndex::read(in);
-    std::shared_ptr<global_planner::SurfaceGraph> graph;
-    const auto has_graph=in.value<std::uint8_t>();
-    const bool needs_graph=config.ground_support && config.support_height_m>0 && !config.lowest_traversable_only;
-    if(has_graph>1 || bool(has_graph)!=needs_graph || surface->resolution()!=map->getResolution())
-      throw std::runtime_error("prepared map does not match geometry");
-    if(has_graph)graph=global_planner::SurfaceGraph::read(in,config);
+    auto rust_artifact=global_planner::mls::read(in,false);
+    if(rust_artifact.resolution_m!=map->getResolution())
+      throw std::runtime_error("prepared Rust graph resolution mismatch");
+    const auto rust_abi=in.value<std::uint32_t>();
+    if(rust_abi!=lt_mls_abi_version())
+      throw std::runtime_error("prepared map Rust MLS ABI changed");
     if(!in.complete())throw std::runtime_error("unexpected prepared map tail");
-    planner.setOctomap(map,std::move(surface),std::move(graph));
+    global_planner::mls::RustGraph rust_graph{
+        std::move(rust_artifact.nodes),std::move(rust_artifact.edges)};
+    auto restored=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
+        global_planner::mls::PreparedArtifactHandle::createFromGraph(
+            rust_artifact.observed,rust_artifact.inferred,rust_graph,
+            global_planner::mls::rustGraphConfig(config,map->getResolution()),
+            rust_artifact.revision));
+    planner.setPreparedRustGraph(map,std::move(restored));
     std::fprintf(stderr,"OctoPlanner3D restored prepared map: %s\n",path.string().c_str());
     return true;
   } catch(const std::exception& error) {
@@ -98,7 +104,9 @@ void savePrepared(const std::filesystem::path& directory,const std::filesystem::
       out.value<std::uint64_t>(std::filesystem::file_size(source));
       out.value<std::int64_t>(std::filesystem::last_write_time(source).time_since_epoch().count());
       for(double value:config.preparation())out.value(value);
-      planner.writePrepared(out);stream.flush();
+      planner.writePrepared(out);
+      out.value<std::uint32_t>(lt_mls_abi_version());
+      stream.flush();
       if(!stream)throw std::runtime_error("cannot flush prepared map");
     }
 #if defined(_WIN32)

@@ -1,14 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::ops::Bound::Included;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{SurfaceCell, SurfaceConfig, SurfaceMap};
 
-/// Extract observed surfaces and bounded inferred cells from occupied voxels.
+/// Extract observed surfaces and inferred cells using the DimOS surface rules.
 pub fn extract_surfaces(occupied: &[SurfaceCell], config: SurfaceConfig) -> SurfaceMap {
     extract_surfaces_with_free(occupied, &[], config)
 }
 
-/// Extract surfaces while preserving known-free evidence for inferred cells.
+/// Extract surfaces while excluding observed free cells from inferred support.
 pub fn extract_surfaces_with_free(
     occupied: &[SurfaceCell],
     known_free: &[SurfaceCell],
@@ -16,7 +15,6 @@ pub fn extract_surfaces_with_free(
 ) -> SurfaceMap {
     let columns = columns(occupied);
     let mut observed = Vec::new();
-    // Keep height layers ordered so hole closing only visits the slope band.
     let mut by_z: BTreeMap<i32, Vec<SurfaceCell>> = BTreeMap::new();
 
     for (&(x, y), levels) in &columns {
@@ -52,195 +50,88 @@ fn close_holes(
     by_z: &BTreeMap<i32, Vec<SurfaceCell>>,
     config: SurfaceConfig,
 ) -> Vec<SurfaceCell> {
-    if config.closing_passes == 0 || config.max_hole_cells == 0 {
+    let passes = if config.closing_radius_cells > 0.0 {
+        config.closing_radius_cells.ceil() as usize
+    } else {
+        config.closing_passes as usize
+    };
+    if passes == 0 {
         return Vec::new();
     }
-
-    let radius = config.closing_passes as i32;
-    let max_slope = f64::from(config.max_slope);
-    if !max_slope.is_finite() || max_slope < 0.0 || by_z.is_empty() {
-        return Vec::new();
-    }
-    let occupied: HashSet<SurfaceCell> = occupied.iter().copied().collect();
-    let known_free: HashSet<SurfaceCell> = known_free.iter().copied().collect();
-    let band = (f64::from(radius) * max_slope).ceil() as i32 + 1;
+    let columns = columns(occupied);
+    let known_free: HashSet<_> = known_free.iter().copied().collect();
     let mut inferred = HashSet::new();
-    let min_z = *by_z.keys().min().unwrap();
-    let max_z = *by_z.keys().max().unwrap();
-    let mut candidate_z = BTreeSet::new();
-    // Heights outside these bands have no samples and cannot infer holes.
-    for &layer_z in by_z.keys() {
-        for offset in -band..=band {
-            let z = layer_z.saturating_add(offset);
-            if z >= min_z && z <= max_z {
-                candidate_z.insert(z);
+    for (&z, layer) in by_z {
+        let original: HashSet<(i32, i32)> = layer.iter().map(|cell| (cell.x, cell.y)).collect();
+        let min_x = original.iter().map(|(x, _)| *x).min().unwrap() - passes as i32;
+        let max_x = original.iter().map(|(x, _)| *x).max().unwrap() + passes as i32;
+        let min_y = original.iter().map(|(_, y)| *y).min().unwrap() - passes as i32;
+        let max_y = original.iter().map(|(_, y)| *y).max().unwrap() + passes as i32;
+        let mut closed = original.clone();
+        for _ in 0..passes {
+            let mut next = closed.clone();
+            for &(x, y) in &closed {
+                for (nx, ny) in neighbors(x, y) {
+                    if nx >= min_x && nx <= max_x && ny >= min_y && ny <= max_y {
+                        next.insert((nx, ny));
+                    }
+                }
             }
+            closed = next;
+        }
+        for _ in 0..passes {
+            let mut next = HashSet::new();
+            for &(x, y) in &closed {
+                if neighbors(x, y).iter().all(|cell| closed.contains(cell)) {
+                    next.insert((x, y));
+                }
+            }
+            closed = next;
+        }
+        for (x, y) in closed.difference(&original) {
+            let candidate = SurfaceCell::new(*x, *y, z);
+            if known_free.contains(&candidate)
+                || !is_standable(candidate, &columns, config.clearance_cells)
+                || !has_support(&columns, *x, *y, z)
+            {
+                continue;
+            }
+            inferred.insert(candidate);
         }
     }
-    for z in candidate_z {
-        let mut samples = HashMap::<(i32, i32), SurfaceCell>::new();
-        for (_, layer) in by_z.range((Included(z - band), Included(z + band))) {
-            for &cell in layer {
-                let key = (cell.x, cell.y);
-                let replace = samples
-                    .get(&key)
-                    .map(|current| (cell.z - z).abs() < (current.z - z).abs())
-                    .unwrap_or(true);
-                if replace {
-                    samples.insert(key, cell);
-                }
-            }
-        }
-        let Some(first) = samples.values().next() else {
-            continue;
-        };
-        let (first_x, first_y) = (first.x, first.y);
-        let (mut min_x, mut max_x, mut min_y, mut max_y) = (first_x, first_x, first_y, first_y);
-        for cell in samples.values() {
-            min_x = min_x.min(cell.x);
-            max_x = max_x.max(cell.x);
-            min_y = min_y.min(cell.y);
-            max_y = max_y.max(cell.y);
-        }
-        min_x -= 1;
-        min_y -= 1;
-        max_x += 1;
-        max_y += 1;
-
-        let sample_at = |x: i32, y: i32| samples.get(&(x, y)).map(|cell| cell.z);
-        let mut visited = HashSet::new();
-        for sy in min_y..=max_y {
-            for sx in min_x..=max_x {
-                if sample_at(sx, sy).is_some() || !visited.insert((sx, sy)) {
-                    continue;
-                }
-                let mut queue = VecDeque::from([(sx, sy)]);
-                let mut component = Vec::new();
-                let mut rim = HashSet::new();
-                let mut touches_boundary = false;
-                while let Some((cx, cy)) = queue.pop_front() {
-                    component.push((cx, cy));
-                    touches_boundary |= cx == min_x || cx == max_x || cy == min_y || cy == max_y;
-                    for (nx, ny) in neighbors(cx, cy) {
-                        if nx < min_x || nx > max_x || ny < min_y || ny > max_y {
-                            continue;
-                        }
-                        if sample_at(nx, ny).is_some() {
-                            rim.insert((nx, ny));
-                        } else if visited.insert((nx, ny)) {
-                            queue.push_back((nx, ny));
-                        }
-                    }
-                }
-                if touches_boundary || component.len() > config.max_hole_cells {
-                    continue;
-                }
-                let low_x = component.iter().map(|(x, _)| *x).min().unwrap();
-                let high_x = component.iter().map(|(x, _)| *x).max().unwrap();
-                let low_y = component.iter().map(|(_, y)| *y).min().unwrap();
-                let high_y = component.iter().map(|(_, y)| *y).max().unwrap();
-                if high_x - low_x + 1 > radius * 2 || high_y - low_y + 1 > radius * 2 {
-                    continue;
-                }
-                let center_x = 0.5 * f64::from(low_x + high_x);
-                let center_y = 0.5 * f64::from(low_y + high_y);
-                let boundary: Vec<(f64, f64, f64)> = rim
-                    .iter()
-                    .filter_map(|&(x, y)| {
-                        sample_at(x, y).map(|sample_z| {
-                            (
-                                f64::from(x) - center_x,
-                                f64::from(y) - center_y,
-                                f64::from(sample_z) + 0.5,
-                            )
-                        })
-                    })
-                    .collect();
-                let Some((a, b, c, rms)) = fit_boundary_plane(&boundary) else {
-                    continue;
-                };
-                if (a * a + b * b).sqrt() > max_slope + 1e-7 || rms > 0.35 {
-                    continue;
-                }
-                if boundary
-                    .iter()
-                    .any(|&(x, y, sample_z)| (sample_z - (a * x + b * y + c)).abs() > 0.6)
-                {
-                    continue;
-                }
-                for (x, y) in component {
-                    let fitted = a * (f64::from(x) - center_x) + b * (f64::from(y) - center_y) + c;
-                    if fitted.floor() as i32 != z {
-                        continue;
-                    }
-                    if !rim.iter().any(|&(rx, ry)| {
-                        f64::from(x - rx).hypot(f64::from(y - ry)) <= f64::from(radius) + 1e-7
-                    }) {
-                        continue;
-                    }
-                    let candidate = SurfaceCell::new(x, y, z);
-                    if known_free.contains(&candidate) || occupied.contains(&candidate) {
-                        continue;
-                    }
-                    if (1..=config.clearance_cells)
-                        .any(|offset| occupied.contains(&SurfaceCell::new(x, y, z + offset)))
-                    {
-                        continue;
-                    }
-                    inferred.insert(candidate);
-                }
-            }
-        }
-    }
-
     let mut cells: Vec<_> = inferred.into_iter().collect();
     cells.sort_unstable();
     cells
 }
 
-fn fit_boundary_plane(points: &[(f64, f64, f64)]) -> Option<(f64, f64, f64, f64)> {
-    if points.len() < 3 {
-        return None;
-    }
-    let count = points.len() as f64;
-    let (mx, my, mz) = points.iter().fold((0.0, 0.0, 0.0), |acc, point| {
-        (acc.0 + point.0, acc.1 + point.1, acc.2 + point.2)
-    });
-    let (mx, my, mz) = (mx / count, my / count, mz / count);
-    let mut xx = 0.0;
-    let mut yy = 0.0;
-    let mut xy = 0.0;
-    let mut xz = 0.0;
-    let mut yz = 0.0;
-    for &(x, y, z) in points {
-        let (x, y, z) = (x - mx, y - my, z - mz);
-        xx += x * x;
-        yy += y * y;
-        xy += x * y;
-        xz += x * z;
-        yz += y * z;
-    }
-    let eigen_min = (xx + yy - (xx - yy).hypot(2.0 * xy)) / (2.0 * count);
-    if eigen_min < 1e-5 {
-        return None;
-    }
-    let determinant = xx * yy - xy * xy;
-    if determinant.abs() < 1e-12 {
-        return None;
-    }
-    let a = (xz * yy - yz * xy) / determinant;
-    let b = (yz * xx - xz * xy) / determinant;
-    let c = mz - a * mx - b * my;
-    let rms = (points
+fn is_standable(
+    cell: SurfaceCell,
+    columns: &HashMap<(i32, i32), Vec<i32>>,
+    clearance_cells: i32,
+) -> bool {
+    let Some(levels) = columns.get(&(cell.x, cell.y)) else {
+        return true;
+    };
+    levels
         .iter()
-        .map(|&(x, y, z)| {
-            let error = z - (a * x + b * y + c);
-            error * error
-        })
-        .sum::<f64>()
-        / count)
-        .sqrt();
-    Some((a, b, c, rms))
+        .copied()
+        .find(|&z| z > cell.z)
+        .map(|next| next - cell.z > clearance_cells)
+        .unwrap_or(true)
+}
+
+fn has_support(columns: &HashMap<(i32, i32), Vec<i32>>, x: i32, y: i32, z: i32) -> bool {
+    for dx in -3..=3 {
+        for dy in -3..=3 {
+            if columns
+                .get(&(x + dx, y + dy))
+                .is_some_and(|levels| levels.iter().any(|&occupied| (occupied - z).abs() <= 3))
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub(crate) fn neighbors(x: i32, y: i32) -> [(i32, i32); 4] {

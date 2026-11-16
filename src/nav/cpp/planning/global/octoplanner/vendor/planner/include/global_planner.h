@@ -25,7 +25,7 @@
 
 #include "octomap/OcTree.h"
 #include "lingtu/maps/no_go.hpp"
-#include "lingtu/maps/layers/surface.hpp"
+#include "lingtu/maps/io/binary.hpp"
 
 namespace global_planner
 {
@@ -97,8 +97,6 @@ struct ExternalBlockedRegion
 struct PlannerConfig
 {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
-  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
-  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.20};
   double body_clearance_below_m{0.0};
@@ -128,8 +126,8 @@ struct PlannerConfig
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
 
-  std::array<double,23> preparation() const {
-    return {surface_closing_radius_m,surface_max_hole_area_m2,surface_max_slope,
+  std::array<double,21> preparation() const {
+    return {surface_closing_radius_m,
       search_resolution_m,robot_radius,body_clearance_below_m,body_clearance_above_m,
       double(ground_support),double(direct_support_only),double(support_depth_cells),
       support_height_m,support_height_tolerance_m,double(support_patch_radius_cells),
@@ -140,12 +138,21 @@ struct PlannerConfig
   }
 };
 
-using SurfaceIndex = lingtu::maps::layers::SurfaceIndex;
-class SurfaceGraph;
+namespace mls { class PreparedArtifactHandle; }
+
+// Map-derived state used by every route query.  The surface and its sparse
+// graph are one prepared artifact; they must be replaced together when the
+// map or preparation geometry changes.
+struct PlannerArtifact
+{
+  // Rust owns the executable global candidate graph.
+  std::shared_ptr<mls::PreparedArtifactHandle> rust_graph;
+};
 
 class OctoPlanner3D
 {
 public:
+  struct Cancelled {};
   enum class TraversabilityFailure
   {
     None,
@@ -180,6 +187,27 @@ public:
     Outcome outcome{Outcome::NotStarted};
     int iterations{0};
     bool used_surface_graph{false};
+    bool used_rust_graph{false};
+    bool rust_fallback{false};
+    std::string rust_failure_kind{"none"};
+    std::string rust_failure{};
+    // Counts are per route request. They make a fallback report useful when a
+    // caller retries a request without parsing the human-readable message.
+    std::uint32_t rust_query_failures{0};
+    std::uint32_t rust_geometry_rejections{0};
+    std::uint32_t rust_other_failures{0};
+  };
+
+  struct RouteValidation
+  {
+    bool valid{false};
+    bool metric_limits{true};
+    bool support{true};
+    bool body{true};
+    bool sweep{true};
+    std::size_t segments{0};
+    std::size_t failed_segment{std::numeric_limits<std::size_t>::max()};
+    TraversabilityFailure failure{TraversabilityFailure::None};
   };
 
   OctoPlanner3D();
@@ -198,18 +226,19 @@ public:
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
   void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
-  void setOctomap(std::shared_ptr<octomap::OcTree> map,
-                 std::shared_ptr<const SurfaceIndex> surface = {},
-                 std::shared_ptr<SurfaceGraph> graph = {});
+  void setOctomap(std::shared_ptr<octomap::OcTree> map);
+  void setPreparedRustGraph(std::shared_ptr<octomap::OcTree> map,
+                            std::shared_ptr<mls::PreparedArtifactHandle> graph);
   void writePrepared(lingtu::maps::BinaryWriter& out) const;
 
   void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);
+  RouteValidation validateRoute(const std::vector<PointPose>& route) const;
 
   EndpointResolutionInfo endpointResolution() const noexcept;
   SearchInfo searchInfo() const noexcept;
-  std::shared_ptr<const SurfaceIndex> supportSurface() const { return surface_index_; }
+  std::shared_ptr<const PlannerArtifact> artifact() const { return artifact_; }
 
   struct PlanningSlice {
     bool available{false};
@@ -322,8 +351,7 @@ private:
     const octomap::point3d & from, const octomap::point3d & to,
     TraversabilityFailure *failure = nullptr) const;
 
-  void rebuildSurfaceIndex();
-  void rebuildSurfaceGraph();
+  void rebuildRustGraph();
   void rebuildDerivedLayers();
 
   bool isCellTraversable(
@@ -429,8 +457,7 @@ private:
   std::function<bool(const PointPose &, double)> start_exemption_;
 
   std::shared_ptr<octomap::OcTree> octree_;
-  std::shared_ptr<const SurfaceIndex> surface_index_;
-  std::shared_ptr<SurfaceGraph> surface_graph_;
+  std::shared_ptr<PlannerArtifact> artifact_;
   PlannerConfig graph_config_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;

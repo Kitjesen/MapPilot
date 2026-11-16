@@ -401,7 +401,10 @@ class VisualServoModule(Module, layer=4):
                     observation.reason or "visual_observation_context_changed",
                 )
             status = str(observation.status).lower()
-            if status not in {"positive", "negative"}:
+            # A degraded perception frame still carries a valid pose and the
+            # current detections; keep following from that snapshot while
+            # preserving hard failure/invalid-input stops below.
+            if status not in {"positive", "negative", "degraded"}:
                 self._intent_generation += 1
                 self._clear_identity_verification()
                 self._target_visible = False
@@ -924,12 +927,33 @@ class VisualServoModule(Module, layer=4):
                 self._last_perception_time > 0.0
                 and time.monotonic() - self._last_perception_time <= self._lost_timeout
             )
-            exact_objects = (
+            matching_id_objects = (
                 [obj for obj in scene_objects if obj.get("id") == self._target_id]
                 if detections_are_fresh
                 else []
             )
+            exact_objects = [
+                obj
+                for obj in matching_id_objects
+                if obj.get("label", "").lower() in self._PERSON_LABELS
+            ]
             if not exact_objects:
+                if matching_id_objects:
+                    self._cancel_tracking(reason="target_id_not_person")
+                    self._observation_reason = "target_id_not_person"
+                    self._publish_status(force=True)
+                    return
+                visible_people = [
+                    obj for obj in scene_objects
+                    if obj.get("label", "").lower() in ("person", "people", "human", "pedestrian")
+                ]
+                if detections_are_fresh and visible_people and all(
+                    not str(obj.get("id") or "").strip() for obj in visible_people
+                ):
+                    self._cancel_tracking(reason="target_id_unavailable")
+                    self._observation_reason = "target_id_unavailable"
+                    self._publish_status(force=True)
+                    return
                 self._target_visible = False
                 self._publish_status()
                 return
@@ -1402,15 +1426,20 @@ class VisualServoModule(Module, layer=4):
         if not keep_rate_limit:
             self._last_goal_time = 0.0
 
-    def _cancel_tracking(self, *, publish_status: bool = True) -> None:
+    def _cancel_tracking(
+        self,
+        *,
+        reason: str = "visual_servo_stop",
+        publish_status: bool = True,
+    ) -> None:
         """Return to idle and cancel only the navigation task owned by this module."""
         with self._state_lock:
             self._intent_generation += 1
             task = self._follow_tasks.get(self._follow_task_id)
             if task is not None and not task["terminal"]:
-                task.update(state="cancelling", reason=task["reason"] or "visual_servo_stop")
+                task.update(state="cancelling", reason=task["reason"] or reason)
             self._reset_tracking_state()
-            self._cancel_navigation_goal("visual_servo_stop")
+            self._cancel_navigation_goal(reason)
             self._finish_follow_cancel()
             logger.info("VisualServo: tracking cancelled, idle")
             if publish_status:

@@ -3677,7 +3677,9 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
     const std::string& requested_task_id,
     const std::string& requested_id,
     double max_speed_mps,
-    double acceptance_radius_m) {
+    double acceptance_radius_m,
+    const std::string& map_id,
+    std::int64_t map_content_epoch) {
   requireFinite(max_speed_mps, "goal speed limit");
   requireFinite(acceptance_radius_m, "goal acceptance radius");
   if (max_speed_mps < 0.0 || acceptance_radius_m < 0.0)
@@ -3697,6 +3699,8 @@ NavigationCommandReceipt Client::NavigationCommands::startTask(
   message.kind = static_cast<std::int32_t>(CommandKind::Goal);
   message.max_speed_mps = max_speed_mps;
   message.acceptance_radius_m = acceptance_radius_m;
+  message.map_id = const_cast<char*>(map_id.c_str());
+  message.map_content_epoch = map_content_epoch;
   message.goal.position.x = x;
   message.goal.position.y = y;
   message.goal.position.z = z;

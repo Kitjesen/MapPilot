@@ -7,6 +7,14 @@ use crate::nodes;
 use crate::{Edge, GraphConfig, Node, SurfaceCell, SurfaceGraph};
 
 pub(crate) fn build_graph(cells: &[SurfaceCell], config: GraphConfig) -> SurfaceGraph {
+    build_graph_with_forced_nodes(cells, config, &[])
+}
+
+pub(crate) fn build_graph_with_forced_nodes(
+    cells: &[SurfaceCell],
+    config: GraphConfig,
+    forced_nodes: &[SurfaceCell],
+) -> SurfaceGraph {
     let mut sorted = cells.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
@@ -15,10 +23,11 @@ pub(crate) fn build_graph(cells: &[SurfaceCell], config: GraphConfig) -> Surface
     }
 
     let step = config.max_link_cells.max(1);
-    let adjacency = adjacency::build_adjacency(&sorted, step);
+    let adjacency = adjacency::build_adjacency(&sorted, config);
     let columns = nodes::surface_columns(&sorted);
     let wall = nodes::wall_distances(&sorted, &adjacency, &columns, step);
-    let node_cells = nodes::place_nodes(&sorted, &adjacency, &wall, config);
+    let node_cells =
+        nodes::place_nodes_with_forced(&sorted, &adjacency, &wall, config, forced_nodes);
     let nodes: Vec<Node> = node_cells
         .iter()
         .enumerate()

@@ -15,8 +15,8 @@ typedef struct LtMlsCell {
 typedef struct LtMlsConfig {
   int32_t clearance_cells;
   uint32_t closing_passes;
-  uint64_t max_hole_cells;
-  float max_slope;
+  // Exact closing radius in map cells. Zero keeps the legacy integer radius.
+  float closing_radius_cells;
 } LtMlsConfig;
 
 typedef struct LtMlsGraphConfig {
@@ -26,6 +26,9 @@ typedef struct LtMlsGraphConfig {
   int32_t wall_buffer_cells;
   float wall_buffer_weight;
   float step_penalty_weight;
+  float max_slope;
+  int32_t max_step_cells;
+  int32_t horizontal_hop_cells;
 } LtMlsGraphConfig;
 
 typedef struct LtMlsGraphNode {
@@ -36,6 +39,9 @@ typedef struct LtMlsGraphNode {
 } LtMlsGraphNode;
 
 typedef struct LtMlsGraphEdge {
+  // Stable for the lifetime of the endpoint node IDs. The smaller endpoint
+  // occupies the high 32 bits, so an undirected edge has one identity.
+  uint64_t id;
   uint32_t from;
   uint32_t to;
   float cost;
@@ -99,6 +105,22 @@ typedef struct LtMlsUpdateReport {
   uint8_t graph_rebuilt_globally;
 } LtMlsUpdateReport;
 
+typedef struct LtMlsRouteCheckConfig {
+  int32_t body_radius_cells;
+  int32_t body_height_cells;
+  int32_t max_step_cells;
+  float max_slope;
+  uint8_t has_no_go;
+  LtMlsRegion no_go;
+} LtMlsRouteCheckConfig;
+
+typedef struct LtMlsRouteCheckResult {
+  uint8_t valid;
+  uint32_t failure_kind;
+  int32_t failed_segment;
+  LtMlsCell failed_cell;
+} LtMlsRouteCheckResult;
+
 typedef struct LtMlsBuffer {
   LtMlsCell* ptr;
   uint64_t len;
@@ -138,6 +160,30 @@ int32_t lt_mls_artifact_create(
     uint64_t revision,
     LtMlsArtifact** out);
 
+int32_t lt_mls_artifact_create_from_surface(
+    const LtMlsCell* observed,
+    uint64_t observed_len,
+    const LtMlsCell* inferred,
+    uint64_t inferred_len,
+    const LtMlsGraphConfig* graph_config,
+    uint64_t revision,
+    LtMlsArtifact** out);
+
+int32_t lt_mls_artifact_create_from_graph(
+    const LtMlsCell* observed,
+    uint64_t observed_len,
+    const LtMlsCell* inferred,
+    uint64_t inferred_len,
+    const LtMlsGraphNode* nodes,
+    uint64_t nodes_len,
+    const LtMlsGraphEdge* edges,
+    uint64_t edges_len,
+    const LtMlsCell* corridor,
+    uint64_t corridor_len,
+    const LtMlsGraphConfig* graph_config,
+    uint64_t revision,
+    LtMlsArtifact** out);
+
 void lt_mls_artifact_free(LtMlsArtifact* handle);
 
 int32_t lt_mls_artifact_summary(
@@ -149,6 +195,47 @@ int32_t lt_mls_artifact_surfaces(
     LtMlsBuffer* observed,
     LtMlsBuffer* inferred);
 
+int32_t lt_mls_artifact_below(
+    const LtMlsArtifact* handle,
+    int32_t x,
+    int32_t y,
+    int32_t z,
+    int32_t* result);
+
+int32_t lt_mls_artifact_inferred(
+    const LtMlsArtifact* handle,
+    int32_t x,
+    int32_t y,
+    int32_t min_z,
+    int32_t max_z);
+
+int32_t lt_mls_artifact_occupied(
+    const LtMlsArtifact* handle,
+    int32_t x,
+    int32_t y,
+    int32_t min_z,
+    int32_t max_z);
+
+int32_t lt_mls_artifact_occupied_below(
+    const LtMlsArtifact* handle,
+    int32_t x,
+    int32_t y,
+    int32_t z,
+    int32_t* result);
+
+int32_t lt_mls_artifact_region_occupied(
+    const LtMlsArtifact* handle,
+    LtMlsRegion region);
+
+int32_t lt_mls_artifact_height(
+    const LtMlsArtifact* handle,
+    int32_t x,
+    int32_t y,
+    double expected_z,
+    double tolerance,
+    double resolution,
+    double* result);
+
 int32_t lt_mls_artifact_graph(
     const LtMlsArtifact* handle,
     LtMlsGraphOutput* output);
@@ -159,6 +246,43 @@ int32_t lt_mls_artifact_query(
     LtMlsCell goal,
     LtMlsBuffer* route);
 
+int32_t lt_mls_artifact_query_limited(
+    const LtMlsArtifact* handle,
+    LtMlsCell start,
+    LtMlsCell goal,
+    int32_t max_snap_cells,
+    LtMlsBuffer* route);
+
+int32_t lt_mls_artifact_query_budgeted(
+    const LtMlsArtifact* handle,
+    LtMlsCell start,
+    LtMlsCell goal,
+    int32_t max_snap_cells,
+    int32_t max_iterations,
+    LtMlsBuffer* route);
+
+// Query again after a geometry gate rejects a corridor. Edges whose corridor
+// contains one of the blocked cells are skipped; the map artifact itself is
+// unchanged.
+int32_t lt_mls_artifact_query_avoiding(
+    const LtMlsArtifact* handle,
+    LtMlsCell start,
+    LtMlsCell goal,
+    int32_t max_snap_cells,
+    int32_t max_iterations,
+    const LtMlsCell* blocked_cells,
+    uint64_t blocked_cells_len,
+    LtMlsBuffer* route);
+
+int32_t lt_mls_artifact_check_route(
+    const LtMlsArtifact* handle,
+    const LtMlsCell* route,
+    uint64_t route_len,
+    const LtMlsRouteCheckConfig* config,
+    LtMlsRouteCheckResult* result);
+
+// Replaces occupied/free source evidence. Returns -2 for handles created from
+// extracted surfaces or a cached graph, leaving the handle and report unchanged.
 int32_t lt_mls_artifact_update(
     LtMlsArtifact* handle,
     LtMlsRegion region,

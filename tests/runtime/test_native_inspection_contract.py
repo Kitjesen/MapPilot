@@ -242,9 +242,6 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     transaction = Path(
         "src/nav/cpp/endpoint/nav/app/goal/runtime.cpp"
     ).read_text(encoding="utf-8")
-    runtime = Path(
-        "src/nav/cpp/endpoint/nav/app/goal/runtime.cpp"
-    ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
     for transition in (

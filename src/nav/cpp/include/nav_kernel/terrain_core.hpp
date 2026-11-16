@@ -23,7 +23,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 
 #if defined(_OPENMP)
 #include <omp.h>

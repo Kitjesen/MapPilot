@@ -228,6 +228,32 @@ SurfaceGraph::SurfaceGraph(std::vector<PointPose> surfaces, double resolution,
   }
 }
 
+std::size_t SurfaceGraph::componentCount() const {
+  if (nodes_.empty()) return 0;
+  std::vector<bool> visited(nodes_.size(), false);
+  std::size_t components = 0;
+  std::vector<int> stack;
+  for (std::size_t seed = 0; seed < nodes_.size(); ++seed) {
+    if (visited[seed]) continue;
+    ++components;
+    stack.push_back(static_cast<int>(seed));
+    visited[seed] = true;
+    while (!stack.empty()) {
+      const int node = stack.back();
+      stack.pop_back();
+      for (const int edge_id : node_edges_[node]) {
+        const auto& edge = edges_[edge_id];
+        const int next = edge.a == node ? edge.b : edge.a;
+        if (!visited[next]) {
+          visited[next] = true;
+          stack.push_back(next);
+        }
+      }
+    }
+  }
+  return components;
+}
+
 std::vector<int> SurfaceGraph::toNode(int cell) const {
   std::vector<int> path;
   for(int p=cell;p>=0;p=predecessor_[p])path.push_back(p);
@@ -335,10 +361,34 @@ std::optional<SurfaceGraph::Attachment> SurfaceGraph::localAttachment(
   return {};
 }
 
+double SurfaceGraph::sameFloorPenalty(
+    double z, double start_z, bool same_floor_request) const {
+  if (!same_floor_request) return 0.0;
+  return std::max(0.0, config_.floor_change_penalty) * 0.5 * std::abs(z - start_z);
+}
+
+double SurfaceGraph::sameFloorPenalty(
+    const std::vector<PointPose> &path, double start_z, bool same_floor_request) const {
+  double result = 0.0;
+  for (const auto &point : path)
+    result += sameFloorPenalty(point.z, start_z, same_floor_request);
+  return result;
+}
+
+double SurfaceGraph::sameFloorPenalty(
+    const std::vector<int> &cells, double start_z, bool same_floor_request) const {
+  double result = 0.0;
+  for (const int cell : cells)
+    result += sameFloorPenalty(this->cells_[cell].z, start_z, same_floor_request);
+  return result;
+}
+
 std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose &goal,
     const EdgeCheck &check,const CancelCheck &cancelled,const EdgeCheck &prepared_edge_check) const {
   const auto &edge_check=prepared_edge_check ? prepared_edge_check : check;
   if(nodes_.empty() || (cancelled&&cancelled()))return {};
+  const bool same_floor_request = config_.same_floor_preference &&
+      std::abs(goal.z - start.z) <= config_.same_floor_z_tolerance + 1e-9;
   const auto starts=attachments(start,false,check,cancelled);
   const auto goals=attachments(goal,true,check,cancelled);
   if(starts.empty()||goals.empty())return {};
@@ -355,8 +405,11 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
     if(!checkRoute(path,check,cancelled))continue;
     const int node=starts[i].node;
     auto &state=states[node];
-    if (starts[i].cost>=state.cost) continue;
-    state.cost=starts[i].cost;state.segment=std::move(path);
+    const double candidate_cost=starts[i].cost + sameFloorPenalty(
+        path, start.z, same_floor_request);
+    if (candidate_cost>=state.cost) continue;
+    state.cost=candidate_cost;
+    state.segment=std::move(path);
     queue.push({state.cost+estimate(node),node});
   }
   int iterations=0,finish=-1;
@@ -369,22 +422,26 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
     if(f!=cost+estimate(label))continue;
     if(f>=best || ++iterations>config_.max_iterations)break;
     for(const auto &attachment:goals) {
-      if(attachment.node!=label || cost+attachment.cost>=best)continue;
+      if(attachment.node!=label)continue;
       auto tail=attachment.path;std::reverse(tail.begin(),tail.end());
       if(!checkRoute(tail,check,cancelled))continue;
-      finish=label;best=cost+attachment.cost;terminal=std::move(tail);
+      const double candidate_cost=cost+attachment.cost+sameFloorPenalty(
+          tail, start.z, same_floor_request);
+      if(candidate_cost>=best)continue;
+      finish=label;best=candidate_cost;terminal=std::move(tail);
     }
     for(int id:node_edges_[label]) {
       const auto &edge=edges_[id];const bool forward=edge.a==label;
       const int next_label=forward?edge.b:edge.a;
-      if(cost+edge.cost>=states[next_label].cost)continue;
-
       auto chain=edge.cells;if(!forward)std::reverse(chain.begin(),chain.end());
+      const double candidate_cost=cost+edge.cost+sameFloorPenalty(
+          chain, start.z, same_floor_request);
+      if(candidate_cost>=states[next_label].cost)continue;
       std::vector<PointPose> segment;
       for(int cell:chain)segment.push_back(cells_[cell]);
       if (!checkRoute(segment,edge_check,cancelled)) continue;
       auto &next=states[next_label];
-      next.cost=cost+edge.cost;
+      next.cost=candidate_cost;
       next.parent=label;
       next.segment=std::move(segment);
       queue.push({next.cost+estimate(next_label),next_label});
@@ -405,32 +462,35 @@ std::vector<PointPose> SurfaceGraph::plan(const PointPose &start,const PointPose
     for(const auto &point:terminal)
       if(path.empty() || distance(path.back(),point)>1e-7)path.push_back(point);
     if(!path.empty())path.back().yaw=goal.yaw ? goal.yaw : terminal.back().yaw;
-    auto refined=searchCells(starts,goals,allowed,check,cancelled,iterations,best,edge_check);
+    auto refined=searchCells(starts,goals,allowed,check,cancelled,iterations,best,edge_check,
+        start.z,same_floor_request);
     const auto length=[](const auto &points) {
       double total=0;
       for(std::size_t i=1;i<points.size();++i)total+=distance(points[i-1],points[i]);
       return total;
     };
-    if(!refined.empty() && length(refined)<=length(path)+1e-7)return refined;
+    if(!refined.empty() &&
+       length(refined)+sameFloorPenalty(refined,start.z,same_floor_request) <=
+           length(path)+sameFloorPenalty(path,start.z,same_floor_request)+1e-7)
+      return refined;
     return cancelled&&cancelled() ? std::vector<PointPose>{} : path;
   }
   // A blocked corridor can still have a detour through its support cells.
   iterations=0;
-  return searchCells(starts,goals,{},check,cancelled,iterations,infinity,edge_check);
+  return searchCells(starts,goals,{},check,cancelled,iterations,infinity,edge_check,
+      start.z,same_floor_request);
 }
 
 std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &starts,
     const std::vector<Attachment> &goals,const std::vector<bool> &allowed,
     const EdgeCheck &check,const CancelCheck &cancelled,int &iterations,double upper,
-    const EdgeCheck &prepared_edge_check) const {
+    const EdgeCheck &prepared_edge_check,double start_z,bool same_floor_request) const {
   struct State {
-    double cost{infinity};
-    int parent{-1};
-    int origin{-1};
+    double cost;
+    int parent;
+    int origin;
   };
-  // Cells already have stable indices. A dense table avoids a hash allocation
-  // for every local attachment query.
-  std::vector<State> states(cells_.size());
+  std::unordered_map<int,State> states;
   std::priority_queue<QueueNode,std::vector<QueueNode>,QueueNodeCompare> queue;
   const auto estimate=[&](int cell) {
     double result=infinity;
@@ -444,16 +504,17 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
     double cost=0;
     for(std::size_t j=1;j<prefix.size();++j)cost+=distance(prefix[j-1],prefix[j]);
     const int cell=attachment.cell;
-    if (states[cell].cost<=cost) continue;
-    states[cell]=State{cost,cell,i};
+    cost += sameFloorPenalty(prefix, start_z, same_floor_request);
+    const auto found=states.find(cell);
+    if (found!=states.end() && found->second.cost<=cost) continue;
+    states.insert_or_assign(cell,State{cost,cell,i});
     queue.push({{cell,0,0},cost+estimate(cell),cost});
   }
   while(!queue.empty()) {
     if(cancelled&&cancelled())return {};
     const auto current=queue.top();queue.pop();
     const int cell=current.idx.x;
-    const auto &state=states[cell];
-    if (state.parent < 0) continue;
+    const auto state=states.at(cell);
     if(current.g!=state.cost)continue;
     if(current.f>=upper)break;
     if(++iterations>config_.max_iterations)break;
@@ -463,6 +524,9 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
       std::vector<PointPose> tail(goal.path.begin(),goal.path.begin()+goal.entry+1);
       std::reverse(tail.begin(),tail.end());
       if(!checkRoute(tail,check,cancelled))continue;
+      const double goal_cost=state.cost+goal.cost+sameFloorPenalty(
+          tail,start_z,same_floor_request);
+      if (goal_cost >= upper) continue;
       std::vector<PointPose> result;
       for(auto previous=cell;;previous=states.at(previous).parent) {
         result.push_back(cells_[previous]);
@@ -479,12 +543,14 @@ std::vector<PointPose> SurfaceGraph::searchCells(const std::vector<Attachment> &
       if(!allowed.empty() && !allowed[owner_[edge.to]])continue;
       const auto &to=cells_[edge.to];
       const int next=edge.to;
-      const double cost=state.cost+edge.cost;
-      if(states[next].cost<=cost)continue;
+      const double cost=state.cost+edge.cost+sameFloorPenalty(
+          to.z,start_z,same_floor_request);
+      const auto found=states.find(next);
+      if(found!=states.end() && found->second.cost<=cost)continue;
       const double estimate_cost=cost+estimate(edge.to);
       if(estimate_cost>=upper)continue;
       if(!prepared_edge_check(from,to))continue;
-      states[next]=State{cost,cell,state.origin};
+      states.insert_or_assign(next,State{cost,cell,state.origin});
       queue.push({{next,0,0},estimate_cost,cost});
     }
   }

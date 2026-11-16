@@ -41,8 +41,6 @@ struct GlobalPlanTemporaryOverlay {
 
 struct GlobalPlannerOptions {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
-  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
-  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.25};
   double body_clearance_below_m{0.0};
@@ -104,6 +102,14 @@ struct GlobalPlanRequest {
 struct GlobalPlanResult {
   bool ok{false};
   bool reached_goal{false};
+  bool used_surface_graph{false};
+  bool used_rust_graph{false};
+  bool rust_fallback{false};
+  std::string rust_failure_kind{"none"};
+  std::string rust_failure{};
+  std::uint32_t rust_query_failures{0};
+  std::uint32_t rust_geometry_rejections{0};
+  std::uint32_t rust_other_failures{0};
   bool cancelled{false};
   std::string failure_reason{};
   double goal_error_m{-1.0};
