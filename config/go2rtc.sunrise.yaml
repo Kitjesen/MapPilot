@@ -1,0 +1,17 @@
+api:
+  listen: "127.0.0.1:1984"
+  origin: "*"
+
+webrtc:
+  listen: ":8555/tcp"
+  candidates:
+    - "192.168.66.64:8555"
+  filters:
+    networks: [tcp4]
+
+log:
+  level: info
+
+streams:
+  cam:
+    - "exec:/opt/lingtu/current/bin/cam_stream.py"

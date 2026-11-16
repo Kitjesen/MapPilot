@@ -1,0 +1,14 @@
+[Unit]
+Description=go2rtc low-latency camera gateway (LingTu)
+After=network.target lt-camera.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/go2rtc -config /etc/go2rtc/go2rtc.yaml
+Restart=always
+RestartSec=2
+SupplementaryGroups=video render
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
