@@ -41,8 +41,6 @@ struct GlobalPlanTemporaryOverlay {
 
 struct GlobalPlannerOptions {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
-  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
-  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.25};
   double body_offset_m{0.0};

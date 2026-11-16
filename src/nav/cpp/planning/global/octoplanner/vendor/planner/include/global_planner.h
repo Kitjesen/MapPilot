@@ -97,8 +97,6 @@ struct ExternalBlockedRegion
 struct PlannerConfig
 {
   double surface_closing_radius_m{::lingtu::settings::global::native_nav::global::surface_closing_radius_m};
-  double surface_max_hole_area_m2{::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2};
-  double surface_max_slope{::lingtu::settings::global::native_nav::global::surface_max_slope};
   double search_resolution_m{::lingtu::settings::global::native_nav::global::search_resolution_m};
   double robot_radius{0.20};
   double body_offset_m{0.0};
@@ -129,8 +127,8 @@ struct PlannerConfig
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
 
-  std::array<double,24> preparation() const {
-    return {surface_closing_radius_m,surface_max_hole_area_m2,surface_max_slope,
+  std::array<double,22> preparation() const {
+    return {surface_closing_radius_m,
       search_resolution_m,robot_radius,body_offset_m,body_clearance_below_m,body_clearance_above_m,
       double(ground_support),double(direct_support_only),double(support_depth_cells),
       support_height_m,support_height_tolerance_m,double(support_patch_radius_cells),
@@ -141,7 +139,6 @@ struct PlannerConfig
   }
 };
 
-class SurfaceGraph;
 namespace mls { class PreparedArtifactHandle; }
 
 // Map-derived state used by every route query.  The surface and its sparse
@@ -149,8 +146,6 @@ namespace mls { class PreparedArtifactHandle; }
 // map or preparation geometry changes.
 struct PlannerArtifact
 {
-  // legacy: retained for old prepared artifacts and Rust query fallback.
-  std::shared_ptr<SurfaceGraph> graph;
   // Rust owns the executable global candidate graph.
   std::shared_ptr<mls::PreparedArtifactHandle> rust_graph;
 };
@@ -158,6 +153,7 @@ struct PlannerArtifact
 class OctoPlanner3D
 {
 public:
+  struct Cancelled {};
   enum class TraversabilityFailure
   {
     None,
@@ -231,10 +227,8 @@ public:
   void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
   void setNoGoRegions(std::shared_ptr<const std::vector<lingtu::maps::NoGoRegion>> regions);
 
-  void setOctomap(std::shared_ptr<octomap::OcTree> map,
-                 std::shared_ptr<SurfaceGraph> graph = {},
-                 bool build_legacy_graph = false);
   bool updateOctomap(std::shared_ptr<octomap::OcTree> map);
+  void setOctomap(std::shared_ptr<octomap::OcTree> map);
   void setPreparedRustGraph(std::shared_ptr<octomap::OcTree> map,
                             std::shared_ptr<mls::PreparedArtifactHandle> graph);
   void writePrepared(lingtu::maps::BinaryWriter& out) const;
@@ -370,7 +364,6 @@ private:
     TraversabilityFailure *failure = nullptr) const;
 
   void rebuildRustGraph(bool preserve_graph = false);
-  void rebuildSurfaceGraph();
   void rebuildDerivedLayers();
 
   bool isCellTraversable(

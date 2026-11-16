@@ -44,6 +44,8 @@ def _test_source_ts(mod: VisualServoModule, logical_ts: float) -> float:
 def _deliver_detections(
     mod: VisualServoModule,
     detections: list[Detection3D],
+    *,
+    status: str | None = None,
 ) -> None:
     sequence = int(getattr(mod, "_test_observation_sequence", 0)) + 1
     mod._test_observation_sequence = sequence
@@ -80,7 +82,7 @@ def _deliver_detections(
         source_generation=1,
         map_id="test-map",
         content_epoch=1,
-        status="positive" if detections else "negative",
+        status=status or ("positive" if detections else "negative"),
         image=image,
         robot_pose=PoseStamped(
             pose=pose.pose,
@@ -584,6 +586,29 @@ def test_follow_locks_the_only_visible_person_without_loading_a_semantic_model()
     assert len(goals) == 1
     assert _goal(goals[0]).x == 2.5
     assert _goal(goals[0]).z == 0.2
+
+
+def test_follow_uses_degraded_frame_when_pose_and_detections_are_present():
+    mod = VisualServoModule()
+    mod.setup()
+    goals = []
+    mod.goal_pose._add_callback(goals.append)
+    person = Detection3D(
+        id="person-1",
+        label="person",
+        confidence=0.9,
+        position=Vector3(4.0, 0.0, 1.2),
+        bbox_2d=[0.0, 0.0, 30.0, 30.0],
+        ts=20.0,
+    )
+
+    _deliver_detections(mod, [person])
+    assert mod.follow_person("the visible person")["accepted"] is True
+    person.ts = 20.1
+    _deliver_detections(mod, [person], status="degraded")
+
+    assert len(goals) == 1
+    assert mod.get_servo_status()["target_visible"] is True
     assert mod.get_servo_status()["select"] == "single"
 
 
@@ -1124,6 +1149,62 @@ def test_follow_id_wrong_current_track_cancels_goal_without_changing_identity():
     assert _cancel_reasons(cancels) == ["visual_servo_target_lost"]
     assert mod.get_servo_status()["person"]["id"] == "person-7"
     assert mod.get_servo_status()["target_id"] == "person-7"
+
+
+def test_follow_id_fails_when_backend_has_no_stable_track_id():
+    mod = VisualServoModule()
+    mod.setup()
+    mod._on_servo_target("follow_id:person-7")
+
+    _deliver_detections(
+        mod,
+        [
+            Detection3D(
+                id="",
+                label="person",
+                confidence=0.9,
+                position=Vector3(3.0, 0.0, 1.2),
+                bbox_2d=[0.0, 0.0, 30.0, 30.0],
+                ts=20.0,
+            )
+        ],
+    )
+
+    task = mod.get_follow_task(
+        mod._follow_task_id,
+        mod._product_session_id,
+    )
+    assert task["terminal"] is True
+    assert task["state"] == "cancelled"
+    assert task["reason"] == "target_id_unavailable"
+
+
+def test_follow_id_ignores_non_person_with_matching_track_id():
+    mod = VisualServoModule()
+    mod.setup()
+    goals = []
+    mod.goal_pose._add_callback(goals.append)
+    mod._on_servo_target("follow_id:person-7")
+
+    _deliver_detections(
+        mod,
+        [
+            Detection3D(
+                id="person-7",
+                label="chair",
+                confidence=0.99,
+                position=Vector3(3.0, 0.0, 1.2),
+                bbox_2d=[0.0, 0.0, 30.0, 30.0],
+                ts=20.0,
+            )
+        ],
+    )
+
+    assert goals == []
+    task = mod.get_follow_task(mod._follow_task_id, mod._product_session_id)
+    assert task["terminal"] is True
+    assert task["state"] == "cancelled"
+    assert task["reason"] == "target_id_not_person"
 
 
 def test_follow_id_reacquires_the_same_person_after_the_tracker_changes_id():

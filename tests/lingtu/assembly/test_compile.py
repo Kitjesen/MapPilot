@@ -116,8 +116,8 @@ def test_real_support_height_reaches_run_plan(product, robot, height, tolerance)
     assert float(environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"]) == height
     assert float(environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"]) == tolerance
     assert float(environment["LINGTU_NAV_OCTO_SURFACE_CLOSING_RADIUS_M"]) == .2
-    assert float(environment["LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2"]) == .16
-    assert float(environment["LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE"]) == .7
+    assert "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2" not in environment
+    assert "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE" not in environment
 
 
 def test_compile_resolves_env_implementation_once(monkeypatch) -> None:

@@ -56,7 +56,6 @@ bool OctoPlanner3D::updateOctomap(std::shared_ptr<octomap::OcTree> map) {
         static_cast<unsigned long long>(update.rebuilt_edges));
   }
   octree_ = std::move(map);
-  artifact_->graph.reset();
   clearMapQueryCaches();
   rebuildExternalPreblockedCells();
   rebuildDerivedLayers();

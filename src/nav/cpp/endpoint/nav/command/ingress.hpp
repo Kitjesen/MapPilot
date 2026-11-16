@@ -22,6 +22,8 @@ struct CommandPayload {
   std::string profile_name;
   std::string external_session_id{};
   std::string local_planner;
+  std::string map_id{};
+  std::int64_t map_content_epoch{0};
 
   [[nodiscard]] std::string canonical() const;
 };

@@ -103,16 +103,38 @@ int main() try {
     cleared_floor.updateInnerOccupancy();
     require(cleared_floor.write(map.string()),"cannot write known-free floor edit");
     ++identity.content_epoch;
-    require(session.run(map,identity,hole).ok && session.prepareCount()==prepares,
-            "known-free edit changed the current surface-closing rules");
+    const auto matchesFresh = [&](const char* cache, const r::PlanResult& updated) {
+      r::PlannerSession fresh(directory/cache);
+      const auto rebuilt=fresh.run(map,identity,hole);
+      require(fresh.cacheLoadCount()==0,"full-rebuild comparison loaded a cache");
+      return updated.ok==rebuilt.ok && updated.reached_goal==rebuilt.reached_goal &&
+          (updated.ok ? same(updated,rebuilt) : updated.failure_reason==rebuilt.failure_reason);
+    };
+    const auto free_result=session.run(map,identity,hole);
+    require(!free_result.ok && session.prepareCount()==prepares,
+            "known-free floor was filled with inferred support");
+    require(matchesFresh("fresh-free",free_result),"known-free update disagreed with full rebuild");
     {
       r::PlannerSession restored;
-      require(restored.run(map,identity,hole).ok && restored.cacheLoadCount()==1,
-              "cache restore changed support after a known-free edit");
+      require(!restored.run(map,identity,hole).ok && restored.cacheLoadCount()==1,
+              "cache restore inferred support over known-free evidence");
       require(tree.write(map.string()),"cannot restore unknown floor cell");
       ++identity.content_epoch;
-      require(restored.run(map,identity,hole).ok && restored.prepareCount()==1,
-              "known-free to unknown edit changed inferred support");
+      const auto unknown_result=restored.run(map,identity,hole);
+      require(unknown_result.ok && restored.prepareCount()==1,
+              "known-free to unknown edit did not restore bounded inferred support");
+      require(matchesFresh("fresh-unknown",unknown_result),"unknown update disagreed with full rebuild");
+      auto observed_floor=tree;
+      observed_floor.updateNode(octomap::point3d(-.375,-.225,-.025),true,true);
+      observed_floor.updateInnerOccupancy();
+      require(observed_floor.write(map.string()),"cannot write observed floor edit");
+      ++identity.content_epoch;
+      const auto observed_result=restored.run(map,identity,hole);
+      require(observed_result.ok && restored.prepareCount()==1,
+              "observed floor update lost support or rebuilt the planner");
+      require(matchesFresh("fresh-observed",observed_result),"observed update disagreed with full rebuild");
+      require(tree.write(map.string()),"cannot restore original map");
+      ++identity.content_epoch;
     }
     require(session.run(map,identity,request).ok && session.prepareCount()==prepares,
             "unknown floor restoration rebuilt the live planner");
@@ -133,7 +155,7 @@ int main() try {
   }
   for (const auto& entry : std::filesystem::directory_iterator(directory/".nav")) {
     auto payload = bytes(entry.path());
-    const std::string format = "lingtu.navigation.prepared.8";
+    const std::string format = "lingtu.navigation.prepared.9";
     const auto offset = payload.find(format);
     if (offset == std::string::npos) continue;
     payload[offset + format.size() - 1] = '6';

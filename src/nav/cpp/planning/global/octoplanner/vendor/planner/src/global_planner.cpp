@@ -1,5 +1,4 @@
 #include "global_planner.h"
-#include "surface_graph.hpp"
 #include "route_smoothing.hpp"
 #include "mls_backend.hpp"
 #include "lingtu/maps/io/binary.hpp"
@@ -134,9 +133,6 @@ namespace global_planner
         terminal_goal_z_tolerance_m_=config.terminal_goal_z_tolerance_m;
         same_floor_preference_=config.same_floor_preference;
         same_floor_z_tolerance_=config.same_floor_z_tolerance;
-        if (artifact_ && artifact_->graph) artifact_->graph->setQuery(
-            max_iterations_, snap_search_radius_cells_, same_floor_preference_,
-            same_floor_z_tolerance_);
     }
 
     void OctoPlanner3D::setExternalPreblockedRegions(
@@ -174,9 +170,7 @@ namespace global_planner
         return false;
     }
 
-    void OctoPlanner3D::setOctomap(std::shared_ptr<octomap::OcTree> map,
-        std::shared_ptr<SurfaceGraph> graph,
-        bool build_legacy_graph)
+    void OctoPlanner3D::setOctomap(std::shared_ptr<octomap::OcTree> map)
     {
         if (!map)
         {
@@ -190,13 +184,7 @@ namespace global_planner
         artifact_ = std::make_shared<PlannerArtifact>();
         rebuildQueryOffsets();
         clearMapQueryCaches();
-        if (graph) artifact_->graph = std::move(graph);
-        if (build_legacy_graph) {
-            if (artifact_->graph) rebuildRustGraph();
-            else rebuildSurfaceGraph();
-        } else {
-            rebuildRustGraph();
-        }
+        rebuildRustGraph();
         rebuildExternalPreblockedCells();
         rebuildDerivedLayers();
     }
@@ -222,9 +210,8 @@ namespace global_planner
         if (!artifact_ || !artifact_->rust_graph || !octree_) {
             throw std::runtime_error("planner artifact is not prepared");
         }
-        out.value<std::uint8_t>(1);
-        auto surfaces = artifact_->rust_graph->surfaces();
-        auto graph = artifact_->rust_graph->graph();
+        const auto surfaces = artifact_->rust_graph->surfaces();
+        const auto graph = artifact_->rust_graph->graph();
         mls::Artifact cached;
         cached.resolution_m = octree_->getResolution();
         cached.revision = artifact_->rust_graph->summary().revision;
@@ -261,7 +248,16 @@ namespace global_planner
             return;
         }
         planning_in_progress_ = true;
-        const bool ok = startPlan();
+        bool ok = false;
+        try {
+            ok = startPlan();
+        } catch (const Cancelled &) {
+            planner_results_.clear();
+            search_info_.outcome = SearchInfo::Outcome::Cancelled;
+        } catch (...) {
+            planning_in_progress_ = false;
+            throw;
+        }
         planning_in_progress_ = false;
         if (!ok)
         {
@@ -544,6 +540,7 @@ namespace global_planner
                 return length*(1+obstacle_clearance_weight_*total/count);
             };
         }
+        if (cancel_check_ && cancel_check_()) throw Cancelled{};
         if (artifact_ && artifact_->rust_graph) {
             const auto graph_started = std::chrono::steady_clock::now();
             const char *rust_failure_kind = "query";
@@ -571,6 +568,9 @@ namespace global_planner
                 metric.start={ {start_point_.x,start_point_.y,start_point_.z},
                     start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
                 metric.start_exemption=static_cast<bool>(start_exemption_);
+                metric.goal_tolerance=terminal_goal_tolerance_m_;
+                metric.goal_xy_tolerance=terminal_goal_xy_tolerance_m_;
+                metric.goal_z_tolerance=terminal_goal_z_tolerance_m_;
                 if(no_go_regions_)for(const auto &region:*no_go_regions_)
                     geometry.regions.push_back({{region.min[0],region.min[1],region.min[2]},
                         {region.max[0],region.max[1],region.max[2]}});
@@ -581,13 +581,7 @@ namespace global_planner
                     metric.actual_start=a.x==start_point_.x && a.y==start_point_.y && a.z==start_point_.z;
                     return artifact_->rust_graph->checkMetricRoute({a,b},geometry).valid;
                 };
-                const auto world = [&](mls::SurfaceCell cell) {
-                    return PointPose{(cell.x + .5) * resolution,
-                                     (cell.y + .5) * resolution,
-                                     (cell.z + 1.0) * resolution + support_height_m_,
-                                     std::nullopt};
-                };
-                const auto query = artifact_->rust_graph->metricQuery(
+                auto query = artifact_->rust_graph->metricQuery(
                     start_point_,goal_point_,snap_search_radius_cells_,max_iterations_,geometry);
                 using QueryStatus = mls::PreparedArtifactHandle::QueryStatus;
                 if (query.status == QueryStatus::Cancelled) {
@@ -599,30 +593,26 @@ namespace global_planner
                     return false;
                 }
                 if (query.status == QueryStatus::Exhausted) {
-                    throw std::runtime_error("Rust surface route exhausted");
-                }
-                const auto &cells = query.cells;
-                if (cells.empty()) throw std::runtime_error("Rust surface route has no stance cells");
-                std::vector<PointPose> checked{start_point_};
-                checked.reserve(cells.size() + 2);
-                for (const auto &cell : cells) {
-                    const auto point = world(cell);
-                    if (checked.back().x != point.x || checked.back().y != point.y ||
-                        checked.back().z != point.z) checked.push_back(point);
-                }
-                if (checked.back().x != goal_point_.x || checked.back().y != goal_point_.y ||
-                    checked.back().z != goal_point_.z) checked.push_back(goal_point_);
-                checked.front().yaw = start_point_.yaw;
-                checked.back().yaw = goal_point_.yaw;
-                rust_failure_kind = "geometry";
-                const auto admitted=artifact_->rust_graph->checkMetricRoute(checked,geometry);
-                if(admitted.failure_kind==mls::RustRouteCheckResult::kCancelled) {
-                    search_info_.outcome=SearchInfo::Outcome::Cancelled;
+                    search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                    search_info_.rust_failure_kind = "query";
+                    search_info_.rust_failure = "Rust surface route exhausted";
+                    ++search_info_.rust_query_failures;
+                    // Keep the public blocked-start diagnosis without launching another planner.
+                    metric.actual_start = 0;
+                    metric.ground_support = 0;
+                    const auto origin = artifact_->rust_graph->checkMetricRoute(
+                        {start_point_, start_point_}, geometry);
+                    if (origin.failure_kind == LT_MLS_ROUTE_OCCUPIED ||
+                        origin.failure_kind == LT_MLS_ROUTE_NO_GO) {
+                        endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                        endpoint_resolution_.start_failure = origin.failure_kind == LT_MLS_ROUTE_OCCUPIED
+                            ? TraversabilityFailure::OccupiedBody : TraversabilityFailure::ExternalPreblockedBody;
+                    }
                     return false;
                 }
-                if (!admitted.valid) {
-                    throw std::runtime_error("Rust surface route failed final geometry check");
-                }
+                auto checked = std::move(query.poses);
+                if (checked.size() < 2) throw std::runtime_error("Rust surface route has no poses");
+                rust_failure_kind = "geometry";
                 auto smoothed = smoothRoute(checked, valid,
                     [&](const PointPose &point) -> std::optional<double> {
                         const auto ground = artifact_->rust_graph->height(
@@ -648,13 +638,12 @@ namespace global_planner
                 search_info_.outcome = SearchInfo::Outcome::Found;
                 search_info_.used_surface_graph = true;
                 search_info_.used_rust_graph = true;
-                printf("OctoPlanner3D Rust surface route: cells=%zu waypoints=%zu graph_ms=%.3f\n",
-                       cells.size(), planner_results_.size(),
+                printf("OctoPlanner3D Rust surface route: waypoints=%zu graph_ms=%.3f\n",
+                       planner_results_.size(),
                        std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - graph_started).count());
                 return true;
             } catch (const std::exception &error) {
-                search_info_.rust_fallback = true;
                 search_info_.rust_failure_kind = rust_failure_kind;
                 search_info_.rust_failure = error.what();
                 if (std::strcmp(rust_failure_kind, "query") == 0) {
@@ -664,53 +653,12 @@ namespace global_planner
                 } else {
                     ++search_info_.rust_other_failures;
                 }
-                printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
+                printf("OctoPlanner3D Rust surface query failed: %s\n",
                        error.what());
+                return false;
             }
         }
         if (!resolveGoal()) return false;
-        if (artifact_ && artifact_->graph && !artifact_->rust_graph) {
-            const auto valid = [&](const PointPose &a,const PointPose &b) {
-                return routeConnectionFree(a,b);
-            };
-            const bool static_only=external_preblocked_cells_.empty() &&
-                (!no_go_regions_ || no_go_regions_->empty());
-            const auto prepared_valid=[&](const PointPose &a,const PointPose &b) {
-                return static_only || routeConnectionFree(a,b);
-            };
-            const auto graph_started=std::chrono::steady_clock::now();
-            auto candidate=artifact_->graph->plan(start_point_,goal_point_,valid,cancel_check_,prepared_valid);
-            const auto graph_finished=std::chrono::steady_clock::now();
-            if (!candidate.empty()) {
-                const auto height = [&](const PointPose &point) -> std::optional<double> {
-                    if (!artifact_->rust_graph) return std::nullopt;
-                    const auto ground = artifact_->rust_graph->height(
-                        point.x, point.y, point.z - support_height_m_,
-                        support_height_tolerance_m_, octree_->getResolution());
-                    return ground ? std::optional<double>(*ground+support_height_m_) : std::nullopt;
-                };
-                candidate=smoothRoute(std::move(candidate),valid,height,cancel_check_,clearance_cost);
-                if (cancel_check_ && cancel_check_()) {
-                    search_info_.outcome=SearchInfo::Outcome::Cancelled;
-                    return false;
-                }
-                if (!candidate.empty()) {
-                    planner_results_=std::move(candidate);
-                    search_info_.outcome=SearchInfo::Outcome::Found;
-                    search_info_.used_surface_graph=true;
-                    printf("OctoPlanner3D surface route: nodes=%zu edges=%zu waypoints=%zu graph_ms=%.3f smooth_ms=%.3f\n",
-                        artifact_->graph->nodeCount(),artifact_->graph->edgeCount(),planner_results_.size(),
-                        std::chrono::duration<double,std::milli>(graph_finished-graph_started).count(),
-                        std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-graph_finished).count());
-                    return true;
-                }
-            }
-            if (cancel_check_ && cancel_check_()) {
-                search_info_.outcome=SearchInfo::Outcome::Cancelled;
-                return false;
-            }
-            printf("OctoPlanner3D surface connection unavailable; continuing XYZ search\n");
-        }
         if (searchGrid(max_iterations_)) return true;
         const double map_resolution = octree_->getResolution();
         if (search_info_.outcome != SearchInfo::Outcome::Exhausted ||
@@ -1469,12 +1417,6 @@ namespace global_planner
                     idx.x, idx.y, idx.z - maximum_depth, idx.z - minimum_depth)) {
                 return true;
             }
-            const auto floor = artifact_->rust_graph->below(idx.x, idx.y, idx.z);
-            if (!floor || *floor < idx.z - maximum_depth || *floor > idx.z - minimum_depth) {
-                return false;
-            }
-            return (*floor + 1 != idx.z || !isOccupiedCell(idx)) &&
-                   isSupportPatch({idx.x, idx.y, *floor});
         }
         for (int depth = minimum_depth; depth <= maximum_depth; ++depth) {
             const GridIndex floor{idx.x, idx.y, idx.z - depth};
@@ -1796,9 +1738,9 @@ namespace global_planner
             return;
         }
         const double r = octree_->getResolution();
-        std::vector<mls::SurfaceCell> occupied;
-        std::vector<mls::SurfaceCell> known_free;
+        std::vector<mls::SurfaceCell> occupied, known_free;
         for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+            if (cancel_check_ && cancel_check_()) throw Cancelled{};
             const int span = std::max(1, static_cast<int>(std::lround(it.getSize() / r)));
             const int x0 = static_cast<int>(std::lround((it.getX() - .5 * it.getSize()) / r));
             const int y0 = static_cast<int>(std::lround((it.getY() - .5 * it.getSize()) / r));
@@ -1815,9 +1757,6 @@ namespace global_planner
         const LtMlsConfig rust_surface_config{
             clearance,
             static_cast<std::uint32_t>(std::max(0.0, std::ceil(closing / r))),
-            static_cast<std::uint64_t>(std::max(0.0,
-                graph_config_.surface_max_hole_area_m2 / (r * r))),
-            static_cast<float>(graph_config_.surface_max_slope),
             static_cast<float>(closing / r)};
         if (preserve_graph) {
             artifact_->rust_graph->setGeometry(occupied, known_free, rust_surface_config);
@@ -1840,40 +1779,6 @@ namespace global_planner
         artifact_->rust_graph = std::make_shared<mls::PreparedArtifactHandle>(
             mls::PreparedArtifactHandle::create(
                 occupied, known_free, rust_surface_config, rust_config, 1));
-    }
-
-    // legacy: build only when Rust graph preparation is unavailable or an old
-    // prepared artifact requires the compatibility graph.
-    void OctoPlanner3D::rebuildSurfaceGraph()
-    {
-        if (!artifact_) artifact_ = std::make_shared<PlannerArtifact>();
-        artifact_->graph.reset();
-        artifact_->rust_graph.reset();
-        if (!ground_support_ || support_height_m_<=0 || lowest_traversable_only_) return;
-        const auto started=std::chrono::steady_clock::now();
-        const double r=octree_->getResolution();
-        if (!artifact_->rust_graph) rebuildRustGraph();
-        if (!artifact_->rust_graph) return;
-        const auto surfaces = artifact_->rust_graph->surfaces();
-        std::vector<mls::SurfaceCell> cells = surfaces.observed;
-        cells.insert(cells.end(), surfaces.inferred.begin(), surfaces.inferred.end());
-
-        std::vector<PointPose> points;
-        points.reserve(cells.size());
-        for (const auto &cell : cells) {
-            if (cancel_check_ && cancel_check_()) throw SurfaceGraph::Cancelled{};
-            points.push_back({
-                (cell.x + .5) * r,
-                (cell.y + .5) * r,
-                (cell.z + 1.0) * r + support_height_m_,
-                std::nullopt});
-        }
-        artifact_->graph=std::make_shared<SurfaceGraph>(std::move(points),r,graph_config_,
-            [](const PointPose &) { return true; },
-            [](const PointPose &, const PointPose &) { return true; }, cancel_check_);
-        printf("OctoPlanner3D surface graph: nodes=%zu edges=%zu prepare_ms=%.3f\n",
-            artifact_->graph->nodeCount(),artifact_->graph->edgeCount(),
-            std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
     }
 
     void OctoPlanner3D::rebuildDerivedLayers()

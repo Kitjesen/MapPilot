@@ -24,7 +24,8 @@ int main() try {
       if (x != 1 || y != 1) ring.push_back({x, y, 0});
     }
   }
-  const auto rust_surface = global_planner::mls::extractSurfacesRust(ring, {}, 1, 1, 1);
+  const LtMlsConfig surface_config{1, 1, 0.0F};
+  const auto rust_surface = global_planner::mls::extractSurfacesRust(ring, {}, surface_config);
   require(rust_surface.observed.size() == ring.size(),
           "Rust MLS observed surface count changed");
   require(rust_surface.inferred == std::vector<SurfaceCell>{{1, 1, 0}},
@@ -38,7 +39,6 @@ int main() try {
   require(rust_graph.edges.front().corridor.size() > 2,
           "Rust MLS graph did not export a corridor chain");
 
-  const LtMlsConfig surface_config{1, 1, 1, 0.70F};
   const LtMlsGraphConfig graph_config{3, 1, 0, 0, 0.0F, 0.0F};
   auto handle = global_planner::mls::PreparedArtifactHandle::create(
       line, {}, surface_config, graph_config, 7);
@@ -60,7 +60,7 @@ int main() try {
   require(handle.regionOccupied(LtMlsRegion{2, 3, 0, 0, 0, 0}),
           "Rust MLS region query changed");
   require(handle.height(0.35, 0.025, 0.0, 0.05, resolution) ==
-              std::optional<double>(0.0),
+              std::optional<double>(resolution),
           "Rust MLS height query changed");
   const auto artifact_graph = handle.graph();
   require(artifact_graph.nodes.size() == artifact_summary.nodes &&
@@ -106,7 +106,8 @@ int main() try {
   Artifact source;
   source.resolution_m = resolution;
   source.revision = 7;
-  source.surfaces = {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}};
+  source.observed = {{0, 0, 0}, {2, 0, 0}};
+  source.inferred = {{1, 0, 0}};
   source.nodes = {{10, {0, 0, 0}}, {20, {2, 0, 0}}};
   source.edges = {Edge{10, 20, 0.10, {{0, 0, 0}, {1, 0, 0}, {2, 0, 0}}}};
   require(global_planner::mls::validate(source), "valid MLS artifact rejected");
@@ -117,14 +118,16 @@ int main() try {
   Artifact decoded;
   { lingtu::maps::BinaryReader in(stream); decoded = global_planner::mls::read(in); }
   require(decoded == source, "MLS artifact round trip changed data");
+  require(decoded.observed == source.observed && decoded.inferred == source.inferred,
+          "MLS artifact round trip changed surface provenance");
   require(decoded.edges.front().id != 0, "MLS artifact did not restore stable edge ID");
 
   std::ostringstream records(std::ios::binary), fields(std::ios::binary);
   {
     lingtu::maps::BinaryWriter out(records), expected(fields);
-    out.vector(source.surfaces);
-    expected.value<std::uint64_t>(source.surfaces.size());
-    for (const auto& cell : source.surfaces) {
+    out.vector(source.observed);
+    expected.value<std::uint64_t>(source.observed.size());
+    for (const auto& cell : source.observed) {
       expected.value(cell.x); expected.value(cell.y); expected.value(cell.z);
     }
     out.vector(source.nodes);
@@ -144,6 +147,21 @@ int main() try {
     (void)in.vector<Node>();
   } catch (const std::runtime_error&) { truncated_rejected = true; }
   require(truncated_rejected, "MLS record reader accepted a truncated cache");
+  std::stringstream legacy_stream(std::ios::in | std::ios::out | std::ios::binary);
+  {
+    lingtu::maps::BinaryWriter out(legacy_stream);
+    out.text("lingtu.mls.artifact");
+    out.value<std::uint32_t>(2);
+  }
+  legacy_stream.seekg(0);
+  bool legacy_rejected = false;
+  try {
+    lingtu::maps::BinaryReader in(legacy_stream);
+    (void)global_planner::mls::read(in);
+  } catch (const std::exception&) {
+    legacy_rejected = true;
+  }
+  require(legacy_rejected, "legacy MLS artifact format accepted");
 
   Artifact invalid = source;
   invalid.edges[0].to = 99;
@@ -152,9 +170,9 @@ int main() try {
   invalid.edges[0].corridor.clear();
   require(!global_planner::mls::validate(invalid), "empty MLS corridor accepted");
   invalid = source;
-  invalid.surfaces.push_back({-2000000000, 2000000000, -2000000000});
+  invalid.observed.push_back({-2000000000, 2000000000, -2000000000});
   require(global_planner::mls::validate(invalid), "large signed MLS cell rejected");
-  invalid.surfaces.push_back({-2000000000, 2000000000, -2000000000});
+  invalid.inferred.push_back({-2000000000, 2000000000, -2000000000});
   require(!global_planner::mls::validate(invalid), "duplicate large signed MLS cell accepted");
   return 0;
 } catch (const std::exception& error) {

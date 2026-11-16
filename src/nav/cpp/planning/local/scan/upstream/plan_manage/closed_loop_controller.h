@@ -78,6 +78,7 @@ class ClosedLoopController {
   UniformBspline positionTrajectory_{};
   UniformBspline velocityTrajectory_{};
   UniformBspline accelerationTrajectory_{};
+  bool hasAcceleration_{false};
   double durationS_{0.0};
   double executionTimeS_{0.0};
   double lastUpdateTimeS_{0.0};

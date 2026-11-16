@@ -5922,6 +5922,7 @@ TEST(ScanReplanFsm, TrackingLagReplansFromMeasuredMotionWithSolverDelay) {
     ASSERT_TRUE(output.trajectory)<<fixture.manager.reboundDebug().reason;
     EXPECT_FALSE(output.handoffPending);
     const auto& next=fixture.manager.local_data_;
+    EXPECT_DOUBLE_EQ(next.start_time_,input.nowS);
     EXPECT_LT((next.position_traj_.evaluateDeBoorT(0)-observed).norm(),1e-6);
     EXPECT_LT((next.velocity_traj_.evaluateDeBoorT(0)-input.odometry->velocity).norm(),1e-6);
     const Eigen::Vector3d measuredAtCompletion=observed+solveDelay*input.odometry->velocity;

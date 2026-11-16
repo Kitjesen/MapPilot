@@ -49,8 +49,8 @@ struct SurfaceRejection {
 class SurfaceIndex {
  public:
   SurfaceIndex(const octomap::OcTree& tree, double headroom, double radius,
-               double max_hole_area_m2 = ::lingtu::settings::global::native_nav::global::surface_max_hole_area_m2,
-               double max_slope = ::lingtu::settings::global::native_nav::global::surface_max_slope,
+               double max_hole_area_m2 = 0.16,
+               double max_slope = 0.7,
                bool collect_rejections = false);
   std::optional<int> below(int x, int y, int z) const;
   bool occupied(int x, int y, int minimum_z, int maximum_z) const;

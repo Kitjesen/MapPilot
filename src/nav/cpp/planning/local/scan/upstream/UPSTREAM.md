@@ -57,11 +57,13 @@ The matched tests and simulation evidence for that superseded experiment live in
 
 Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its controller
 requires both elapsed spline time and endpoint XY error for completion. LingTu's
-ordinary point-goal Executor now hands off to its existing stop transaction as
+ordinary point-goal Executor completes the task and returns a zero command as
 soon as the requested position is inside the task's XY and height tolerances.
 It no longer waits for the spline clock and then generates a short return curve
-whose tangent can command a large final turn. Explicit pose stages retain their
-existing timing and stair-arrival rules. The 15 cm nav position tolerance and
+whose tangent can command a large final turn. Final explicit pose-stage task
+completion uses the existing accepted-command braking state. Intermediate stage
+transitions retain their timing conditions, and stair arrival retains its target,
+hold and arrival-permission checks. The 15 cm nav position tolerance and
 the controller itself are unchanged; this is not a new terminal-yaw controller.
 The 2026-11-08 ordinary spline-time completion description below is superseded.
 Matched native regressions, physical runs and fixed Nav2 goal-checker references

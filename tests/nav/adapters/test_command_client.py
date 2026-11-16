@@ -34,12 +34,13 @@ _DEFAULT_CAPABILITIES = (
     | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS
     | native_abi.NATIVE_COMMAND_CAP_PLAN_PREVIEW
     | native_abi.NATIVE_COMMAND_CAP_SEMANTIC_VIEW_QUERY
+    | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_MAP_BINDING
 )
 
 
 def test_navigation_task_enums_are_append_only_and_paused_is_not_terminal():
     assert [int(kind) for kind in NavigationCommandKind] == [
-        1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+        1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
     ]
     assert [int(state) for state in NavigationGoalState] == list(range(1, 7))
 
@@ -1737,6 +1738,33 @@ def test_goal_limits_cross_ctypes_boundary(tmp_path):
                                     max_speed_mps=0.2, acceptance_radius_m=0.3)
         assert receipt.accepted
         assert received == [(0.2, 0.3)]
+    finally:
+        client.close()
+
+
+def test_saved_map_identity_crosses_ctypes_boundary(tmp_path):
+    library = _Library()
+    received = []
+
+    def mapped(handle, task, request, x, y, z, yaw, map_id, epoch, speed, radius, timeout, receipt):
+        received.append((map_id, epoch, speed, radius))
+        return library._start_task_with_receipt(handle, task, request, x, y, z, yaw, timeout, receipt)
+
+    library.lingtu_nav_client_start_task_with_receipt_v3 = _Function(mapped)
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    try:
+        receipt = client.start_task(
+            1,
+            2,
+            0,
+            None,
+            task_id="task-map",
+            request_id="request-map",
+            map_id="yard",
+            map_content_epoch=7,
+        )
+        assert receipt.accepted
+        assert received == [(b"yard", 7, 0.0, 0.0)]
     finally:
         client.close()
 

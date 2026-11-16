@@ -764,7 +764,8 @@ class TestGoalService:
             def __init__(self) -> None:
                 self.goals = []
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id,
+                          map_id=None, map_content_epoch=0):
                 self.goals.append((task_id, request_id, x, y, z, yaw))
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -827,7 +828,8 @@ class TestGoalService:
             def __init__(self) -> None:
                 self.goals = []
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id,
+                          map_id=None, map_content_epoch=0):
                 self.goals.append((task_id, request_id, x, y, z, yaw))
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -924,7 +926,8 @@ class TestGoalService:
         class FakeCommands:
             calls = 0
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id,
+                          map_id=None, map_content_epoch=0):
                 del x, y, z, yaw
                 self.calls += 1
                 return NavigationCommandReceipt(
@@ -968,11 +971,48 @@ class TestGoalService:
         assert service.goal_status.msg_count == status_count
         service.stop()
 
+    def test_goal_dispatch_carries_expected_map_identity(self):
+        class FakeCommands:
+            def __init__(self) -> None:
+                self.identity = None
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id,
+                          map_id=None, map_content_epoch=0):
+                del x, y, z, yaw, task_id, request_id
+                self.identity = (map_id, map_content_epoch)
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id="task-map",
+                    request_id="request-map",
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        result = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-map",
+            request_id="request-map",
+            map_identity={"map_id": "yard", "content_epoch": 7, "frame_id": "map"},
+        )
+
+        assert result["accepted"] is True
+        assert commands.identity == ("yard", 7)
+        service.stop()
+
     def test_goal_replay_lookup_rejects_missing_product_and_map_context(self):
         class FakeCommands:
             calls = 0
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id,
+                          map_id=None, map_content_epoch=0):
                 del x, y, z, yaw
                 self.calls += 1
                 return NavigationCommandReceipt(
@@ -1640,6 +1680,31 @@ def test_goal_limits_reach_command_and_participate_in_replay_identity(goal_servi
         request_id="limited-request", max_speed_mps=0.4, acceptance_radius_m=0.3)
     assert rejected["accepted"] is False
     assert len(captured) == 1
+
+
+def test_saved_map_identity_reaches_native_goal_command(goal_service):
+    captured = []
+    original = goal_service._test_commands.send_goal
+
+    def send_goal(x, y, z, yaw, *, task_id, request_id, **kwargs):
+        captured.append(kwargs)
+        return original(x, y, z, yaw, task_id=task_id, request_id=request_id)
+
+    goal_service._test_commands.send_goal = send_goal
+    goal_service._map_identity = {
+        "map_id": "yard",
+        "content_epoch": 7,
+        "frame_id": "map",
+    }
+
+    result = goal_service.submit_goal(
+        PoseStamped(pose=Pose(position=Vector3(2.0, 1.0, 0.0)), frame_id="map"),
+        task_id="saved-map-task",
+        request_id="saved-map-request",
+    )
+
+    assert result["accepted"] is True
+    assert captured == [{"map_id": "yard", "map_content_epoch": 7}]
 
 
 @pytest.mark.parametrize("nested", [False, True])

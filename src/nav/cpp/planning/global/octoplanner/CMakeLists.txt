@@ -132,7 +132,6 @@ add_library(octoplanner3d_global_planner STATIC
   "${OCTOPLANNER3D_SOURCE_DIR}/planner/src/global_planner.cpp"
   mls_backend.cpp
   map_update.cpp
-  surface_graph.cpp
   route_smoothing.cpp
 )
 # Raw occupancy stays in OctoMap. Rust MLS owns prepared surfaces and the sparse graph.
@@ -268,10 +267,16 @@ if(BUILD_TESTING)
   add_executable(octoplanner3d_route_check_smoke route_check_smoke.cpp)
   target_link_libraries(octoplanner3d_route_check_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_route_check_smoke COMMAND octoplanner3d_route_check_smoke)
+  add_executable(octoplanner3d_start_evidence_smoke start_evidence_smoke.cpp)
+  target_link_libraries(octoplanner3d_start_evidence_smoke PRIVATE octoplanner3d_runtime octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_start_evidence_smoke COMMAND octoplanner3d_start_evidence_smoke)
+  add_executable(octoplanner3d_surface_smoke surface_smoke.cpp)
+  target_link_libraries(octoplanner3d_surface_smoke PRIVATE octoplanner3d_global_planner)
+  add_test(NAME octoplanner3d_surface_smoke COMMAND octoplanner3d_surface_smoke)
   add_executable(octoplanner3d_prepared_surface_smoke prepared_surface_smoke.cpp)
   target_link_libraries(octoplanner3d_prepared_surface_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_prepared_surface_smoke COMMAND octoplanner3d_prepared_surface_smoke)
-  add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp)
+  add_executable(octoplanner3d_surface_graph_smoke surface_graph_smoke.cpp surface_graph.cpp)
   target_link_libraries(octoplanner3d_surface_graph_smoke PRIVATE octoplanner3d_global_planner)
   add_test(NAME octoplanner3d_surface_graph_smoke COMMAND octoplanner3d_surface_graph_smoke)
   add_executable(octoplanner3d_mls_backend_smoke mls_backend_smoke.cpp)
@@ -306,6 +311,7 @@ if(BUILD_TESTING)
   target_link_libraries(octoplanner3d_queue_node_compare_smoke PRIVATE lingtu_settings)
   target_include_directories(octoplanner3d_queue_node_compare_smoke
     PRIVATE
+      "${LINGTU_NAV_CPP_DIR}/../../maps/include"
       "${OCTOPLANNER3D_SOURCE_DIR}/planner/include"
       "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
       "${OCTOMAP_INCLUDE_DIR}"

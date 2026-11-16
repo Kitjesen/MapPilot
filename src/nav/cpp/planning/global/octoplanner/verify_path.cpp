@@ -211,10 +211,6 @@ Args parseArgs(int argc, char ** argv)
       args.config.search_resolution_m = parseDouble(next(), option);
     else if (option == "--surface-closing-radius")
       args.config.surface_closing_radius_m = parseDouble(next(), option);
-    else if (option == "--surface-max-hole-area")
-      args.config.surface_max_hole_area_m2 = parseDouble(next(), option);
-    else if (option == "--surface-max-slope")
-      args.config.surface_max_slope = parseDouble(next(), option);
     else if (option == "--support-height")
       args.config.support_height_m = parseDouble(next(), option);
     else if (option == "--support-height-tolerance")
