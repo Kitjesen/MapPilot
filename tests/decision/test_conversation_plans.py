@@ -39,6 +39,7 @@ def test_real_sdk_plan_finalizes_the_same_stream_message_and_remains_shareable(a
     assert metadata["status"] == "completed" and metadata["plan"] == plan
     assert metadata["activity_type"] == "model" and metadata["activity_state"] == "completed"
     assert metadata["model_metrics"]["elapsed_ms"] >= 0
+    assert metadata["model_metrics"]["model_responses"] == 1
     assert answers[0]["id"] == events[0]["id"] == events[-1]["id"]
     assert events[0]["metadata"]["status"] == "streaming"
     assert events[-1]["metadata"]["plan"] == plan and events[-1]["revision"] > events[0]["revision"]

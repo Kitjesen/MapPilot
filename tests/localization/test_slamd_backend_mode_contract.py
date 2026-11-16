@@ -44,6 +44,7 @@ def test_sim_product_stops_map_icp_after_initial_alignment() -> None:
     assert "track_against_map_enabled = repeat_track_against_map;" in source
     assert "if (out.map_odom_tf.has_value())" in source
     assert "map_tf_publish_allowed" not in source
+    assert settings["runtime"]["sim"]["track_against_map_period_s"] == 0
     assert slam_environment(settings, simulation=True)["LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S"] == "0"
     assert 'runtime_rate("LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S", cfg.track_against_map_period_s)' in source
     assert "restart_track_against_map();" in source

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -90,19 +89,16 @@ def test_regeneration_matches_bundled_sources_and_manifest(tmp_path):
     check_pack(tmp_path / "fresh")
     for path in generated:
         if path.suffix == ".svg":
-            generated_svg = ET.parse(path)
-            bundled_svg = ET.parse(ASSETS / path.name)
-            for svg in (generated_svg, bundled_svg):
-                for element in svg.iter():
-                    for key in ("x", "y", "cx", "cy", "r", "points"):
-                        if key in element.attrib:
-                            # Trigonometric SVG coordinates vary below pixel precision across libm builds.
-                            element.attrib[key] = re.sub(
-                                r"-?\d+(?:\.\d+)?(?:e[+-]?\d+)?",
-                                lambda match: format(float(match[0]), ".10g"),
-                                element.attrib[key],
-                            )
-            assert ET.tostring(generated_svg.getroot()) == ET.tostring(bundled_svg.getroot())
+            actual, expected = list(ET.parse(path).iter()), list(ET.parse(ASSETS / path.name).iter())
+            assert len(actual) == len(expected)
+            for node, reference in zip(actual, expected):
+                assert (node.tag, node.text, node.attrib.keys()) == (reference.tag, reference.text, reference.attrib.keys())
+                for key, value in node.attrib.items():
+                    if key in {"cx", "cy"}:
+                        # Trigonometric centres differ by one ULP between Windows and Linux.
+                        assert float(value) == pytest.approx(float(reference.attrib[key]), abs=1e-12, rel=0)
+                    else:
+                        assert value == reference.attrib[key]
         elif path.suffix != ".png":
             assert path.read_text(encoding="utf-8") == (ASSETS / path.name).read_text(encoding="utf-8")
     rasters = []

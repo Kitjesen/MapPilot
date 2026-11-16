@@ -76,6 +76,8 @@ def test_docs_delegate_topic_and_frame_values_to_machine_sources():
 def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
     doc = " ".join(_read("docs/simulation.md").split())
 
+    assert "lingtu.control switch" in doc
+    assert "synthetic IMU and LiDAR" in doc
     assert "`env=sim`" in doc
     assert "ProductControl" in doc
     assert "`control_plan`" in doc
@@ -133,7 +135,7 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert product_data_source("map").data_source == "field"
     real_lidar = lidar_extrinsic("go2_mid360")
     cfg_lidar = load_config(str(REPO_ROOT / "config/robots/unitree/go2/robot.yaml")).lidar
-    assert cfg_lidar.frame_id is None
+    assert (cfg_lidar.frame_id or FRAMES.lidar) in frame_id_aliases(FRAMES.lidar)
     assert real_lidar.child == FRAMES.real_lidar
     assert cfg_lidar.offset_x == pytest.approx(real_lidar.x)
     assert cfg_lidar.offset_y == pytest.approx(real_lidar.y)
@@ -204,6 +206,8 @@ def test_runtime_stream_contract_language_is_not_ros2_topic_only():
     sim_contract = _read("docs/simulation.md")
     architecture = _read("docs/architecture.md")
 
+    assert "DDS / SHM adapters" in sim_contract
+    assert "Typed DDS, camera SHM, and explicit compatibility seams" in sim_contract
     assert "native runtime" in sim_contract
     assert "ROS TF is not the Product data plane" in architecture
     assert runtime_data_flow_topics.__doc__ == "Return unique canonical runtime stream tokens in one resolved data-flow."

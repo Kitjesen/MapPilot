@@ -377,6 +377,7 @@ def test_failed_view_admission_never_produces_another_motion_retry(harness, admi
     h.reach()
     inconclusive_view(h, 100.1)
     assert h.goal_sent.wait(1.0)
+    assert h.completed.wait(1.0)
     assert h.module._verification.state == "unavailable"
     if admission == "unconfirmed":
         assert h.module._active_goal.cancel_request_id

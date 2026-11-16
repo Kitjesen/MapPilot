@@ -4,7 +4,7 @@ from lingtu.real.backend import FieldBackend
 
 
 @pytest.mark.parametrize("state", ["IDLE", "UNKNOWN"])
-def test_navigation_endpoint_readiness_reports_its_task_state(monkeypatch, state):
+def test_navigation_endpoint_readiness_uses_task_state_without_motion_admission(monkeypatch, state):
     ticks = iter((0.0, 0.0, 2.0))
     backend = FieldBackend(environment={}, monotonic=lambda: next(ticks), sleep=lambda _: None)
     monkeypatch.setattr(backend, "_http", lambda *_args, **_kwargs: {

@@ -50,6 +50,8 @@ models in `src/gateway/schemas.py`, and topic ownership/QoS in
 | `lingtu.sim.mujoco-snapshot.v1` | `mujoco-snapshot.v1.json` | `lingtu_mujoco_snapshot` | Offline inspection/preview tools | Standalone inspection snapshot v1; no session identity |
 | `lingtu.sim.measurement-scene.v1` | `measurement-scene.v1.json` | Scene/package authors | Measurement sensor runtime | Declared thermal, acoustic and semantic properties v1 |
 
+| `lingtu.sim.measurement-scene.v1` | `measurement-scene.v1.json` | Scene authors | Measurement runtime | Explicit scene properties v1 |
+
 ## Ownership rules
 
 - Package and projection documents are immutable catalog inputs. Unknown keys

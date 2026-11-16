@@ -3701,23 +3701,28 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
   input.observation.body_velocity_valid = true;
   input.observation.body_linear_velocity = {0, .35, 0};
   input.stairProfile = {StairProfile::Ascent, true, false, "actual-stair-model", "", 1.05};
+  const auto pending = executor.tick(input);
+  EXPECT_EQ(pending.reason, "local_plan_pending");
+  EXPECT_TRUE(pending.local_path_map.empty());
+  EXPECT_FALSE(pending.path_found);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(pending.cmd_vel.wz, 0);
   auto output = awaitScanOutput([&] { return executor.tick(input); });
   ASSERT_EQ(flight_gate.step(input.mapBody, {0, .35, 0}, true,
                             input.timestampS, input.stairProfile).phase,
             StairPhase::Traversing);
-  if (output.local_path_map.empty() && output.reason == "local_blocked") {
-    // The current SCAN envelope rejects this entrance before the stair
-    // post-check gets a candidate curve. It is still a safe stopped result.
+  if (output.reason == "local_blocked") {
+    // SCAN may reject the entrance before the stair post-check receives a curve.
+    EXPECT_TRUE(output.local_path_map.empty());
     EXPECT_FALSE(output.path_found);
-    EXPECT_EQ(output.cmd_vel.vx, 0);
-    EXPECT_EQ(output.cmd_vel.vy, 0);
-    EXPECT_EQ(output.cmd_vel.wz, 0);
-    return;
+  } else {
+    ASSERT_EQ(output.reason, "stair_route_wait");
+    ASSERT_FALSE(output.local_path_map.empty());
+    ASSERT_FALSE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw))
+        << "The fixture must produce an actually rejected stair trajectory";
+    EXPECT_TRUE(output.near_field_stop);
   }
-  ASSERT_FALSE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw))
-      << "The fixture must produce an actually rejected stair trajectory";
-  ASSERT_EQ(output.reason, "stair_route_wait");
-  EXPECT_TRUE(output.near_field_stop);
   EXPECT_EQ(output.stairs.phase, StairPhase::Traversing);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);

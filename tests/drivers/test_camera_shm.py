@@ -486,6 +486,7 @@ def test_cpp_camera_service_uses_shm_as_default_image_data_plane():
     settings_dir = Path("config/system/settings")
     settings = yaml.safe_load((settings_dir / "camera.yaml").read_text(encoding="utf-8"))["camera"]
     assert "publish_image_dds{lingtu::settings::camera::camera::shm::publish_image_dds}" in source
+    assert settings["shm"]["publish_image_dds"] is False
     assert "inline constexpr bool publish_image_dds = false;" in generate(settings_dir)
     assert camera_environment(settings, CameraConfig(), include_video=False)["LINGTU_CAMERA_PUBLISH_IMAGE_DDS"] == "0"
     assert "EnvironmentFile=/run/lingtu/session.env" in service
