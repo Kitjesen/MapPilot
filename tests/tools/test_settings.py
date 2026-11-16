@@ -46,3 +46,10 @@ def test_yaml_change_rebuilds_native_defaults(tmp_path):
     subprocess.run(compile_command, check=True, capture_output=True, text=True)
 
     assert float(subprocess.check_output([str(executable)], text=True)) == 12.0
+
+    install = tmp_path / "install"
+    subprocess.run(
+        ["cmake", "--install", str(build), "--prefix", str(install), "--config", "Release"],
+        check=True, capture_output=True, text=True,
+    )
+    assert not (install / "include/lingtu/settings.hpp").exists()

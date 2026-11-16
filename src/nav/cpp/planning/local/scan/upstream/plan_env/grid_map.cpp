@@ -20,7 +20,8 @@ int GridMap::getInflateOccupancy(const Eigen::Vector3d &position,
                                  double yaw) const noexcept {
   if (grid_ == nullptr) return -1;
   const Vec3 point{position.x(), position.y(), position.z()};
-  return grid_->cylinderOccupancy(point, yaw);
+  return usePredictions_ ? grid_->inflatedOccupancy(point, yaw)
+                         : grid_->cylinderOccupancy(point, yaw);
 }
 
 int GridMap::getInflateOccupancySegment(const Eigen::Vector3d &start, double startYaw,
@@ -49,12 +50,23 @@ int GridMap::getTrajectoryOccupancy(const Eigen::Vector3d &start,
     return std::hypot(value.x(), value.y()) > 0.03
         ? std::atan2(value.y(), value.x()) : fallback;
   };
-  const double startYaw = heading(velocity, previousHeading ? previousHeading->value_or(0.0) : 0.0);
+  const double startYaw = heading(
+      velocity, previousHeading ? previousHeading->value_or(grid_->robotYaw())
+                                : grid_->robotYaw());
   const double endYaw = heading(endVelocity, startYaw);
   if (previousHeading) *previousHeading = endYaw;
-  // The upstream optimizer queries the inflated voxel cylinder. Multipart body
-  // checks belong to the execution/safety layer and must not change this path.
   return getInflateOccupancySegment(start, startYaw, end, endYaw);
+}
+
+int GridMap::getTimedTrajectoryOccupancy(const Eigen::Vector3d &start,
+    const Eigen::Vector3d &velocity, const Eigen::Vector3d &end,
+    const Eigen::Vector3d &endVelocity, double startTime, double endTime,
+    std::optional<double> *previousHeading) const noexcept {
+  if (grid_ == nullptr) return -1;
+  return grid_->trajectoryOccupancy(
+      {start.x(), start.y(), start.z()}, {velocity.x(), velocity.y(), velocity.z()},
+      {end.x(), end.y(), end.z()}, {endVelocity.x(), endVelocity.y(), endVelocity.z()},
+      startTime, endTime, true, previousHeading);
 }
 
 }  // namespace nav_kernel::local::scan::upstream

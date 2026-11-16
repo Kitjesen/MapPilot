@@ -66,7 +66,7 @@ Web 点选局部投影可查看同一 MapScene 的拟合高度、残差及细 XY
   不能把这个比例称为地面覆盖率。五次 NX 回放平均 22.19 ms，拟合残差中位数
   2.06 cm、95 分位 3.49 cm，均不是定位精度或地图对真实环境的测量误差。
 
-代码：`src/maps/include/lingtu/maps/layers/ground_surface.hpp`；
+代码：`src/maps/include/lingtu/maps/legacy/ground_surface.hpp`；
 证据与复现程序：`build/terrain-ground-model/`。
 实际点云拟合诊断图 (`build/terrain-ground-model/terrain-ground-before/terrain-ground-review.png`)。
 
@@ -189,7 +189,7 @@ PowerShell 包装脚本通过语法检查，但尚未在笔记本上一键完整
 
 修正：建图“局部投影”现在读取独立 `maps.surface_projection`，不再把
 `maps.occupancy` 的宽高度带直接解释为障碍。新增算法位于
-`src/maps/include/lingtu/maps/layers/surface_projection.hpp`，由原生 mapd 执行。
+`src/maps/include/lingtu/maps/legacy/surface_projection.hpp`，由原生 mapd 执行。
 
 - 在地图坐标上固定对齐 20 cm 显示格，避免 5 cm 滚动窗口移动时粗格边界整体平移。
 - 以已观测低表面的下四分位高度形成候选，默认 5 cm 输入时每格至少 3 个观测列。

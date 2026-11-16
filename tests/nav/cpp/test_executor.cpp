@@ -674,6 +674,42 @@ TEST(Executor, PointArrivalAndPoseBraking) {
 
 
 
+TEST(Executor, PoseArrivalAfterStop) {
+  auto executor = makeScanExecutor(3.0, .6, 0);
+  auto guide = route({{0, 0, .5}, {2, 0, .5}}, std::nullopt, .15);
+  auto model = std::make_shared<lingtu::nav::collision::Body>();
+  model->margin_m = 0;
+  lingtu::nav::collision::Part part;
+  part.half_size = {.2, .1, .1};
+  model->parts.push_back(part);
+  guide.body = model;
+  guide.posePoints = {{{0, 0, .5}, 0}, {{2, 0, .5}, 0}};
+  executor.setRoute(std::move(guide));
+  auto observed = emptyScanObservation(1);
+  observed.collision.measuredOccupiedStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(observed.collision.inflatedBytes, 0U);
+  observed.collision.knownFreeStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(observed.collision.inflatedBytes, 255U);
+  observed.clock_mode = nav_kernel::PlanClockMode::External;
+  observed.body_velocity_valid = true;
+  const auto moving = awaitScanOutput([&] {
+    return executor.tick(routeInput(pose(0, 0, .5, 0), nullptr, 0, 1, {}, observed));
+  });
+  ASSERT_TRUE(moving.tracking.active) << moving.reason;
+  ASSERT_LT(moving.tracking.executionTimeS, moving.tracking.durationS);
+  executor.commitApplied({});
+  const auto stopped = executor.tick(routeInput(pose(1.99, 0, .5, 0), nullptr, 0, 1.02, {}, observed));
+  EXPECT_TRUE(stopped.goal_reached)
+      << stopped.reason << " time=" << stopped.tracking.executionTimeS
+      << " duration=" << stopped.tracking.durationS
+      << " finished=" << stopped.tracking.finished
+      << " frozen=" << stopped.tracking.executionFrozen
+      << " vx=" << stopped.cmd_vel.vx;
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vx, 0);
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.vy, 0);
+  EXPECT_DOUBLE_EQ(stopped.cmd_vel.wz, 0);
+}
+
 TEST(Executor, ScanSettlingDriftRetainsTerminalSplineWithoutTurningBack) {
   using namespace lingtu::nav::navigation;
   for (const auto frame : {PlanningFrame::Map, PlanningFrame::Odom}) {
@@ -722,6 +758,7 @@ TEST(Executor, ScanSettlingDriftRetainsTerminalSplineWithoutTurningBack) {
     ASSERT_TRUE(correction.tracking.active) << correction.reason;
     EXPECT_FALSE(correction.goal_reached);
     EXPECT_FALSE(correction.tracking.executionFrozen);
+    EXPECT_LE(correction.cmd_vel.vx, .02 + config.follower.maxAccel * .02 + 1e-8);
     EXPECT_LT(std::abs(correction.tracking.headingErrorRad), .1);
     EXPECT_LT(std::abs(correction.cmd_vel.wz), .1);
     bool returned = false;

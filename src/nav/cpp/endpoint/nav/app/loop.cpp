@@ -26,8 +26,8 @@
 #include "dds/runtime.hpp"
 #include "input/gate.hpp"
 #include "input/projector.hpp"
-#include "app/inspection/inspection_command_coordinator.hpp"
-#include "app/inspection/inspection_runtime_controller.hpp"
+#include "app/inspection/commands.hpp"
+#include "app/inspection/runtime.hpp"
 #include "message/protocol/geofence.hpp"
 #include "nav/cpp/platform/runtime.hpp"
 #include "nav/inspection/inspection.hpp"
@@ -487,7 +487,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
   auto handle_stop = [&](const std::string &) -> std::pair<bool, std::string> {
     runtime.cancelResume();
-    const auto interruption = runtime.interrupt(
+    const auto interruption = runtime.interruptAndService(
         GoalReplanRuntimeInterruption::kStop, steadySeconds());
     if (interruption.terminal) {
       const auto &terminal_result = *interruption.terminal;
@@ -500,7 +500,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
   auto handle_estop = [&](const std::string &reason) -> std::pair<bool, std::string> {
     runtime.cancelResume();
-    const auto interruption = runtime.interrupt(
+    const auto interruption = runtime.interruptAndService(
         GoalReplanRuntimeInterruption::kEstop, steadySeconds(), reason);
     if (interruption.terminal) {
       const auto &terminal_result = *interruption.terminal;

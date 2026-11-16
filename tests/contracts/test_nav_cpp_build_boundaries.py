@@ -113,13 +113,13 @@ def test_navigation_algorithms_follow_domain_boundaries() -> None:
     assert (cpp / "navigation/executor.hpp").is_file()
 
 
-def test_follower_uses_one_registered_tracking_interface() -> None:
+def test_follower_uses_one_tracking_interface() -> None:
     header = _read("src/nav/cpp/tracking/follower.hpp")
     implementation = _read("src/nav/cpp/tracking/follower.cpp")
     executor = _read("src/nav/cpp/navigation/executor.cpp")
 
     assert "FollowerOutput follow(const LocalPlan &plan, const FollowerState &state)" in header
-    assert "registerAlgorithm(FollowerAlgorithm::Path" in implementation
+    assert "FollowerAlgorithm::Path" in implementation
     assert "FollowerAlgorithm::Spline" in implementation
     assert "follower_.follow(plan, follower_state)" in executor
     for retired in ("computeControl", "trackTrajectory", "compute_control"):
