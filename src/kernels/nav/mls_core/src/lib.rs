@@ -894,6 +894,122 @@ fn graph_route_limited(
     graph_route_limited_avoiding(graph, start, goal, max_snap_cells, max_iterations, &[])
 }
 
+const ENDPOINT_MAX_STEP_CELLS: i32 = 1;
+const ENDPOINT_MAX_SLOPE: f64 = 1.0;
+
+fn endpoint_step_allowed(from: SurfaceCell, to: SurfaceCell) -> bool {
+    let dx = i64::from(to.x) - i64::from(from.x);
+    let dy = i64::from(to.y) - i64::from(from.y);
+    let dz = i64::from(to.z) - i64::from(from.z);
+    if dx == 0 && dy == 0 && dz == 0 {
+        return true;
+    }
+    if dz.unsigned_abs() > ENDPOINT_MAX_STEP_CELLS as u64 {
+        return false;
+    }
+    let horizontal = ((dx * dx + dy * dy) as f64).sqrt();
+    horizontal > 0.0 && (dz.unsigned_abs() as f64) <= ENDPOINT_MAX_SLOPE * horizontal
+}
+
+fn endpoint_connector(
+    target: SurfaceCell,
+    node: SurfaceCell,
+    surface: &HashSet<SurfaceCell>,
+    blocked: &HashSet<SurfaceCell>,
+    max_snap_cells: Option<i32>,
+    max_iterations: Option<usize>,
+    budget: &mut usize,
+) -> Option<Vec<SurfaceCell>> {
+    if blocked.contains(&node) || surface.is_empty() {
+        return None;
+    }
+    let limit = max_snap_cells.unwrap_or(i32::MAX);
+    if limit < 0 {
+        return None;
+    }
+    let limit_sq = i64::from(limit) * i64::from(limit);
+    let seed = surface
+        .iter()
+        .filter(|cell| !blocked.contains(cell))
+        .min_by_key(|cell| {
+            let dx = i64::from(cell.x) - i64::from(target.x);
+            let dy = i64::from(cell.y) - i64::from(target.y);
+            let dz = i64::from(cell.z) - i64::from(target.z);
+            dx * dx + dy * dy + dz * dz
+        })
+        .copied()?;
+    let seed_distance = {
+        let dx = i64::from(seed.x) - i64::from(target.x);
+        let dy = i64::from(seed.y) - i64::from(target.y);
+        let dz = i64::from(seed.z) - i64::from(target.z);
+        dx * dx + dy * dy + dz * dz
+    };
+    if seed_distance > limit_sq || !endpoint_step_allowed(target, seed) {
+        return None;
+    }
+    if seed == node {
+        return Some(if target == seed {
+            vec![target]
+        } else {
+            vec![target, seed]
+        });
+    }
+
+    let mut queue = VecDeque::from([seed]);
+    let mut previous = HashMap::<SurfaceCell, SurfaceCell>::new();
+    let mut visited = HashSet::from([seed]);
+    while let Some(current) = queue.pop_front() {
+        *budget = budget.saturating_add(1);
+        if max_iterations.is_some_and(|limit| *budget > limit) {
+            return None;
+        }
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if dx == 0 && dy == 0 && dz == 0 {
+                        continue;
+                    }
+                    let next = SurfaceCell::new(
+                        current.x + dx,
+                        current.y + dy,
+                        current.z + dz,
+                    );
+                    if !surface.contains(&next)
+                        || blocked.contains(&next)
+                        || visited.contains(&next)
+                        || !endpoint_step_allowed(current, next)
+                    {
+                        continue;
+                    }
+                    let dx = i64::from(next.x) - i64::from(target.x);
+                    let dy = i64::from(next.y) - i64::from(target.y);
+                    let dz = i64::from(next.z) - i64::from(target.z);
+                    if dx * dx + dy * dy + dz * dz > limit_sq {
+                        continue;
+                    }
+                    previous.insert(next, current);
+                    if next == node {
+                        let mut path = vec![node];
+                        let mut cursor = node;
+                        while cursor != seed {
+                            cursor = previous[&cursor];
+                            path.push(cursor);
+                        }
+                        path.reverse();
+                        if target != seed {
+                            path.insert(0, target);
+                        }
+                        return Some(path);
+                    }
+                    visited.insert(next);
+                    queue.push_back(next);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn graph_route_limited_avoiding(
     graph: &SurfaceGraph,
     start: SurfaceCell,
@@ -905,29 +1021,6 @@ fn graph_route_limited_avoiding(
     if graph.nodes.is_empty() {
         return None;
     }
-    let nearest_with_distance = |target: SurfaceCell| {
-        graph
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(index, node)| {
-                let dx = i64::from(node.cell.x) - i64::from(target.x);
-                let dy = i64::from(node.cell.y) - i64::from(target.y);
-                let dz = i64::from(node.cell.z) - i64::from(target.z);
-                (dx * dx + dy * dy + dz * dz, index)
-            })
-            .min_by_key(|&(distance, _)| distance)
-    };
-    let (start_distance, start_index) = nearest_with_distance(start)?;
-    let (goal_distance, goal_index) = nearest_with_distance(goal)?;
-    if let Some(limit) = max_snap_cells {
-        if limit < 0
-            || start_distance > i64::from(limit) * i64::from(limit)
-            || goal_distance > i64::from(limit) * i64::from(limit)
-        {
-            return None;
-        }
-    }
     let indices: HashMap<u32, usize> = graph
         .nodes
         .iter()
@@ -935,6 +1028,61 @@ fn graph_route_limited_avoiding(
         .map(|(index, node)| (node.id, index))
         .collect();
     let blocked: HashSet<SurfaceCell> = blocked_cells.iter().copied().collect();
+    let mut surface = HashSet::new();
+    for node in &graph.nodes {
+        surface.insert(node.cell);
+    }
+    for edge in &graph.edges {
+        surface.extend(edge.corridor.iter().copied());
+    }
+    let mut connector_budget = 0usize;
+    let mut start_attachments = Vec::<(usize, Vec<SurfaceCell>, f32)>::new();
+    let mut goal_attachments = HashMap::<usize, (Vec<SurfaceCell>, f32)>::new();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if let Some(path) = endpoint_connector(
+            start,
+            node.cell,
+            &surface,
+            &blocked,
+            max_snap_cells,
+            max_iterations,
+            &mut connector_budget,
+        ) {
+            let cost = path
+                .windows(2)
+                .map(|pair| {
+                    let dx = (pair[1].x - pair[0].x) as f32;
+                    let dy = (pair[1].y - pair[0].y) as f32;
+                    let dz = (pair[1].z - pair[0].z) as f32;
+                    (dx * dx + dy * dy + dz * dz).sqrt()
+                })
+                .sum();
+            start_attachments.push((index, path, cost));
+        }
+        if let Some(path) = endpoint_connector(
+            goal,
+            node.cell,
+            &surface,
+            &blocked,
+            max_snap_cells,
+            max_iterations,
+            &mut connector_budget,
+        ) {
+            let cost = path
+                .windows(2)
+                .map(|pair| {
+                    let dx = (pair[1].x - pair[0].x) as f32;
+                    let dy = (pair[1].y - pair[0].y) as f32;
+                    let dz = (pair[1].z - pair[0].z) as f32;
+                    (dx * dx + dy * dy + dz * dz).sqrt()
+                })
+                .sum();
+            goal_attachments.insert(index, (path, cost));
+        }
+    }
+    if start_attachments.is_empty() || goal_attachments.is_empty() {
+        return None;
+    }
     let mut adjacency = vec![Vec::<(usize, usize)>::new(); graph.nodes.len()];
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         let (Some(&a), Some(&b)) = (indices.get(&edge.a), indices.get(&edge.b)) else {
@@ -947,9 +1095,16 @@ fn graph_route_limited_avoiding(
     let mut previous = vec![(usize::MAX, usize::MAX); graph.nodes.len()];
     let mut queue =
         std::collections::BinaryHeap::<std::cmp::Reverse<(corridor::OrderedF32, usize)>>::new();
-    distances[start_index] = 0.0;
-    queue.push(std::cmp::Reverse((corridor::OrderedF32(0.0), start_index)));
-    let mut iterations = 0usize;
+    let mut start_paths = HashMap::<usize, Vec<SurfaceCell>>::new();
+    for (index, path, cost) in start_attachments {
+        if cost < distances[index] {
+            distances[index] = cost;
+            start_paths.insert(index, path);
+            queue.push(std::cmp::Reverse((corridor::OrderedF32(cost), index)));
+        }
+    }
+    let mut iterations = connector_budget;
+    let mut best_goal = None::<(f32, usize)>;
     while let Some(std::cmp::Reverse((corridor::OrderedF32(cost), current))) = queue.pop() {
         iterations += 1;
         if max_iterations.is_some_and(|limit| iterations > limit) {
@@ -958,8 +1113,11 @@ fn graph_route_limited_avoiding(
         if cost > distances[current] + 1e-6 {
             continue;
         }
-        if current == goal_index {
-            break;
+        if let Some((_, goal_cost)) = goal_attachments.get(&current) {
+            let candidate = cost + goal_cost;
+            if best_goal.is_none_or(|(best, _)| candidate < best) {
+                best_goal = Some((candidate, current));
+            }
         }
         for &(next, edge_index) in &adjacency[current] {
             if !blocked.is_empty()
@@ -979,23 +1137,21 @@ fn graph_route_limited_avoiding(
             queue.push(std::cmp::Reverse((corridor::OrderedF32(next_cost), next)));
         }
     }
-    if !distances[goal_index].is_finite() {
+    let Some((_, goal_index)) = best_goal else {
         return None;
-    }
+    };
     let mut node_path = Vec::new();
     let mut current = goal_index;
     node_path.push(current);
-    while current != start_index {
+    while previous[current].0 != usize::MAX {
         let (parent, _) = previous[current];
-        if parent == usize::MAX {
-            return None;
-        }
         current = parent;
         node_path.push(current);
     }
     node_path.reverse();
 
-    let mut route = vec![start];
+    let start_index = current;
+    let mut route = start_paths.get(&start_index)?.clone();
     for pair in node_path.windows(2) {
         let (from, to) = (pair[0], pair[1]);
         let (_, edge_index) = previous[to];
@@ -1012,8 +1168,12 @@ fn graph_route_limited_avoiding(
             }
         }
     }
-    if route.last() != Some(&goal) {
-        route.push(goal);
+    if let Some((goal_path, _)) = goal_attachments.get(&goal_index) {
+        for &cell in goal_path.iter().rev() {
+            if route.last() != Some(&cell) {
+                route.push(cell);
+            }
+        }
     }
     Some(route)
 }
@@ -1027,6 +1187,7 @@ const ROUTE_SLOPE: u32 = 5;
 const ROUTE_NO_GO: u32 = 6;
 const ROUTE_SOURCE_UNAVAILABLE: u32 = 7;
 const ROUTE_INVALID_CONFIG: u32 = 8;
+const ROUTE_SWEEP: u32 = 9;
 
 fn route_failure(kind: u32, segment: i32, cell: SurfaceCell) -> LtMlsRouteCheckResult {
     LtMlsRouteCheckResult {
@@ -1061,6 +1222,7 @@ fn check_route(
 
     let observed: HashSet<SurfaceCell> = state.artifact.surface.observed.iter().copied().collect();
     let inferred: HashSet<SurfaceCell> = state.artifact.surface.inferred.iter().copied().collect();
+    let surface: HashSet<SurfaceCell> = observed.union(&inferred).copied().collect();
     for (index, &cell) in route.iter().enumerate() {
         if !observed.contains(&cell) && !inferred.contains(&cell) {
             return route_failure(ROUTE_UNSUPPORTED, index as i32, cell);
@@ -1084,22 +1246,25 @@ fn check_route(
         return route_failure(ROUTE_INVALID_CONFIG, -1, route[0]);
     }
 
+    let body_blocked = |cell: SurfaceCell| {
+        if config.body_radius_cells <= 0 && config.body_height_cells <= 0 {
+            return false;
+        }
+        let radius = config.body_radius_cells;
+        let min_z = cell.z.saturating_add(1);
+        let max_z = min_z.saturating_add(config.body_height_cells);
+        state.occupied.iter().any(|occupied| {
+            let dx = i64::from(occupied.x) - i64::from(cell.x);
+            let dy = i64::from(occupied.y) - i64::from(cell.y);
+            dx * dx + dy * dy <= i64::from(radius) * i64::from(radius)
+                && occupied.z >= min_z
+                && occupied.z <= max_z
+        })
+    };
+
     for (index, &cell) in route.iter().enumerate() {
-        if config.body_radius_cells > 0 || config.body_height_cells > 0 {
-            let radius = config.body_radius_cells;
-            let min_z = cell.z.saturating_add(1);
-            let max_z = min_z.saturating_add(config.body_height_cells);
-            let blocked = state.occupied.iter().any(|occupied| {
-                occupied.x >= cell.x.saturating_sub(radius)
-                    && occupied.x <= cell.x.saturating_add(radius)
-                    && occupied.y >= cell.y.saturating_sub(radius)
-                    && occupied.y <= cell.y.saturating_add(radius)
-                    && occupied.z >= min_z
-                    && occupied.z <= max_z
-            });
-            if blocked {
-                return route_failure(ROUTE_OCCUPIED, index as i32, cell);
-            }
+        if body_blocked(cell) {
+            return route_failure(ROUTE_OCCUPIED, index as i32, cell);
         }
         if let Some(&next) = route.get(index + 1) {
             let dz = i64::from(next.z) - i64::from(cell.z);
@@ -1113,6 +1278,27 @@ fn check_route(
                 && (dz.unsigned_abs() as f64) > f64::from(config.max_slope) * horizontal
             {
                 return route_failure(ROUTE_SLOPE, index as i32, next);
+            }
+
+            let samples = dx.unsigned_abs().max(dy.unsigned_abs()).max(dz.unsigned_abs());
+            for step in 1..samples {
+                let t = step as f64 / samples as f64;
+                let sample = SurfaceCell::new(
+                    (cell.x as f64 + dx as f64 * t).round() as i32,
+                    (cell.y as f64 + dy as f64 * t).round() as i32,
+                    (cell.z as f64 + dz as f64 * t).round() as i32,
+                );
+                if !surface.contains(&sample) {
+                    return route_failure(ROUTE_SWEEP, index as i32, sample);
+                }
+                if config.has_no_go != 0
+                    && route_cell_in_region(sample, config.no_go, config.body_radius_cells.max(0))
+                {
+                    return route_failure(ROUTE_NO_GO, index as i32, sample);
+                }
+                if body_blocked(sample) {
+                    return route_failure(ROUTE_OCCUPIED, index as i32, sample);
+                }
             }
         }
     }
@@ -2238,6 +2424,70 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_attachment_adds_a_surface_lead_in() {
+        let graph = SurfaceGraph {
+            nodes: vec![
+                Node {
+                    id: 0,
+                    cell: SurfaceCell::new(0, 0, 0),
+                },
+                Node {
+                    id: 1,
+                    cell: SurfaceCell::new(2, 0, 0),
+                },
+            ],
+            edges: vec![Edge {
+                a: 0,
+                b: 1,
+                cost: 1.0,
+                corridor: vec![SurfaceCell::new(1, 0, 0)],
+            }],
+        };
+        let route = graph_route_limited(
+            &graph,
+            SurfaceCell::new(0, 1, 0),
+            SurfaceCell::new(2, 1, 0),
+            Some(2),
+            Some(100),
+        )
+        .expect("endpoint connectors");
+        assert_eq!(route.first(), Some(&SurfaceCell::new(0, 1, 0)));
+        assert_eq!(route.last(), Some(&SurfaceCell::new(2, 1, 0)));
+        assert!(route.contains(&SurfaceCell::new(0, 0, 0)));
+        assert!(route.contains(&SurfaceCell::new(2, 0, 0)));
+    }
+
+    #[test]
+    fn endpoint_attachment_rejects_a_vertical_jump() {
+        let graph = SurfaceGraph {
+            nodes: vec![
+                Node {
+                    id: 0,
+                    cell: SurfaceCell::new(0, 0, 2),
+                },
+                Node {
+                    id: 1,
+                    cell: SurfaceCell::new(2, 0, 2),
+                },
+            ],
+            edges: vec![Edge {
+                a: 0,
+                b: 1,
+                cost: 1.0,
+                corridor: vec![SurfaceCell::new(1, 0, 2)],
+            }],
+        };
+        assert!(graph_route_limited(
+            &graph,
+            SurfaceCell::new(0, 0, 0),
+            SurfaceCell::new(2, 0, 2),
+            Some(3),
+            Some(100),
+        )
+        .is_none());
+    }
+
+    #[test]
     fn geometry_blocked_corridor_uses_rust_detour() {
         let graph = SurfaceGraph {
             nodes: vec![
@@ -2294,7 +2544,7 @@ mod tests {
         let mut occupied = (0..4)
             .map(|x| SurfaceCell::new(x, 0, 0))
             .collect::<Vec<_>>();
-        occupied.push(SurfaceCell::new(2, 1, 1));
+        occupied.push(SurfaceCell::new(2, 0, 1));
         let state = PlannerState::new(
             occupied,
             Vec::new(),
@@ -2337,6 +2587,61 @@ mod tests {
         );
         assert_eq!(result.failure_kind, ROUTE_NO_GO);
         assert_eq!(result.failed_segment, 0);
+    }
+
+    #[test]
+    fn route_check_rejects_missing_surface_during_sweep() {
+        let state = PlannerState::from_surface(
+            vec![SurfaceCell::new(0, 0, 0), SurfaceCell::new(2, 0, 0)],
+            Vec::new(),
+            GraphConfig::default(),
+        );
+        let result = check_route(
+            &state,
+            &[SurfaceCell::new(0, 0, 0), SurfaceCell::new(2, 0, 0)],
+            LtMlsRouteCheckConfig {
+                max_step_cells: 1,
+                max_slope: 1.0,
+                ..LtMlsRouteCheckConfig::default()
+            },
+        );
+        assert_eq!(result.valid, 0);
+        assert_eq!(result.failure_kind, ROUTE_SWEEP);
+        assert_eq!(result.failed_segment, 0);
+        assert_eq!(result.failed_cell.x, 1);
+    }
+
+    #[test]
+    fn route_check_applies_body_test_to_swept_cells() {
+        let state = PlannerState::new(
+            vec![
+                SurfaceCell::new(0, 0, 0),
+                SurfaceCell::new(1, 0, 0),
+                SurfaceCell::new(2, 0, 0),
+                SurfaceCell::new(1, 1, 1),
+            ],
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 0,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig::default(),
+        );
+        let result = check_route(
+            &state,
+            &[SurfaceCell::new(0, 0, 0), SurfaceCell::new(2, 0, 0)],
+            LtMlsRouteCheckConfig {
+                body_radius_cells: 1,
+                body_height_cells: 1,
+                max_step_cells: 1,
+                max_slope: 1.0,
+                ..LtMlsRouteCheckConfig::default()
+            },
+        );
+        assert_eq!(result.valid, 0);
+        assert_eq!(result.failure_kind, ROUTE_OCCUPIED);
+        assert_eq!(result.failed_segment, 0);
+        assert_eq!(result.failed_cell.x, 1);
     }
 
     #[test]
