@@ -722,6 +722,7 @@ TEST(Executor, ScanSettlingDriftRetainsTerminalSplineWithoutTurningBack) {
     ASSERT_TRUE(correction.tracking.active) << correction.reason;
     EXPECT_FALSE(correction.goal_reached);
     EXPECT_FALSE(correction.tracking.executionFrozen);
+    EXPECT_LE(correction.cmd_vel.vx, .02 + config.follower.maxAccel * .02 + 1e-8);
     EXPECT_LT(std::abs(correction.tracking.headingErrorRad), .1);
     EXPECT_LT(std::abs(correction.cmd_vel.wz), .1);
     bool returned = false;

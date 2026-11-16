@@ -848,13 +848,12 @@ bool PlannerFsm::planFromCurrentTraj(double nowS, FsmOutput &output,
     startPt_ = odomPos_;
     startVel_ = odomVel_;
     startAcc_.setZero();
-    if (callReboundReplan(true, false, nowS, output)) {
-      referenceReplacementPending_ = false;
-      speedTransitionEndS_ = 0.0;
-      return true;
-    }
-    const bool success = callReboundReplan(true, true, nowS, output);
+    bool success = callReboundReplan(true, false, nowS, output);
+    if (!success) success = callReboundReplan(true, true, nowS, output);
     if (success) {
+      // Measured boundaries belong to the input epoch, before the solve elapsed.
+      info.start_time_ = nowS;
+      setTrajectoryOutput(output);
       referenceReplacementPending_ = false;
       speedTransitionEndS_ = 0.0;
     }
