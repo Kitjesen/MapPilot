@@ -37,7 +37,6 @@
 #include "app/goal/runtime.hpp"
 #include "app/rolling/effects.hpp"
 #include "app/rolling/lifecycle.hpp"
-#include "app/navigation.hpp"
 #include "app/state.hpp"
 #include "app/semantic/view_query.hpp"
 #include "app/time.hpp"
@@ -115,7 +114,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &replan = ctx.goal_replan_runtime;
   auto &motion_stop = ctx.motion_stop;
   auto &goal_outbox = ctx.goal_status_outbox;
-  auto &runtime = ctx.navigation_runtime_controller;
+  auto &runtime = replan;
   auto &terminal_delivery = ctx.goal_terminal_delivery;
   auto &inspection_runtime = ctx.inspection_runtime;
   auto &inspection_commands = ctx.inspection_command_coordinator;
@@ -296,11 +295,23 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto submit_goal = [&](const GoalSample &goal, const std::string &task_id,
                          const std::string &request_id,
                          GoalPlanOrigin origin) -> std::pair<bool, std::string> {
+    if (origin == GoalPlanOrigin::kExternal) {
+      const std::string stamp_error =
+          sourceStampError("goal", goal.stamp_s, nowSeconds(),
+                           cfg.teleop_cmd_max_age_s, cfg.input_future_tolerance_s);
+      if (!stamp_error.empty()) {
+        return {false, stamp_error};
+      }
+    }
     GoalPlanRequest request;
     request.task_id = task_id;
     request.request_id = request_id;
     request.origin = origin;
     request.source_stamp_s = goal.stamp_s;
+    if (!goal.map_id.empty() || goal.map_content_epoch != 0) {
+      request.expected_map_identity = lingtu::nav::plan::MapIdentity{
+          goal.map_id, goal.map_content_epoch, goal.frame_id};
+    }
     const auto decoded = parseGoal(goal, map_odom_tf);
     if (decoded.ok()) {
       request.target = GoalPlanTarget{decoded.value.position, decoded.value.yaw,

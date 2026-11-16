@@ -65,12 +65,15 @@ class NativeNavigationClient:
         request_id: str | None = None,
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
+        map_id: str | None = None,
+        map_content_epoch: int = 0,
     ) -> NavigationCommandReceipt:
         """Submit one product navigation task and return its business ACK."""
 
         receipt = self._session.start_navigation_task(
             task_id, request_id or "", x, y, z, yaw,
             max_speed_mps=max_speed_mps, acceptance_radius_m=acceptance_radius_m,
+            map_id=map_id, map_content_epoch=map_content_epoch,
         )
         return self._receipt(receipt, NavigationCommandKind.GOAL, task_id, request_id)
 

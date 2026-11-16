@@ -249,6 +249,11 @@ def test_runtime_is_plan_boundary_not_source_model_parser() -> None:
     implementation = "\n".join(
         path.read_text(encoding="utf-8") for path in _implementation_files()
     )
+    runtime_boundary = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in _implementation_files()
+        if PLUGIN / "Source" / "LingTuSimRuntime" in path.parents
+    )
     for token in (
         "RobotConfig",
         "MJCF",
@@ -260,10 +265,12 @@ def test_runtime_is_plan_boundary_not_source_model_parser() -> None:
         "mjData",
     ):
         assert token not in implementation
-    assert not re.search(r"\b21\b", implementation)
+    # The runtime boundary must stay model-agnostic. UI and showroom modules
+    # may legitimately use numeric layout/geometry values such as 21.
+    assert not re.search(r"\b21\b", runtime_boundary)
     assert not re.search(r"four\s+legs", implementation, re.IGNORECASE)
-    assert "FSessionBundleView" in implementation
-    assert "FSnapshotEnvelope" in implementation
+    assert "FSessionBundleView" in runtime_boundary
+    assert "FSnapshotEnvelope" in runtime_boundary
 
 
 def test_compiled_artifact_boundary_and_runtime_contract() -> None:

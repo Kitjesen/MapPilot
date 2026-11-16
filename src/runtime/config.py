@@ -4,7 +4,9 @@ Reads the selected robot model's RobotConfig.
 Modules access config via: cfg = load_config(); cfg.speed.max_linear
 
 ProductControl sets ``LINGTU_CONFIG_PATH`` for a selected real robot. Without
-an explicit path, this module returns neutral development defaults.
+an explicit path, the default loader returns neutral development defaults;
+real Product composition uses ``required=True`` to fail closed on a missing
+selected file.
 """
 
 from __future__ import annotations
@@ -431,23 +433,30 @@ def _fill_perception_config(data: dict[str, Any]) -> PerceptionConfig:
     )
 
 
-def load_config(path: str | None = None) -> RobotConfig:
+def load_config(path: str | None = None, *, required: bool = False) -> RobotConfig:
     """Load robot config from YAML.
 
     Resolution order for the config file path:
     1. Explicit ``path`` argument.
     2. ``LINGTU_CONFIG_PATH`` environment variable.
 
-    Returns a neutral ``RobotConfig`` when neither path is set or the selected
-    file is missing.
+    By default, returns a neutral ``RobotConfig`` when neither path is set or
+    the selected file is missing.  Callers that own a real robot product must
+    pass ``required=True`` so a missing selected file fails closed instead of
+    silently substituting development defaults.
     """
     config_path = path or os.environ.get("LINGTU_CONFIG_PATH")
+
+    if required and not config_path:
+        raise FileNotFoundError("RobotConfig path is required")
 
     if config_path:
         try:
             with open(config_path, encoding="utf-8") as fh:
                 raw = yaml.safe_load(fh) or {}
-        except (FileNotFoundError, OSError):
+        except (FileNotFoundError, OSError) as exc:
+            if required:
+                raise FileNotFoundError(f"RobotConfig not found: {config_path}") from exc
             raw = {}
     else:
         raw = {}

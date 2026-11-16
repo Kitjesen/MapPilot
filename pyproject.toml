@@ -33,7 +33,7 @@ nlp = ["jieba>=0.42"]
 agent = ["openai-agents==0.24.0"]
 perception = ["torch", "ultralytics", "open-clip-torch"]
 vector = ["chromadb"]
-dev = ["lingtu[gateway]", "pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy"]
+dev = ["lingtu[gateway]", "pytest", "pytest-cov", "pytest-asyncio", "ruff", "mypy", "pip", "setuptools>=68.0"]
 # ThunderDriver requires brainstem gRPC contract package brainstem_api (v2.0.0).
 # Install on a real robot target: pip install -e '.[thunder]'
 # stub / sim mode does not need this.

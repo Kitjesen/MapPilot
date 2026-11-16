@@ -104,6 +104,19 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
   if (!context.autonomy_mode) {
     return reject(std::string{"goal_not_allowed_in_"} + context.control_mode_name, true, true);
   }
+  if (request.expected_map_identity) {
+    if (!request.expected_map_identity->valid()) {
+      return reject("goal_map_identity_invalid", true, true);
+    }
+    const GoalPlanMapIdentityResult current_map = actions_.current_map_identity();
+    if (!current_map.identity || !current_map.identity->valid()) {
+      return reject("goal_map_identity_unavailable", true, true);
+    }
+    if (!lingtu::nav::plan::sameMapIdentity(*request.expected_map_identity,
+                                            *current_map.identity)) {
+      return reject("goal_map_identity_mismatch", true, true);
+    }
+  }
   if (context.autonomy_request_not_before_s > 0.0 &&
       (!std::isfinite(request.source_stamp_s) || request.source_stamp_s <= 0.0 ||
        request.source_stamp_s <= context.autonomy_request_not_before_s)) {
@@ -139,6 +152,7 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
     const auto pending_goal_epoch = ++goal_epoch_;
     pending_plan_start_ =
         DeferredPlanStart{request, pending_goal_epoch, projects_to_navigation_state};
+    pending_plan_start_->map_identity = request.expected_map_identity;
     publishStatus(request.task_id, request.request_id, pending_goal_epoch,
                   lingtu::message::NavigationGoalState::Planning, "planning_queued",
                   projects_to_navigation_state, request.origin);
@@ -246,6 +260,10 @@ GoalPlanSubmitResult GoalPlanController::startPlanning(
       plan_context.goal.y,
       plan_context.goal.z,
   };
+  if (const auto current_map = actions_.current_map_identity();
+      current_map.identity && current_map.identity->valid()) {
+    plan_context.request.map_identity = *current_map.identity;
+  }
   plan_context.local_body = context.body;
   plan_context.request.options = is_replan ? active_planner_options_ : context.planner_options;
   if (target.acceptance_radius_m) {

@@ -17,6 +17,7 @@ from typing import Any
 
 from starlette.requests import Request
 
+from lingtu.assembly.host.public_gateway import build_public_gateway_app
 from lingtu.product_lock import resolve_product_state_dir
 from lingtu.switch_contracts import ProcessFailed, SwitchFailed
 
@@ -310,12 +311,11 @@ def serve(control: Any, *, state_dir: Path | None = None, port: int = 5051,
         public_socket.listen()
         import uvicorn
 
-        from gateway.entry import build_entry_app
-
         operations = ControlOperations(control, resolve_product_state_dir(state_dir), variant=variant)
         server.operations = operations
         entry = uvicorn.Server(uvicorn.Config(
-            build_entry_app(gateway_port, control_routes=public_routes(operations)), host="0.0.0.0", port=public_port,
+            build_public_gateway_app(gateway_port, control_routes=public_routes(operations)),
+            host="0.0.0.0", port=public_port,
         ))
         thread = threading.Thread(target=server.serve_forever, name="product-control", daemon=True)
         thread.start()

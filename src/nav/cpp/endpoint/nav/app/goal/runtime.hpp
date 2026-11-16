@@ -14,6 +14,8 @@ namespace lingtu::nav::endpoint {
 
 class MotionStopBarrier;
 class GoalTerminalStatusDelivery;
+struct GoalTaskCancelRequest;
+struct CommandAck;
 
 struct GoalTerminalActions {
   std::function<void(const std::string &)> report_error;
@@ -93,6 +95,44 @@ struct ShutdownExitDecision {
   bool allow_exit{false};
 };
 
+struct NavigationRuntimeAutonomyObservation {
+  GoalReplanRuntimeFrameInput updated_frame;
+  AutonomyTickOutcome outcome;
+  bool inspection_active{false};
+  bool rolling_segment_active{false};
+};
+
+struct NavigationRuntimeFrameActions {
+  std::function<void(const GoalReplanRuntimeResult &)> complete_endpoint_work_before_autonomy;
+  std::function<NavigationRuntimeAutonomyObservation(const GoalPlanSnapshot &)> run_autonomy;
+  std::function<void(const GoalReplanRuntimeResult &)> apply_autonomy_outputs;
+};
+
+struct NavigationRuntimeFrameResult {
+  GoalReplanRuntimeResult planning_result;
+  std::optional<GoalReplanRuntimeResult> autonomy_result;
+  GoalReplanRuntimeResult pending_result;
+  bool pending_cycle_advanced{false};
+  bool terminal_delivery_acknowledged{false};
+  std::optional<AutonomyTickOutcome> inspection_completion;
+};
+
+struct NavigationRuntimeInterruptionResult {
+  GoalReplanRuntimeResult runtime_result;
+  std::optional<GoalTerminalResult> terminal;
+};
+
+struct NavigationRuntimeGoalSubmissionResult {
+  GoalPlanSubmitResult plan_result;
+  std::optional<GoalTerminalResult> preemption_terminal;
+};
+
+struct GoalResumeActions {
+  std::function<void()> release_operator;
+  std::function<void()> activate_route;
+  std::function<void()> changed;
+};
+
 [[nodiscard]] GoalTerminalSchedulingDecision
 decideGoalTerminalScheduling(const GoalReplanRuntimeResult &result, bool terminal_pending);
 
@@ -124,6 +164,34 @@ class GoalReplanRuntimeCoordinator {
   [[nodiscard]] GoalReplanRuntimeResult drainPendingCycle(const GoalReplanRuntimeFrameInput &frame);
   [[nodiscard]] GoalTerminalResult serviceTerminal(
       const GoalReplanRuntimeResult &result, const std::string &estop_reason = "estop_latched");
+  [[nodiscard]] NavigationRuntimeFrameResult
+  advanceFrame(const GoalReplanRuntimeFrameInput &frame,
+               const NavigationRuntimeFrameActions &actions);
+  [[nodiscard]] NavigationRuntimeInterruptionResult
+  interruptAndService(GoalReplanRuntimeInterruption interruption, double steady_now_s,
+                      const std::string &estop_reason = "estop_latched");
+  [[nodiscard]] NavigationRuntimeGoalSubmissionResult
+  submitGoal(const GoalPlanRequest &request, const GoalPlanAdmissionContext &admission,
+             double steady_now_s);
+  [[nodiscard]] GoalTerminalResult completeTerminal(
+      const GoalReplanRuntimeResult &result, const std::string &estop_reason = "estop_latched");
+  [[nodiscard]] MotionStopTerminalBarrierResult stopWhileTerminalPending();
+  [[nodiscard]] MotionStopTerminalBarrierResult
+  estopWhileTerminalPending(const std::string &estop_reason);
+  [[nodiscard]] CommandAck cancelTask(const GoalTaskCancelRequest &request);
+  [[nodiscard]] std::pair<bool, std::string> pauseTask(
+      const std::string &task_id, const std::string &request_id, const std::string &reason);
+  [[nodiscard]] std::pair<bool, std::string> resumeTask(
+      const std::string &task_id, const std::string &request_id, double source_stamp_s,
+      GoalPlanAdmissionContext context, GoalResumeActions actions,
+      const std::string &blocker = {});
+  void retryResume(const std::function<GoalPlanAdmissionContext()> &context,
+                   const GoalResumeActions &actions,
+                   const std::function<std::string()> &blocker);
+  void cancelResume();
+  [[nodiscard]] MotionStopResult interruptRelated(
+      GoalReplanRuntimeInterruption interruption, double now_s, const std::string &reason,
+      std::function<bool()> commit);
   [[nodiscard]] MotionStopResult commitRelated(const GoalReplanRuntimeResult &result,
                                                const std::string &reason,
                                                std::function<bool()> commit);
@@ -193,6 +261,12 @@ class GoalReplanRuntimeCoordinator {
   std::string pending_terminal_task_id_;
   TerminalStopPolicy pending_terminal_stop_policy_{TerminalStopPolicy::kGenericStop};
   std::optional<GoalPlanTerminalAfterStop> pending_terminal_;
+  struct PendingResume {
+    std::string task_id;
+    std::string request_id;
+    double source_stamp_s;
+  };
+  std::optional<PendingResume> pending_resume_;
 };
 
 }  // namespace lingtu::nav::endpoint
