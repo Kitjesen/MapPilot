@@ -613,7 +613,8 @@ struct PlannerSession::Impl {
       else {
         prepared->setOctomap(map);
         if(cancel_check && cancel_check())return false;
-        savePrepared(cache_path,map_path,map_identity,config,*prepared);
+        if (prepared->artifact()->rust_graph)
+          savePrepared(cache_path,map_path,map_identity,config,*prepared);
       }
     } catch (const global_planner::OctoPlanner3D::Cancelled &) {
       return false;

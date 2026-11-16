@@ -83,9 +83,17 @@ surface。mapd 已有 `RegionUpdate` 数据契约，生产导航尚未接入这�
 可从提交 `79f9562a` 获取。当前全局请求和路线几何验证使用
 `octoplanner3d_headless`、`octoplanner3d_verify_path` 及相应 smoke。
 
-## 待完成的产品验证
+## 本轮验证与剩余范围
 
-- 在同一地图、同一请求下验证首次准备、内存复用与磁盘恢复的路线和几何结果。
-- 保留已知 free、原始支撑、上下层隔离、机身净空、端点及取消回归。
+2026-11-16 在独立集成工作树验证：Rust 25 项、Windows Release 全局规划 CTest
+19 项、配置与 RunPlan 19 项全部通过。地图模块编译成功，两个迁移头文件相关测试
+通过；`test_active_octomap_gate` 也已独立构建并验证新快照恢复同一份地面路网。
+GitHub 的 Linux global job 同时通过 Rust 和全局规划构建与测试。
+
+`prepared_cache_smoke` 对同一地图、参数及端点比较首次准备、内存复用和磁盘恢复，
+验证路线一致、补面保留、查询参数不重建、机身变化切换 profile、原图不变，以及
+截断缓存重新准备。`surface_smoke` 保留已知 free、原始支撑、上下层、机身净空与
+扫掠回归。取消回归验证空路线及规划器可重用，尚不证明 Rust 调用可被中途打断。
+
 - 接入 mapd regional delta 时再验证增量更新与整图重建的一致性。
 - 分别记录离线、MuJoCo 与实际机器人验证，现场执行仍需独立验收。

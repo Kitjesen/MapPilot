@@ -171,6 +171,13 @@ int main() try {
     require(std::abs(point.z - start.z) < .051, "route switched floors");
   require(planner.validateRoute(route).valid,
           "Rust route failed the final OctoMap geometry check");
+  int cancel_checks = 0;
+  planner.setCancelCheck([&] { return ++cancel_checks > 5; });
+  require(run(goal).empty() &&
+          planner.searchInfo().outcome == OctoPlanner3D::SearchInfo::Outcome::Cancelled,
+          "cancelled Rust query retained an executable route");
+  planner.setCancelCheck({});
+  require(!run(goal).empty(), "cancelled query left the planner busy");
   OctoPlannerGridQueryTest::checkQueryReuse(planner, config);
   OctoPlannerGridQueryTest::checkGoalPolicy(planner, start, {.125, -.075, .325});
   OctoPlannerGridQueryTest::checkGoalPolicy(planner, start, {.975, .025, .41});
