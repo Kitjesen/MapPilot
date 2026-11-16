@@ -133,6 +133,7 @@ add_library(octoplanner3d_global_planner STATIC
   route_smoothing.cpp
 )
 # Raw occupancy stays in OctoMap. Rust MLS owns prepared surfaces and the sparse graph.
+# Geometry rejection can request one bounded Rust detour before the grid fallback.
 target_include_directories(octoplanner3d_global_planner
   PUBLIC
     "${LINGTU_NAV_CPP_DIR}/../../maps/include"
