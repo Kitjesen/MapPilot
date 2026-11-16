@@ -549,7 +549,10 @@ def test_wrong_same_named_project_rejected_before_loading_world(monkeypatch, tmp
 def test_output_inside_source_is_rejected_without_writing(monkeypatch, tmp_path):
     ue = fake_unreal()
     configure_main(monkeypatch, tmp_path, ue, intake([]))
-    monkeypatch.setenv("LINGTU_FACTORY_BAY_EXPORT_DIR", "D:/epic/Projects/FactoryPreview/Export")
+    project = tmp_path / "FactoryPreview" / "FactoryProject.uproject"
+    monkeypatch.setattr(export, "SOURCE_PROJECT", str(project))
+    ue.Paths.get_project_file_path = lambda: str(project)
+    monkeypatch.setenv("LINGTU_FACTORY_BAY_EXPORT_DIR", str(project.parent / "Export"))
     with pytest.raises(ValueError, match="independent"):
         export.main()
     assert ue.calls == []

@@ -7,6 +7,9 @@ from unittest.mock import Mock
 
 import pytest
 
+pytest.importorskip("agents")
+pytest.importorskip("openai")
+
 from decision.llm.client import LLMConfig
 from decision.tasks import conversation_inputs as inputs
 

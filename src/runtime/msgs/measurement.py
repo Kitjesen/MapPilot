@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, ClassVar
 
-import numpy as np
+from .numpy_compat import np
 
 
 def _finite_seconds(value: Any, name: str) -> float:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+from lingtu.assembly.config.maps import default_map_settings, mapd_environment
 from lingtu.assembly.graph.loader import load_runtime_graph
 
 REPO = Path(__file__).resolve().parents[2]
@@ -108,7 +109,9 @@ def test_native_mapctl_is_required_in_field_releases() -> None:
     assert artifact in package_release
     assert f'${{PACKAGE_DIR}}/{artifact}' in install_release
     mapd_unit = _read("scripts/deploy/thunder/lt-maps.service")
-    assert "LINGTU_MAPD_MAX_STRING_BYTES=4096" in mapd_unit
+    assert "EnvironmentFile=/run/lingtu/session.env" in mapd_unit
+    environment = mapd_environment(default_map_settings(), {})
+    assert environment["LINGTU_MAPD_MAX_STRING_BYTES"] == "4096"
 
 
 def test_native_save_map_prune_is_required_in_field_releases() -> None:

@@ -912,6 +912,12 @@ TEST(LocalPlanTask, ObservedBodySnapshotsDoNotReplaceCylinderPlanningEvidence) {
 
   const auto recovered = waitReady();
   ASSERT_TRUE(recovered.plan.ready()) << recovered.debug.searchReason;
+  auto configured_wide = fixture.request;
+  configured_wide.body = std::make_shared<const collision::Body>(widened);
+  configured_wide.observedBody.reset();
+  const nav_kernel::local::scan::Grid configured_grid(scanParams(),configured_wide);
+  ASSERT_TRUE(configured_grid.valid());
+  EXPECT_EQ(configured_grid.inflatedOccupancy(configured_wide.robot.pose.position,0.0),1);
   EXPECT_EQ(fixture.request.body,stableModel);
   EXPECT_EQ(fixture.request.identity.frameEpoch,frameEpoch);
   EXPECT_EQ(fixture.request.environment.collision.generation,mapGeneration);

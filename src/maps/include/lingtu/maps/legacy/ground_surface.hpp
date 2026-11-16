@@ -1,7 +1,7 @@
 #pragma once
 
 // LEGACY: retained for existing mapd and traversability compatibility.
-// Do not add new consumers; global navigation uses SurfaceIndex instead.
+// Do not add new consumers; global navigation uses Rust MLS surface evidence.
 
 #include <algorithm>
 #include <array>

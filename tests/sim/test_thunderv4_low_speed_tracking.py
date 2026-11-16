@@ -1,15 +1,19 @@
 """Physical coverage for the 4998 MuJoCo velocity feedback adapter."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 from sim.scripts.mujoco.continuous_walk import VelocityCommand, _build_engine
 
+POLICY_4998 = (Path(__file__).resolve().parents[2]
+               / "sim/packages/controllers/doso/thunder_v4/locomotion/policy/policy_4998.onnx")
+
 
 @pytest.mark.parametrize("sign", [-1, 1])
 def test_low_speed_sideways_ramp_stop_and_restart(sign):
-    engine = _build_engine()
+    engine = _build_engine(policy_path=POLICY_4998)
     try:
         for _ in range(round(1.0 / engine.control_dt)):
             engine.step(VelocityCommand())
@@ -36,7 +40,7 @@ def test_low_speed_sideways_ramp_stop_and_restart(sign):
 @pytest.mark.parametrize("sign", [-1, 1])
 @pytest.mark.parametrize("slew", [.25, .5, 2.0])
 def test_sideways_reverse_and_turn_without_stopping(sign, slew, record_property):
-    engine = _build_engine()
+    engine = _build_engine(policy_path=POLICY_4998)
     try:
         for _ in range(round(1.0 / engine.control_dt)):
             engine.step(VelocityCommand())

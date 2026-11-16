@@ -249,6 +249,7 @@ def test_promoted_package_contained_visual_projection_resolves_in_fresh_catalog_
 
     tmp_path = _case_root("promoted-relocatable-visual")
     shutil.copytree(REPO_ROOT / "sim" / "packages" / "worlds", tmp_path / "sim" / "packages" / "worlds")
+    shutil.copytree(REPO_ROOT / "sim" / "compat", tmp_path / "sim" / "compat")
     source = _source(tmp_path, _primitive_xml())
     request = _request(source, id="g005_robot", visual={"binding": "RobotVisual:G005"})
     importer = RobotImporter(REPO_ROOT, work_root=tmp_path / "imports")

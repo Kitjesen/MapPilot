@@ -1729,7 +1729,7 @@ def _preflight_runtime(
     policy = (
         _repo_path(policy_value)
         if policy_value
-        else resolve_robot_default_policy(ROOT)["artifact"]
+        else resolve_robot_default_policy(ROOT, "thunderv4@1.0.3")["artifact"]
     )
     paths["policy"] = policy
     if not policy.is_file():

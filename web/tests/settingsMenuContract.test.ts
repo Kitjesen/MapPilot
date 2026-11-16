@@ -5,13 +5,13 @@ import { resetAllLayouts } from '../src/components/floatingWidgetLayout.ts'
 
 const settings = readFileSync(new URL('../src/components/SettingsMenu.tsx', import.meta.url), 'utf8')
 
-test('primary navigation contains four business workspaces and diagnostics belong to settings', () => {
+test('primary navigation contains mapping and navigation while diagnostics belong to settings', () => {
   const topbar = readFileSync(new URL('../src/components/Topbar.tsx', import.meta.url), 'utf8')
   assert.match(topbar, /const observe = isObservationMode\(\)/)
   assert.match(topbar, /observe \? <span[^>]*className=\{styles.viewLabel\}/)
   assert.match(topbar, /name="lingtu-menu"/)
   assert.match(topbar, /onTabChange\(page.key\)/)
-  for (const tab of ['console', 'mapping', 'scene', 'inspection']) {
+  for (const tab of ['mapping', 'scene']) {
     assert.match(topbar, new RegExp(`key: '${tab}'`))
   }
   for (const tab of ['map', 'slam', 'dataflow', 'planner']) assert.doesNotMatch(topbar, new RegExp(`key: '${tab}'`))

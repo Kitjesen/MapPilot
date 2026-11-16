@@ -399,9 +399,6 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
   options.search_resolution_m = optionalDouble(body, "search_resolution_m", options.search_resolution_m);
   options.surface_closing_radius_m = optionalDouble(
     body, "surface_closing_radius_m", options.surface_closing_radius_m);
-  options.surface_max_hole_area_m2 = optionalDouble(
-    body, "surface_max_hole_area_m2", options.surface_max_hole_area_m2);
-  options.surface_max_slope = optionalDouble(body, "surface_max_slope", options.surface_max_slope);
   options.support_height_m = optionalDouble(
     body,
     "support_height_m",
@@ -521,8 +518,6 @@ void emitConstraints(const PlannerOptions & options)
             << options.support_depth_cells << ','
             << "\"search_resolution_m\":" << options.search_resolution_m << ','
             << "\"surface_closing_radius_m\":" << options.surface_closing_radius_m << ','
-            << "\"surface_max_hole_area_m2\":" << options.surface_max_hole_area_m2 << ','
-            << "\"surface_max_slope\":" << options.surface_max_slope << ','
             << "\"support_height_m\":" << options.support_height_m << ','
             << "\"support_height_tolerance_m\":"
             << options.support_height_tolerance_m << ','

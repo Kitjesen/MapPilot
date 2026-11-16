@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -88,8 +89,22 @@ def test_regeneration_matches_bundled_sources_and_manifest(tmp_path):
     assert {p.name for p in generated} == EXPECTED_FILES
     check_pack(tmp_path / "fresh")
     for path in generated:
-        if path.suffix != ".png":
-            assert path.read_bytes() == (ASSETS / path.name).read_bytes()
+        if path.suffix == ".svg":
+            generated_svg = ET.parse(path)
+            bundled_svg = ET.parse(ASSETS / path.name)
+            for svg in (generated_svg, bundled_svg):
+                for element in svg.iter():
+                    for key in ("x", "y", "cx", "cy", "r", "points"):
+                        if key in element.attrib:
+                            # Trigonometric SVG coordinates vary below pixel precision across libm builds.
+                            element.attrib[key] = re.sub(
+                                r"-?\d+(?:\.\d+)?(?:e[+-]?\d+)?",
+                                lambda match: format(float(match[0]), ".10g"),
+                                element.attrib[key],
+                            )
+            assert ET.tostring(generated_svg.getroot()) == ET.tostring(bundled_svg.getroot())
+        elif path.suffix != ".png":
+            assert path.read_text(encoding="utf-8") == (ASSETS / path.name).read_text(encoding="utf-8")
     rasters = []
     for key in MODALITIES:
         with image.open(tmp_path / "fresh" / f"{key}.png") as png:

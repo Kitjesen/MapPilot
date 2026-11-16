@@ -56,6 +56,7 @@ function settings() {
         },
       }
       if (name === 'react-dom') return { createPortal: (view: unknown) => view }
+      if (name === './agentConversation/ModelConnections') return { ModelConnections: () => null }
       if (name === '../hooks/useMapSettings.ts') return { useMapSettings: () => null }
       if (name === '../i18n') return { text: (_locale: string, _en: string, zh: string) => zh }
       if (name === './SurfaceSettings.tsx' || name === './NoGoSettings.tsx' || name === '../services/api' || name === './floatingWidgetLayout') return {}

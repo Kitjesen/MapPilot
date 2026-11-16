@@ -1450,7 +1450,7 @@ mod tests {
         );
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).failure_kind, ROUTE_OCCUPIED);
-        state.update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[]);
+        state.update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[]).unwrap();
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).valid, 1);
     }

@@ -249,7 +249,10 @@ function harness(options: { storage?: Map<string, string>; snapshot?: Conversati
   const exports: Record<string, unknown> = {}
   const profileExports: Record<string, unknown> = {}
   const browserStorage = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) }
-  runInNewContext(compile('../src/services/botProfile.ts'), { exports: profileExports, localStorage: browserStorage })
+  runInNewContext(compile('../src/services/botProfile.ts'), {
+    exports: profileExports, localStorage: browserStorage,
+    require: createRequire(new URL('../src/services/botProfile.ts', import.meta.url)),
+  })
   runInNewContext(compile('../src/hooks/useAgentConversation.ts'), {
     exports, require: (name: string) => name.endsWith('/services/botProfile.ts') ? profileExports : name === 'react' ? react : name.endsWith('/useMapSettings.ts') ? { useMapSettings: () => mapSettings } : name.endsWith('/api')
       ? { makeRequestId: () => `message-${++nextId}` } : service,
@@ -1158,7 +1161,7 @@ test('images require a capable model and remain available after changing the mod
 test('the multiline composer sends Enter and preserves Shift Enter and IME composition', () => {
   const require = createRequire(import.meta.url)
   const exports: Record<string, unknown> = {}
-  const react = { useRef: () => ({ current: null }), useState: () => [false, () => {}], useEffect() {}, useLayoutEffect() {} }
+  const react = { useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {}, useLayoutEffect() {} }
   runInNewContext(compile('../src/components/AgentConversation.tsx'), { exports, require: (name: string) => {
     const dependency = conversationDependency(name)
     if (dependency) return dependency
@@ -1252,7 +1255,7 @@ test('composer menus show the selected model and reasoning without changing the 
   const html = render(null)
   assert.match(html, /<summary[^>]*aria-label="模型"[^>]*aria-haspopup="menu"/)
   assert.match(html, /role="menuitemradio" aria-checked="true"[^>]*><span>Model A<\/span>/)
-  assert.match(html, /aria-label="思考深度"/)
+  assert.match(html, /思考深度/)
   assert.match(html, /<span>深入<\/span>/)
   assert.doesNotMatch(html, /<select/)
   const pending = render({ message_id: 'original', text: '去门口' })

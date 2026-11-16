@@ -100,7 +100,7 @@ void TestSlopedPlaneKeepsCorrectHeightAndLowDetrendedRoughness() {
 
   const auto surface = EstimateGroundSurface(xyz, geometry);
   const auto center = static_cast<std::size_t>(surface.height.index(2, 2));
-  const double expected_slope_deg = std::atan(std::hypot(0.20, -0.10)) * 180.0 / M_PI;
+  const double expected_slope_deg = std::atan(std::hypot(0.20, -0.10)) * 180.0 / std::acos(-1.0);
 
   assert(std::isfinite(surface.height.data[center]));
   assert(std::abs(surface.height.data[center] + 0.30F) < 0.01F);

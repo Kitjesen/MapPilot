@@ -51,7 +51,6 @@
 #include "safety/stop.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
-#include "app/navigation.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "app/semantic/view_query.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
@@ -1030,8 +1029,6 @@ int main(int argc, char **argv) {
             },
             sync_goal_plan_diagnostics});
     goal_replan_runtime_ptr = &goal_replan_runtime;
-    lingtu::nav::endpoint::NavigationRuntimeController navigation_runtime_controller(
-        goal_plan, goal_replan_runtime, motion_stop);
     InspectionCommandActions inspection_command_actions;
     inspection_command_actions.route_source_available = [&]() {
       return inspection_store != nullptr;
@@ -1058,7 +1055,7 @@ int main(int argc, char **argv) {
       const auto interruption = reason == "inspection_cancel_requested"
                                     ? GoalReplanRuntimeInterruption::kInspectionCancel
                                     : GoalReplanRuntimeInterruption::kInspectionPause;
-      const auto result = navigation_runtime_controller.interruptRelated(
+      const auto result = goal_replan_runtime.interruptRelated(
           interruption, steadySeconds(), reason, std::move(commit));
       return InspectionStopBarrierResult{result.accepted, result.reason, result.pending};
     };
@@ -1216,7 +1213,6 @@ int main(int argc, char **argv) {
         goal_replan_runtime,
         motion_stop,
         goal_status_outbox,
-        navigation_runtime_controller,
         goal_terminal_delivery,
         inspection_runtime,
         inspection_command_coordinator,

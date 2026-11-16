@@ -315,7 +315,7 @@ FsmOutput PlannerFsm::checkFutureCollision(const FsmInput &input) {
     const double nextTime = std::min(time + timeStep, oldEnd);
     const Eigen::Vector3d nextPosition =
         info.position_traj_.evaluateDeBoorT(nextTime);
-    if (plannerManager_.grid_map_->getTrajectoryOccupancy(
+    if (plannerManager_.grid_map_->getTimedTrajectoryOccupancy(
             position, info.velocity_traj_.evaluateDeBoorT(time),
             nextPosition, info.velocity_traj_.evaluateDeBoorT(nextTime),
             time, nextTime, &heading) == 0) {
@@ -701,7 +701,7 @@ bool PlannerFsm::trajectoryClear(const LocalTrajData &trajectory, double beginS,
     const double next = std::min(time + kTickPeriodS, endS);
     const Eigen::Vector3d position = trajectory.position_traj_.evaluateDeBoorT(time);
     const Eigen::Vector3d nextPosition = trajectory.position_traj_.evaluateDeBoorT(next);
-    if (plannerManager_.grid_map_->getTrajectoryOccupancy(
+    if (plannerManager_.grid_map_->getTimedTrajectoryOccupancy(
             position, trajectory.velocity_traj_.evaluateDeBoorT(time),
             nextPosition, trajectory.velocity_traj_.evaluateDeBoorT(next),
             time, next, &heading) != 0)
@@ -848,13 +848,12 @@ bool PlannerFsm::planFromCurrentTraj(double nowS, FsmOutput &output,
     startPt_ = odomPos_;
     startVel_ = odomVel_;
     startAcc_.setZero();
-    if (callReboundReplan(true, false, nowS, output)) {
-      referenceReplacementPending_ = false;
-      speedTransitionEndS_ = 0.0;
-      return true;
-    }
-    const bool success = callReboundReplan(true, true, nowS, output);
+    bool success = callReboundReplan(true, false, nowS, output);
+    if (!success) success = callReboundReplan(true, true, nowS, output);
     if (success) {
+      // Measured boundaries belong to the input epoch, before the solve elapsed.
+      info.start_time_ = nowS;
+      setTrajectoryOutput(output);
       referenceReplacementPending_ = false;
       speedTransitionEndS_ = 0.0;
     }

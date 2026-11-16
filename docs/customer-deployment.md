@@ -1,5 +1,9 @@
 # 客户部署与首次使用
 
+**Status:** Current delivery guide
+**Audience:** Deployment engineers and customer administrators
+**Runs on:** Linux field hosts and Windows development consoles
+
 本页面向交付工程师与客户管理员。当前目标是匹配实际 RobotConfig 的 Linux 实机，支持的
 发布架构为 aarch64/x86_64；Windows 本机控制台是开发验收入口，不是机器人安装包。
 

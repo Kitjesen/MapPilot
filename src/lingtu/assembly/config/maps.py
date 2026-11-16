@@ -44,6 +44,8 @@ _FIELDS = {
         "z_up_m": "LINGTU_MAPD_INFLATION_Z_UP_M",
         "z_down_m": "LINGTU_MAPD_INFLATION_Z_DOWN_M",
     },
+    # Saved-map preview defaults are validated without runtime environment fields.
+    "surface": {},
     "capacity": {
         "cloud_bytes": "LINGTU_MAPD_MAX_CLOUD_BYTES",
         "point_fields": "LINGTU_MAPD_MAX_POINT_FIELDS",
@@ -93,12 +95,17 @@ def occupancy_resolution(settings: Mapping[str, Any]) -> float:
 def mapd_environment(settings: Mapping[str, Any], native_environment: Mapping[str, str]) -> dict[str, str]:
     """Validate the source settings once and bind the selected collision geometry."""
     if set(settings) != _FIELDS.keys():
-        raise ValueError("maps must contain publish, input, occupancy, inflation, capacity and save")
+        raise ValueError("maps must contain publish, input, occupancy, inflation, surface, capacity and save")
     environment: dict[str, str] = {}
     for group, fields in _FIELDS.items():
         values = settings[group]
-        if not isinstance(values, Mapping) or set(values) != fields.keys():
+        build_defaults = {"max_hole_area_m2", "max_slope"} if group == "surface" else set()
+        if not isinstance(values, Mapping) or set(values) != fields.keys() | build_defaults:
             raise ValueError(f"maps.{group} has missing or unknown settings")
+        for field in build_defaults:
+            value = values[field]
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"maps.{group}.{field} must be a finite nonnegative number")
         for field, env_key in fields.items():
             value = values[field]
             name = f"maps.{group}.{field}"

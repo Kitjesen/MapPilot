@@ -25,7 +25,7 @@ test('operator dock opens explicitly from a draggable capsule and retains an ind
 })
 
 test('operator dock keeps the mark and collapses without switching the business workspace', () => {
-  assert.match(source, /<Navigation size=\{24\} strokeWidth=\{1\.8\} aria-hidden="true" \/>/)
+  assert.match(source, /<LingTuMark size=\{25\} \/>/)
   assert.match(source, /className=\{styles.logo\} onClick=\{\(\) => setCollapsed\(value => !value\)\}/)
 })
 

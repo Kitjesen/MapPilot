@@ -50,10 +50,6 @@ pub struct SurfaceConfig {
     pub closing_passes: u32,
     /// Exact closing radius in map cells. Zero uses `closing_passes`.
     pub closing_radius_cells: f32,
-    /// Maximum number of cells in one inferred hole.
-    pub max_hole_cells: usize,
-    /// Maximum fitted surface slope in rise/run units.
-    pub max_slope: f32,
 }
 
 impl Default for SurfaceConfig {
@@ -62,8 +58,6 @@ impl Default for SurfaceConfig {
             clearance_cells: 1,
             closing_passes: 0,
             closing_radius_cells: 0.0,
-            max_hole_cells: 0,
-            max_slope: 0.70,
         }
     }
 }
@@ -232,7 +226,7 @@ pub struct PlannerState {
     surface_config: SurfaceConfig,
     graph_config: GraphConfig,
     artifact: PlannerArtifact,
-    incremental_graph: IncrementalGraph,
+    incremental_graph: Option<IncrementalGraph>,
     surface_source: bool,
     query_surface: std::sync::OnceLock<query::Surface>,
     geometry_index: std::sync::OnceLock<route_check::Index>,
@@ -251,7 +245,7 @@ impl PlannerState {
             surface_config,
             graph_config,
             artifact: PlannerArtifact::default(),
-            incremental_graph: IncrementalGraph::default(),
+            incremental_graph: None,
             surface_source: false,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
@@ -261,10 +255,6 @@ impl PlannerState {
         state.known_free.sort_unstable();
         state.known_free.dedup();
         state.artifact = state.rebuild_artifact();
-        state.incremental_graph = IncrementalGraph::from_graph(
-            &graph_cells(&state.artifact.surface),
-            &state.artifact.graph,
-        );
         state
     }
 
@@ -285,14 +275,13 @@ impl PlannerState {
         surface.inferred.dedup();
         let cells = graph_cells(&surface);
         let graph = edges::build_graph(&cells, graph_config);
-        let incremental_graph = IncrementalGraph::from_graph(&cells, &graph);
         Self {
             occupied: Vec::new(),
             known_free: Vec::new(),
             surface_config: SurfaceConfig::default(),
             graph_config,
             artifact: PlannerArtifact { surface, graph },
-            incremental_graph,
+            incremental_graph: None,
             surface_source: true,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
@@ -310,15 +299,13 @@ impl PlannerState {
         surface.observed.dedup();
         surface.inferred.sort_unstable();
         surface.inferred.dedup();
-        let cells = graph_cells(&surface);
-        let incremental_graph = IncrementalGraph::from_graph(&cells, &graph);
         Self {
             occupied: Vec::new(),
             known_free: Vec::new(),
             surface_config: SurfaceConfig::default(),
             graph_config,
             artifact: PlannerArtifact { surface, graph },
-            incremental_graph,
+            incremental_graph: None,
             surface_source: true,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
@@ -355,25 +342,22 @@ impl PlannerState {
         self.geometry_index.take();
     }
 
+    /// Replace occupied/free source evidence. Extracted-surface artifacts reject source updates.
     pub fn update_region(
         &mut self,
         region: RegionBounds,
         replacement_occupied: &[SurfaceCell],
         replacement_known_free: &[SurfaceCell],
-    ) -> RegionUpdateReport {
+    ) -> Result<RegionUpdateReport, &'static str> {
+        if self.surface_source {
+            return Err("source updates require an occupied/free artifact");
+        }
         self.query_surface.take();
         self.geometry_index.take();
-        if self.surface_source {
-            return update_surface_region(
-                &mut self.artifact,
-                region,
-                replacement_occupied,
-                replacement_known_free,
-                self.graph_config,
-                &mut self.incremental_graph,
-            );
-        }
-        update_region(
+        let incremental_graph = self.incremental_graph.get_or_insert_with(|| {
+            IncrementalGraph::from_graph(&graph_cells(&self.artifact.surface), &self.artifact.graph)
+        });
+        Ok(update_region(
             &mut self.artifact,
             &mut self.occupied,
             &mut self.known_free,
@@ -382,8 +366,8 @@ impl PlannerState {
             replacement_known_free,
             self.surface_config,
             self.graph_config,
-            &mut self.incremental_graph,
-        )
+            incremental_graph,
+        ))
     }
 
     fn rebuild_artifact(&self) -> PlannerArtifact {
@@ -393,83 +377,6 @@ impl PlannerState {
             self.surface_config,
             self.graph_config,
         )
-    }
-}
-
-fn update_surface_region(
-    artifact: &mut PlannerArtifact,
-    region: RegionBounds,
-    replacement_observed: &[SurfaceCell],
-    replacement_inferred: &[SurfaceCell],
-    graph_config: GraphConfig,
-    incremental_graph: &mut IncrementalGraph,
-) -> RegionUpdateReport {
-    let old_nodes: HashMap<u32, SurfaceCell> = artifact
-        .graph
-        .nodes
-        .iter()
-        .map(|node| (node.id, node.cell))
-        .collect();
-    let affected_nodes = old_nodes
-        .values()
-        .filter(|cell| region.contains(**cell))
-        .count();
-    let affected_edges = artifact
-        .graph
-        .edges
-        .iter()
-        .filter(|edge| {
-            old_nodes
-                .get(&edge.a)
-                .is_some_and(|cell| region.contains(*cell))
-                || old_nodes
-                    .get(&edge.b)
-                    .is_some_and(|cell| region.contains(*cell))
-                || edge.corridor.iter().any(|cell| region.contains(*cell))
-        })
-        .count();
-
-    artifact
-        .surface
-        .observed
-        .retain(|cell| !region.contains(*cell));
-    artifact
-        .surface
-        .observed
-        .extend_from_slice(replacement_observed);
-    artifact.surface.observed.sort_unstable();
-    artifact.surface.observed.dedup();
-    artifact
-        .surface
-        .inferred
-        .retain(|cell| !region.contains(*cell));
-    artifact
-        .surface
-        .inferred
-        .extend_from_slice(replacement_inferred);
-    artifact.surface.inferred.sort_unstable();
-    artifact.surface.inferred.dedup();
-
-    let cells = graph_cells(&artifact.surface);
-    let graph_report = incremental_graph.update(&cells, region, graph_config);
-    let old_node_count = artifact.graph.nodes.len();
-    artifact.graph = incremental_graph.to_surface_graph();
-    RegionUpdateReport {
-        expanded_region: region,
-        replaced_occupied: replacement_observed.len(),
-        replaced_known_free: replacement_inferred.len(),
-        surface_cells_rebuilt: replacement_observed.len() + replacement_inferred.len(),
-        affected_nodes,
-        affected_edges,
-        preserved_nodes: old_node_count.saturating_sub(affected_nodes),
-        preserved_edges: artifact.graph.edges.len().saturating_sub(affected_edges),
-        reused_nodes: old_node_count.saturating_sub(graph_report.removed_nodes),
-        new_nodes: graph_report.added_nodes,
-        removed_nodes: graph_report.removed_nodes,
-        reused_edges: graph_report.reused_edges,
-        rebuilt_edges: graph_report.rebuilt_edges,
-        route_replan_required: affected_nodes > 0 || affected_edges > 0,
-        graph_rebuilt_globally: graph_report.global_fallback,
     }
 }
 
@@ -664,8 +571,6 @@ pub struct LtMlsCell {
 pub struct LtMlsConfig {
     pub clearance_cells: i32,
     pub closing_passes: u32,
-    pub max_hole_cells: u64,
-    pub max_slope: f32,
     pub closing_radius_cells: f32,
 }
 
@@ -1325,8 +1230,6 @@ pub unsafe extern "C" fn lt_mls_artifact_create(
                 clearance_cells: surface_config.clearance_cells,
                 closing_passes: surface_config.closing_passes,
                 closing_radius_cells: surface_config.closing_radius_cells,
-                max_hole_cells: usize::try_from(surface_config.max_hole_cells).map_err(|_| -3)?,
-                max_slope: surface_config.max_slope,
             },
             GraphConfig {
                 node_spacing_cells: graph_config.node_spacing_cells,
@@ -1949,9 +1852,6 @@ pub unsafe extern "C" fn lt_mls_artifact_set_geometry(
         Ok(c) => c,
         Err(e) => return e,
     };
-    let Ok(max_hole_cells) = usize::try_from(config.max_hole_cells) else {
-        return -3;
-    };
     (*handle).state.set_geometry(
         occupied,
         known_free,
@@ -1959,8 +1859,6 @@ pub unsafe extern "C" fn lt_mls_artifact_set_geometry(
             clearance_cells: config.clearance_cells,
             closing_passes: config.closing_passes,
             closing_radius_cells: config.closing_radius_cells,
-            max_hole_cells,
-            max_slope: config.max_slope,
         },
     );
     0
@@ -2333,7 +2231,8 @@ pub unsafe extern "C" fn lt_mls_artifact_update(
         let known_free = read_cells(replacement_known_free, replacement_known_free_len)?;
         let raw = handle
             .state
-            .update_region(region_from_ffi(region), &occupied, &known_free);
+            .update_region(region_from_ffi(region), &occupied, &known_free)
+            .map_err(|_| -2)?;
         handle.revision = handle.revision.saturating_add(1);
         *report = LtMlsUpdateReport {
             revision: handle.revision,
@@ -2405,7 +2304,6 @@ pub unsafe extern "C" fn lt_mls_extract_surfaces(
             .iter()
             .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
             .collect();
-        let max_hole_cells = usize::try_from(config.max_hole_cells).map_err(|_| -3)?;
         let map = extract_surfaces_with_free(
             &cells,
             &free_cells,
@@ -2413,8 +2311,6 @@ pub unsafe extern "C" fn lt_mls_extract_surfaces(
                 clearance_cells: config.clearance_cells,
                 closing_passes: config.closing_passes,
                 closing_radius_cells: config.closing_radius_cells,
-                max_hole_cells,
-                max_slope: config.max_slope,
             },
         );
         let observed_output = &mut *observed;
@@ -3029,6 +2925,28 @@ mod tests {
     }
 
     #[test]
+    fn sparse_nodes_preserve_same_column_surfaces() {
+        let lower = SurfaceCell::new(0, 0, 0);
+        let upper = SurfaceCell::new(0, 0, 2);
+        let cells = [lower, upper, SurfaceCell::new(2, 0, 1)];
+        let graph = edges::build_graph(
+            &cells,
+            GraphConfig {
+                node_spacing_cells: 3,
+                max_link_cells: 2,
+                max_slope: 0.7,
+                horizontal_hop_cells: 2,
+                ..GraphConfig::default()
+            },
+        );
+        assert!(graph.nodes.iter().any(|node| node.cell == lower));
+        assert!(graph.nodes.iter().any(|node| node.cell == upper));
+        let route = graph_route(&graph, lower, upper).unwrap();
+        assert_eq!(route.first(), Some(&lower));
+        assert_eq!(route.last(), Some(&upper));
+    }
+
+    #[test]
     fn graph_route_returns_endpoint_cells() {
         let cells: Vec<_> = (0..12).map(|x| SurfaceCell::new(x, 0, 0)).collect();
         let graph = edges::build_graph(
@@ -3059,7 +2977,7 @@ mod tests {
         ];
         let inferred = vec![SurfaceCell::new(0, 0, 5)];
         let mut handle = LtMlsArtifactHandle {
-            state: PlannerState::from_surface(observed, inferred, GraphConfig::default()),
+            state: PlannerState::from_surface(observed.clone(), inferred, GraphConfig::default()),
             revision: 1,
         };
         for pass in 0..2 {
@@ -3082,11 +3000,12 @@ mod tests {
                 }
             }
             if pass == 0 {
+                handle.state.set_geometry(observed.clone(), Vec::new(), SurfaceConfig::default());
                 handle.state.update_region(
                     RegionBounds::new(0, 0, 0, 0, 8, 14),
                     &[SurfaceCell::new(0, 0, 12)],
                     &[],
-                );
+                ).unwrap();
             }
         }
     }
@@ -3403,7 +3322,6 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_passes: 1,
-                max_hole_cells: 1,
                 ..SurfaceConfig::default()
             },
         );
@@ -3418,7 +3336,6 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_passes: 1,
-                max_hole_cells: 8,
                 ..SurfaceConfig::default()
             },
         );
@@ -3426,7 +3343,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_uses_surface_and_headroom_rules() {
+    fn closing_respects_known_free_and_headroom() {
         let mut occupied = Vec::new();
         for y in 0..3 {
             for x in 0..3 {
@@ -3442,11 +3359,11 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_passes: 1,
-                max_hole_cells: 1,
                 ..SurfaceConfig::default()
             },
         );
-        assert_eq!(map.inferred, vec![SurfaceCell::new(1, 1, 0)]);
+        assert!(map.inferred.is_empty());
+        assert_eq!(map.observed.len(), occupied.len());
 
         occupied.push(SurfaceCell::new(1, 1, 1));
         let map = extract_surfaces(
@@ -3454,7 +3371,6 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_passes: 1,
-                max_hole_cells: 1,
                 ..SurfaceConfig::default()
             },
         );
@@ -3476,7 +3392,6 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_radius_cells: 1.5,
-                max_hole_cells: 16,
                 ..SurfaceConfig::default()
             },
         );
@@ -3724,7 +3639,33 @@ mod tests {
                 ..GraphConfig::default()
             },
         );
-        let report = state.update_region(RegionBounds::new(1, 1, 1, 1, 0, 0), &[], &[]);
+        assert!(state.incremental_graph.is_none());
+        let mut eager = PlannerState::new(
+            state.occupied.clone(),
+            state.known_free.clone(),
+            state.surface_config,
+            state.graph_config,
+        );
+        eager.incremental_graph = Some(IncrementalGraph::from_cells(
+            &graph_cells(&eager.artifact.surface),
+            eager.graph_config,
+        ));
+        let expected_report = eager
+            .update_region(RegionBounds::new(1, 1, 1, 1, 0, 0), &[], &[])
+            .unwrap();
+        let report = state
+            .update_region(RegionBounds::new(1, 1, 1, 1, 0, 0), &[], &[])
+            .unwrap();
+        assert!(state.incremental_graph.is_some());
+        assert_eq!(report, expected_report);
+        assert_eq!(state.artifact, eager.artifact);
+        let start = SurfaceCell::new(0, 0, 0);
+        let goal = SurfaceCell::new(3, 2, 0);
+        let route = graph_route(&state.artifact.graph, start, goal).unwrap();
+        assert_eq!(
+            route,
+            graph_route(&eager.artifact.graph, start, goal).unwrap()
+        );
         assert!(!report.graph_rebuilt_globally);
         assert!(state
             .occupied()
@@ -3738,6 +3679,45 @@ mod tests {
     }
 
     #[test]
+    fn surface_and_cached_graph_artifacts_reject_source_updates() {
+        let observed = vec![SurfaceCell::new(0, 0, 0), SurfaceCell::new(2, 0, 0)];
+        let inferred = vec![SurfaceCell::new(1, 0, 0)];
+        let config = GraphConfig::default();
+        let surface = PlannerState::from_surface(observed.clone(), inferred.clone(), config);
+        let restored =
+            PlannerState::from_graph(observed, inferred, surface.artifact.graph.clone(), config);
+        for state in [surface, restored] {
+            let before = state.artifact.clone();
+            let mut handle = LtMlsArtifactHandle { state, revision: 7 };
+            assert!(handle
+                .state
+                .update_region(RegionBounds::new(0, 0, 0, 0, 0, 0), &[], &[])
+                .is_err());
+            let free = LtMlsCell { x: 0, y: 0, z: 0 };
+            let mut report = LtMlsUpdateReport {
+                revision: 99,
+                ..LtMlsUpdateReport::default()
+            };
+            let status = unsafe {
+                lt_mls_artifact_update(
+                    &mut handle,
+                    LtMlsRegion::default(),
+                    std::ptr::null(),
+                    0,
+                    &free,
+                    1,
+                    &mut report,
+                )
+            };
+            assert_eq!(status, -2);
+            assert_eq!(handle.state.artifact, before);
+            assert!(handle.state.incremental_graph.is_none());
+            assert_eq!(handle.revision, 7);
+            assert_eq!(report.revision, 99);
+        }
+    }
+
+    #[test]
     fn planner_state_builds_graph_from_surface_config() {
         let occupied = (0..12)
             .map(|x| SurfaceCell::new(x, 0, 0))
@@ -3748,7 +3728,6 @@ mod tests {
             SurfaceConfig {
                 clearance_cells: 1,
                 closing_passes: 1,
-                max_hole_cells: 1,
                 ..SurfaceConfig::default()
             },
             GraphConfig {
@@ -3778,7 +3757,7 @@ mod tests {
                 surface_config,
                 GraphConfig::default(),
             );
-            state.update_region(RegionBounds::new(12, 12, 2, 2, z, z), &[], &[]);
+            state.update_region(RegionBounds::new(12, 12, 2, 2, z, z), &[], &[]).unwrap();
             let full =
                 extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
             assert_eq!(
@@ -3813,7 +3792,7 @@ mod tests {
                 RegionBounds::new(cell.x, cell.x, cell.y, cell.y, cell.z, cell.z),
                 &[],
                 &[],
-            );
+            ).unwrap();
             let full =
                 extract_surfaces_with_free(state.occupied(), state.known_free(), surface_config);
             assert_eq!(state.artifact().surface, full);
@@ -3840,7 +3819,7 @@ mod tests {
             (vec![hole], vec![]),
             (vec![], vec![]),
         ] {
-            state.update_region(region, &occupied, &free);
+            state.update_region(region, &occupied, &free).unwrap();
             assert_eq!(state.known_free(), free.as_slice());
             assert_eq!(state.occupied().contains(&hole), occupied.contains(&hole));
             let full =
@@ -3872,9 +3851,11 @@ mod tests {
             .iter()
             .map(|node| (node.cell, node.id))
             .collect::<HashMap<_, _>>();
-        let mut state = PlannerState::from_graph(cells, Vec::new(), graph, config);
-        assert_eq!(state.incremental_graph.node_by_cell, original_ids);
-        state.update_region(RegionBounds::new(11, 11, 1, 1, 0, 0), &[], &[]);
+        let mut state = PlannerState::from_graph(cells.clone(), Vec::new(), graph, config);
+        assert!(state.incremental_graph.is_none());
+        state.set_geometry(cells, Vec::new(), SurfaceConfig::default());
+        state.update_region(RegionBounds::new(11, 11, 1, 1, 0, 0), &[], &[]).unwrap();
+        assert!(state.incremental_graph.is_some());
         for node in &state.artifact.graph.nodes {
             if let Some(&id) = original_ids.get(&node.cell) {
                 assert_eq!(node.id, id);

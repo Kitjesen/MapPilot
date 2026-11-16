@@ -9,8 +9,13 @@ const require = createRequire(import.meta.url)
 const source = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/ModelConnections.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText
-type View = { type: unknown; props: Record<string, any> }
-const walk = (node: any): View[] => Array.isArray(node) ? node.flatMap(walk) : node?.props ? [node, ...walk(node.props.children)] : []
+type View = { type: unknown; props: Record<string, unknown> }
+const walk = (node: unknown): View[] => {
+  if (Array.isArray(node)) return node.flatMap(walk)
+  if (!node || typeof node !== 'object' || !('props' in node)) return []
+  const view = node as View
+  return [view, ...walk(view.props.children)]
+}
 function render(states: unknown[], api: Record<string, unknown> = {}, onClose = () => {}, clipboard?: { writeText(value: string): Promise<void> }, updates: Array<[number, unknown]> = [], options?: unknown) {
   let index = 0
   const exports: Record<string, (props: unknown) => View> = {}

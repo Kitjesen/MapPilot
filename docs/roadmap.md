@@ -106,13 +106,13 @@ Agent 实际模型配置、普通 HTTP/MCP 指令进入 Agent 的受理链，以
 | 项目 | 当前约定 |
 | --- | --- |
 | 当前状态 | 两组完整原始录制已用原生 LTLIO 回放、保存并完成 saved-ray OctoMap。2026-10-22 去掉强制全朝向外接圆后，同一 GEODE 1,301 帧地图上的原长请求找到 367 点路线，独立 route/sweep/motion 全通过；原 303 帧地图尚未按新配置重测，Corridor 两条长请求仍保留失败。新通路宽度的工业园 MuJoCo 物理组件执行通过；GEODE 物理执行、完整定位/导航 Product 和实机仍未验收 |
-| 固定输入 | SuperLoc Corridor02 全部 8,859 云/178,499 IMU、GEODE Stairs Alpha 全部 3,456 云/34,556 IMU；使用各自标定及保留扫描末端的载体。原始 GT PCD 不替代生成地图；固定请求/机器人几何见 [manifest](../build/dataset-mapping-20261021/manifest.json) |
+| 固定输入 | SuperLoc Corridor02 全部 8,859 云/178,499 IMU、GEODE Stairs Alpha 全部 3,456 云/34,556 IMU；使用各自标定及保留扫描末端的载体。原始 GT PCD 不替代生成地图；固定请求/机器人几何见 manifest（`build/dataset-mapping-20261021/manifest.json`） |
 | 已完成 | 原生 replay 增加可选 `--save-map`，复用现有保存链；Corridor 保存 10,644,022 点/495 关键帧，GEODE 保存 6,243,593 点/303 关键帧，manifest 均完整无丢弃。地图按真实保存射线构建，没有填假地面/未知自由空间；提供真实三维查看、三视图和实际短路径图，Arial 10 pt |
-| 证据 | [原始实验](../build/dataset-mapping-20261021/README.md)和[修正与真实断口证据](../build/dataset-planning-fix-20261021/README.md)。细 Z 搜索和米制边约束通过原生 5 项、Python 5 项及定向 lint；各数据集分别展示三视图和当前路线。完整地图无闭环图优化、此次未走 Product prune；条件位置 RMSE Corridor 1.546 m、GEODE 0.769 m，不作为无条件精度或现场指标 |
+| 证据 | 原始实验（`build/dataset-mapping-20261021/README.md`）和修正与真实断口证据（`build/dataset-planning-fix-20261021/README.md`）。细 Z 搜索和米制边约束通过原生 5 项、Python 5 项及定向 lint；各数据集分别展示三视图和当前路线。完整地图无闭环图优化、此次未走 Product prune；条件位置 RMSE Corridor 1.546 m、GEODE 0.769 m，不作为无条件精度或现场指标 |
 | 明确失败 | Corridor 140→180 s、180→300 s 和 GEODE 15→45 s 在原图仍 open 集耗尽。Corridor 首段存在支撑断口：局部实测地面被擦过体素上方的射线误清除；GEODE 局部 687 个 PCD 表面体素中 537 个无保存扫描命中，清单完整不能替代观测覆盖。原短路线坡度失败已修正。旧 WSL GEODE 749 姿态后 LOST 的平台差异未隔离；更密保存已完成 1,301 帧，但旧构建曾内存不足，失败保留 |
 | 射线修正结果 | builder 0.3.2 的原生 ray/store 2 项通过；完整 Corridor 同证据重建成功，原检查区 226 个 free→occupied，代表体素概率 0.279→0.566；原两条路线仍 empty_path。起点完整连通分量 3,754 与 A* 一致，目标不在其中，前向边界因地面支撑失败而非机体碰撞。实际源点/射线图、叶节点查询和失败日志保留 |
 | 更密保存对照 | GEODE 1,301 帧、16,783,728 点的地图构建成功；687 格检查区 occupied 150→356，原长路线仍 empty_path，短路线 route/sweep/motion 均通过。位姿逐值不变，但帧选择与原 303 帧只重合 131 帧，并非严格超集，不能把每格变化单归因于密度；未改现场默认 |
-| 本轮保存修复 | 10-21 的两次密集保存失败保留于[原记录](../build/map-repair-20261021/README.md)。10-22 已改为流式 PCD、只生成最终紧凑输出云、直接初始化 ICP target；异步 worker 只暂存，owner 确认源未重置后才替换旧图。当前源码 Linux 四目标正常构建及保存/语义/ICP 三项回归通过；固定 495 帧/10,644,022 点与 2,816 帧/37,196,794 点 capture 均完整保存并逐点验证，保存阶段 24.822/89.216 s，进程峰值 RSS 0.847/2.581 GB，定位 target 均可用。[新保存记录](../build/map-save-20261022/README.md)。这是固定 capture IO 证明，不是完整传感回放或现场内存；**生产采样默认仍为 1 s**，原密度实验存在 IMU deskew 混杂变量，未据此改估计器或推广 0 s |
+| 本轮保存修复 | 10-21 的两次密集保存失败保留于原记录（`build/map-repair-20261021/README.md`）。10-22 已改为流式 PCD、只生成最终紧凑输出云、直接初始化 ICP target；异步 worker 只暂存，owner 确认源未重置后才替换旧图。当前源码 Linux 四目标正常构建及保存/语义/ICP 三项回归通过；固定 495 帧/10,644,022 点与 2,816 帧/37,196,794 点 capture 均完整保存并逐点验证，保存阶段 24.822/89.216 s，进程峰值 RSS 0.847/2.581 GB，定位 target 均可用。新保存记录（`build/map-save-20261022/README.md`）。这是固定 capture IO 证明，不是完整传感回放或现场内存；**生产采样默认仍为 1 s**，原密度实验存在 IMU deskew 混杂变量，未据此改估计器或推广 0 s |
 | 下一动作 | 10-22 的全局 XYZ 通路/局部机身分工及物理组件结果保留；10-23 已按用户选择接入单 OBB 的 OctoPlanner3D + SCAN 姿态主链路，当前组件与长路线证据见下方最新状态，不沿用旧版本的物理资格。继续处理仍失败的 Corridor 地图和同请求复测：495 帧闭环校正在同一早期测量基准下消除 A/B 邻域 12/9 条晚期穿面射线，A新增真实命中、B仍缺，尚需重建整图。静止覆盖、完整传感流程保存与 GEODE 物理场景仍待验证；不补假地面或自由空间、不缩小实际机体、不放宽坡度 |
 | 后续资格 | 隔离跨平台结果，再推进同场景原生仿真执行/重载/定位闭环；本轮无 Product 启动、地图激活或机器人运动，不能勾掉现场资格。玻璃三维人工约束仍按下表待执行 |
 
@@ -135,7 +135,7 @@ Agent 实际模型配置、普通 HTTP/MCP 指令进入 Agent 的受理链，以
 
 2026-10-21 导航组件补充：已冻结 GEODE/旧 Garage 地图、原始请求和实际源码，
 使用正式 Go2 RunPlan 与旧诊断配置分别调用共享全局核心、SCAN 和 Follower/Executor，
-结果见[固定地图组件实验](../build/nav-dataset-execution-20261021/README.md)。
+结果见固定地图组件实验（`build/nav-dataset-execution-20261021/README.md`）。
 GEODE 标准碰撞输入可生成样条并完成理想 XY 反馈；Garage 正式参数返回35点但局部仍被阻挡。
 Garage同图原叶查询确认：一个0.10 m占据叶在全局中心圆柱外、在SCAN后圆柱内，
 说明当前起点的全局/局部机体外形合同确有不一致；不以删格或放宽局部尺寸处理。
@@ -143,7 +143,7 @@ Garage同图原叶查询确认：一个0.10 m占据叶在全局中心圆柱外�
 全部测试固定Z，无物理/传感反馈，不能勾掉上面的原生仿真或现场资格。
 旧 GEODE 起点碰撞已定位为实验额外膨胀造成，修正的是fixture，没有修改生产规划算法。
 2026-10-22 初轮修正正式 SCAN 组合的包络与起点接入，见
-[同图复测记录](../build/nav-envelope-20261022/README.md)。全局 XYZ 无朝向搜索使用
+同图复测记录（`build/nav-envelope-20261022/README.md`）。全局 XYZ 无朝向搜索使用
 至少 `local cylinder radius + offset` 的保守圆，上下净空按局部碰撞网格向上取整；
 真实起点及其到首航路点的连接都接受碰撞、支撑和运动约束检查，反馈从原请求起点开始。
 Go2 正式参数仅全局半径 0.155→0.44 m、上净空 0.24→0.25 m 改变，局部机体不缩小。
@@ -196,7 +196,7 @@ OBB占据命中、无效查询及最终几何制动触发均为零，取消下�
 全局 XYZ/双圆柱默认的描述已由上方 10-23 决定更新，不是当前待办。
 
 2026-10-22 朝向/实际模型对照：已用安装版 Go2 URDF 的34个碰撞几何完成离线三维姿态查询，
-并对固定高度 XY+yaw 搜索输出[对比图、原始数据与动画](../build/body-envelope-20261022/index.html)。
+并对固定高度 XY+yaw 搜索输出对比图、原始数据与动画（`build/body-envelope-20261022/index.html`）。
 0.60 m门洞从外接圆拒绝变为朝向双圆柱/URDF姿态路径可达；0.45 m仅标称 URDF + 实验余量可达，
 髋关节外展探针则再次碰墙。Garage原体素与base仍交叠约13 mm，未删除原图证据。
 这不是正式规划器或步态验证；生产 yaw 接入、安装附件、运动包络与共享模型查询仍待完成，
@@ -205,7 +205,7 @@ OBB占据命中、无效查询及最终几何制动触发均为零，取消下�
 随后贯通XYZ+yaw搜索、路线转换和局部执行。接入入口已核实，实施计划已更新。
 
 同日原生对照补充：共享C++全局核心已接受显式固定姿态分部模型，并使用XYZ+yaw搜索。
-[四场demo及原始路线](../build/native-body-routes-20261022/index.html)中，历史0.44 m圆柱绕路
+四场demo及原始路线（`build/native-body-routes-20261022/index.html`）中，历史0.44 m圆柱绕路
 4.211270 m，新分支2.800000 m；初始90°穿门与L形转角分别返回2.441421/2.024264 m，
 三个路线均通过返回后分部扫掠复查；0.28 m通道拒绝实际起始姿态。
 已完成34个primitive保守OBB导出、共同SAT、三维地图扫掠和带朝向索引；
@@ -214,7 +214,7 @@ OBB占据命中、无效查询及最终几何制动触发均为零，取消下�
 还不满足实时要求；当前固定关节及缺相机支架的模型不具备现场资格。
 
 2026-10-22 执行补充：新构建的原生 `navd` 已在 MuJoCo 真实物理反馈中完成两项
-原始 manifest 验证，见[本轮修复与证据](../build/navigation-repair-20261022/README.md)。
+原始 manifest 验证，见本轮修复与证据（`build/navigation-repair-20261022/README.md`）。
 行人横穿用例实走 5.71873 m，遇阻停车后继续原目标，最终 XY 误差 0.177995 m，
 3,942 个物理检查步无实体接触；静态工业园原起终点相距 59.94164 m，实走 67.05093 m，
 最终 XY 误差 0.301289 m、原生 reached，33,131 个物理检查步无实体接触。
@@ -226,7 +226,7 @@ OBB占据命中、无效查询及最终几何制动触发均为零，取消下�
 GEODE 原长请求的完整连通分量诊断也已完成：67,454 格、队列耗尽，目标不在其中，
 最近可达点距目标仍 13.8496 m。该点向前九个邻居都存在支撑失败，其中八个同时有
 机身碰撞；另一个机身净空有效，但已观测顶层表面不在当前位置要求的支撑高度内。
-因此不能统一归因于“地面没保存”或“搜索预算不足”。[原叶节点与边界记录](../build/navigation-repair-20261022/geode-frontier/README.md)
+因此不能统一归因于“地面没保存”或“搜索预算不足”。原叶节点与边界记录（`build/navigation-repair-20261022/geode-frontier/README.md`）
 保留实际占据/自由/未知证据；原三条长路线和楼梯执行资格继续保持未完成。
 同一断口随后用当前源码检查 98 个实际可达前驱与 6 个候选高度、共 588 条连接；
 四个抬高候选虽有支撑却均有机身碰撞，未找到被 26 邻域遗漏的合法连接。
@@ -234,13 +234,13 @@ GEODE 原长请求的完整连通分量诊断也已完成：67,454 格、队列�
 进一步对照正式局部双圆柱发现，上述碰撞属于保守外接圆：使用半径 0.25 m、
 前后偏移 ±0.19 m、上下净空 0.10/0.25 m，在原地图同高 +X 的 20 cm 连接上，
 实际朝向包络连续扫掠和严格支撑均通过，未知机体体素为 0。
-[朝向包络对照](../build/navigation-repair-20261022/geode-endpoint-probe/oriented-envelope.json)
+朝向包络对照（`build/navigation-repair-20261022/geode-endpoint-probe/oriented-envelope.json`）
 确认存在外接圆误拒绝的具体例子。随后用户要求避免全局朝向搜索和执行链扩建；
 重新审查确认已有局部和最终命令链负责实际机身及转身扫掠，因此撤回该扩大方案。
 当时改为全局检查实际通路宽度，局部保留完整双圆柱；Go2 全局半径 0.44→0.25 m，
 Thunder 0.65→0.40 m，显式更大值仍保留，上下净空、支撑和坡度不变。
 这是全局参考通路与局部运动验证的分工，不宣称参考通路包含每个转角的可执行朝向。
-本轮[简化修复记录](../build/nav-corridor-20261022/README.md)包含 Python 53 项、
+本轮简化修复记录（`build/nav-corridor-20261022/README.md`）包含 Python 53 项、
 全局 6 组、局部 2 个新增和 6 个相关用例、端点配置与真实 Grid 纯旋转集成 2 项通过。
 同一 GEODE 加密地图的原长请求已返回 367 点，终点误差 0.055576 m，独立核验通过；
 只调整全局半径 0.44→0.25 m 和上净空 0.24→0.25 m，原始起终点及其他条件保留。
@@ -253,7 +253,7 @@ Corridor 两条长请求和 GEODE 物理运动仍未通过本轮验收。
 
 森哥进一步要求每次结果同时展示其他算法，具体规则见[算法结果对照](testing.md#algorithm-result-comparisons)。
 已核对的官方 Elevator-LIO/GenZ-LIO 与当前 LingTu 的共同样本结果、历史903规划对照及瓶颈
-集中在[对照报告](../build/algorithm-comparison-20261021/README.md)。GEODE当前概率平面
+集中在对照报告（`build/algorithm-comparison-20261021/README.md`）。GEODE当前概率平面
 0.292340/0.313724 m（IMU/LiDAR假设）仍高于官方GenZ的0.247597/0.277696 m；
 Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ机制适配与官方完整算法分开标识。
 当前Corridor完整官方外部定位基线、GEODE/Garage同地图同几何的独立外部规划基线仍未测，
@@ -269,11 +269,11 @@ Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ�
 | 当前状态 | 本轮对话控制的本地收尾已验收，独立代码/架构审阅通过；10-20 开机后曾连接 Go2/NX，最后成功状态为 `.93` stopped；10-20 20:37 及 10-21 原地址 SSH/HTTP 均不可达，当前在线状态未确认。当前修复未部署，本轮静止采集待正式启动，监督运动未验收 |
 | 产品与团队 | 固定现有 `nav/semantic`；产品经理、控制架构、前后端实现、现场验收和独立审阅分工，主代理集成。各角色与首演范围见 [团队决议](research/plan.md#团队首轮决议与实机顺序2026-10-20) |
 | 本轮改动 | Agent owner 全句识别查询/保持/取消并保持 run；空闲和终态查询如实显示；HTTP/MCP 的 control_only 约束阻止盲态/本地仍活动时启动新任务；停止未确认不能新建，真实受理的新 run 不因旧轮询隐藏；成功任务取消不改写结果；Web 保留输入、草稿和 HTTP 409 具体拒绝原因；未绑定我/他拒绝选人；修复缺省标定校验与旧测试夹具 |
-| 完成证据 | [本轮验收](../build/dialogue-control-20261020/README.md)：最终 owner/HTTP/MCP/Agent 组件/标定合并 158 项及 59 subtests、网页 46 项通过，类型/lint/API 生成一致性及网页生产构建通过；首轮 Follow/语义/Agent 组合 121 项保留。记录跨层问题发现和修复，候选源码另留选定文件快照 |
+| 完成证据 | 本轮验收（`build/dialogue-control-20261020/README.md`）：最终 owner/HTTP/MCP/Agent 组件/标定合并 158 项及 59 subtests、网页 46 项通过，类型/lint/API 生成一致性及网页生产构建通过；首轮 Follow/语义/Agent 组合 121 项保留。记录跨层问题发现和修复，候选源码另留选定文件快照 |
 | 测试入口 | [10-21 启动说明](operations/dialogue-test-20261021.md) 区分 Windows 本地回归、旧 `.93 map/camera` 静止检查与新版本 `nav/semantic`。当前工作树定向回归 68 项、网页控制 46 项通过；它们与既有测试重叠，不累计为新场景验收。结果保存在 `build/dialogue-start-20261021/`。纠正旧 doctor 示例不支持的 `--robot` 参数及视频 Rust/Cargo 构建说明 |
 | 方案讨论 | 10-21 森哥确认“一个执行中运动任务，明确目标直接切换，有歧义先停止旧运动再询问”。[已确认交互](research/plan.md#已确认的任务切换交互2026-10-21待实现) 由同一后端 Agent owner 管理交接，网页请求函数与 Python SDK 封装同一 HTTP API；等待澄清不自动恢复旧运动，自动切换尚未实现 |
 | 实机缺口 | 森哥已明确授权代理执行正式 `map/camera` 启动，但实际 `sudo -n ... switch` 返回 `a password is required`，部署密钥的 root SSH 也被拒绝；需终端交互提权。控制 HTTP 不接收 variant，无法确认守护进程固定相机变体。相机使用宇树 EDU 架子，实测外参仍未验证。旧 DINO/人物 YOLO TensorRT 引擎有既往数值失败，fixed-conv 人物 ONNX 待 NX 新对照。NX 缺精确 GTSAM 4.3 与锁定 ARM 视频 runtime，本地 x86 产物不能替代；此前完整 calibration 39 项及 18 subtests 通过仅证明配置校验，未改物理外参 |
-| 下一动作 | [开机后现场记录](../build/dialogue-field-20261020/README.md)：恢复目标连接和交互提权后正式启动 `.93 map/camera`，另存静止 RGB-D/SLAM/authority/停止证据；7,990 文件源码候选已冻结且两份正式 real RunPlan 纯解析通过，fixed-conv 人物诊断候选及同输入 CPU 参考已备齐、待上传确认与 NX 对照。`lt_pgo` 漏包已修且打包自测通过。ARM 构建与新版本沿正式候选/安装流程验收，其他身份算法/多轮功能保留缺口 |
+| 下一动作 | 开机后现场记录（`build/dialogue-field-20261020/README.md`）：恢复目标连接和交互提权后正式启动 `.93 map/camera`，另存静止 RGB-D/SLAM/authority/停止证据；7,990 文件源码候选已冻结且两份正式 real RunPlan 纯解析通过，fixed-conv 人物诊断候选及同输入 CPU 参考已备齐、待上传确认与 NX 对照。`lt_pgo` 漏包已修且打包自测通过。ARM 构建与新版本沿正式候选/安装流程验收，其他身份算法/多轮功能保留缺口 |
 | 仍未交付 | 语音、Follow pause/resume、原地观察对话任务、多轮目标纠正/后继任务、长期身份算法补齐及整机资格；不因本轮控制回归通过勾掉 |
 
 ### 地图编辑与人工障碍约束（2026-10-21）
@@ -281,7 +281,7 @@ Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ�
 本节维护地图编辑工作的完成状态与后续顺序；上方对话/现场任务和下方 SLAM 的
 未完成资格保持原状。当前界面验收使用保留的 903 点云采样和封闭浏览器夹具，
 不能据此勾掉原生完整地图、仿真或实机运动验收。实现与截图见
-[本地编辑器记录](../build/ui-map-editor-20261020/verification.md)。
+本地编辑器记录（`build/ui-map-editor-20261020/verification.md`）。
 
 已完成的本地功能：
 
@@ -341,9 +341,9 @@ Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ�
 | 范围 | 复用现有 Agent、SemanticPlanner、GoalService、共同观测和原生导航；增加普通入口适配、运行查询/取消、执行证据门控、原生语义视点查询桥与搜索状态；不新增任务引擎，不让 Python 投影地图授权运动 |
 | 完成条件 | 普通入口返回 `run_id`；旧 run 的取消不能影响新 run；执行任务没有领域终态不能成功；搜索候选必须通过原生三维预览；到达观察点后必须用更新鲜观测重新判断目标；迟到结果、相机重启和地图切换不能推进旧任务 |
 | 本轮改动 | Agent 与 LLMModule 使用同一已解析 model、URL、密钥环境变量名和单次请求超时；AgentLoop 增加单次模型总时限；HTTP/MCP 普通入口 Agent-first；Semantic 的通用 `send_instruction` 不再作为独立 `@skill` owner；新增 Agent run 查询/取消和原生语义视点桥接代码 |
-| 本地证据 | 总记录见 [本轮验收](../build/semantic-acceptance-20261017/README.md)：语义/观测/Agent 相关 157 项、搜索状态 7 项、Follow 95 项、HTTP ASGI 4 项、架构 16 项、最终 Agent/导航/生命周期/集成 103 项、正式变体与 stack 5 项通过；native adapter 37 项通过，WSL `lingtu_nav_client` 构建成功，真实 CycloneDDS request/result、无关 request_id 隔离和 120 ms 无响应超时通过，既有 semantic views 算法退出码 0。Follow 首轮 95 项曾有 1 项等待正感知超时，隔离和整组复跑均通过，原记录保留 |
+| 本地证据 | 总记录见 本轮验收（`build/semantic-acceptance-20261017/README.md`）：语义/观测/Agent 相关 157 项、搜索状态 7 项、Follow 95 项、HTTP ASGI 4 项、架构 16 项、最终 Agent/导航/生命周期/集成 103 项、正式变体与 stack 5 项通过；native adapter 37 项通过，WSL `lingtu_nav_client` 构建成功，真实 CycloneDDS request/result、无关 request_id 隔离和 120 ms 无响应超时通过，既有 semantic views 算法退出码 0。Follow 首轮 95 项曾有 1 项等待正感知超时，隔离和整组复跑均通过，原记录保留 |
 | 真实模型边界 | `kimi-k3` 用生产 Agent 工具格式做无运动检查：单步“找水”在 17.4 s 选择 `detect_object`，单步“跟随我”在 18.2 s 选择 `follow_person`；两次继续找水均在首次模型响应前 30 s 超时，handler 未执行。因此只证明工具选择接口可达，不证明真实 provider 全链成功 |
-| 2026-10-18 现场与仿真 | [本轮记录](../build/semantic-field-20261018/README.md)：NX 原 Wi-Fi IP 已验证；正式 `map/camera` 静止采集 RGB/深度约 30 FPS，连续预览可用，SLAM `TRACKING`，authority `none`。三组实采 RGB-D 在 PC 用生产函数均检测到一人、输出相机光学坐标，未验证人物身份或机体坐标。NX Host 仍缺模型运行依赖；未部署当前源码或发送运动目标。GTSAM 4.3 Windows SDK 和当前 `ltlio` SLAM 构建已完成，`route` 已修正；no-motion 已通过启动/传感器就绪，但固定目标 `goal_snap_exhausted`、周期定位 stale。另查明采集使用后雷达 site、SLAM 配前雷达外参；无视频时真值缺采样被误报成漂移。停止 ACK/零命令/清权/零残留通过，完整导航仍未验收。语义 task-flow 仅为固定响应/fixture grounding，计划仍 pending |
+| 2026-10-18 现场与仿真 | 本轮记录（`build/semantic-field-20261018/README.md`）：NX 原 Wi-Fi IP 已验证；正式 `map/camera` 静止采集 RGB/深度约 30 FPS，连续预览可用，SLAM `TRACKING`，authority `none`。三组实采 RGB-D 在 PC 用生产函数均检测到一人、输出相机光学坐标，未验证人物身份或机体坐标。NX Host 仍缺模型运行依赖；未部署当前源码或发送运动目标。GTSAM 4.3 Windows SDK 和当前 `ltlio` SLAM 构建已完成，`route` 已修正；no-motion 已通过启动/传感器就绪，但固定目标 `goal_snap_exhausted`、周期定位 stale。另查明采集使用后雷达 site、SLAM 配前雷达外参；无视频时真值缺采样被误报成漂移。停止 ACK/零命令/清权/零残留通过，完整导航仍未验收。语义 task-flow 仅为固定响应/fixture grounding，计划仍 pending |
 | 同条件修正复测 | 已显式统一仿真前雷达 mount、mapd offset 并补静止真值，6 项定向测试通过。18:31 同场景复测仍失败：真实机体 XY 变化约 3.2 mm，但 IMU 实际仅约 10 Hz、4370 个调度 tick 被丢弃，SLAM 只接收 197 个初始化样本（要求 200），没有注册点云，未进入规划；停止与进程清理仍通过。缺失 SLAM 测量另报 unavailable 的修正有 3 项定向测试，不再误称为漂移。原失败和新失败分别保留，不能宣称外参修正已经通过定位/规划验收 |
 | 下一动作 | 优先修正仿真 IMU 调度/发布实际频率并恢复 SLAM 初始化，再复测固定场景与目标；恢复后继续验证 saved-ray 地图自由空间/支撑和周期定位 freshness。收口目标板模型环境和正式 `nav/semantic` 前，保持相机外参未验证的 preflight 阻断；这些条件完成后再安排监督实机运动，不扩成 TaskPlan 持久引擎 |
 
@@ -359,7 +359,7 @@ Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ�
 | 验证范围 | 先补本轮装配和任务交互的定向回归，再用目标相机分辨率的连续输入，同时运行视频和感知/共同观测消费者，通过实际产品调用入口保存本地端到端记录；记录首帧/恢复耗时、帧龄 p50/p95、码率和 CPU/内存。替身、真实尺寸合成输入、连续真实回放分别标记，运动端点替身不计作运动或仿真验收 |
 | 本轮改动 | tracking 增加与 map/nav 相同的 standard/camera 变体，sim 保留 standard；同步/异步 SDK 增加开始、双 ID 查询和定向取消；新增 640×480 SHM→共同观测→Follow→Gateway 集成；原生限频从处理结束改为 SHM 读取开始，避免将校验/复制/提交耗时额外叠加 |
 | 结果 | 装配相关 26 项、MuJoCo 进程声明 1 项、SDK 81 项/21 subtests、新旧 Follow 观测集成 6 项、原生 GStreamer 2/2 通过；相同 20 秒输入解码帧数 254→373，双时钟确认轮 382（约 12.7→19.1 FPS）；确认轮无/有视频单调时钟处理 p95 为 92.73/96.61 ms。观测到的 wall-clock 秒级跳变及首帧长耗时均保留，不作为实机实时资格 |
-| 结果入口 | [本轮验收与过程](../build/tracking-video-check/README.md)；[负载工具](../tools/bench/follow_camera.py)；[SHM 到 Follow API 集成](../tests/integration/semantic/test_follow_camera_api.py)；API 的 Follow 章节已同步 SDK 用法 |
+| 结果入口 | 本轮验收与过程（`build/tracking-video-check/README.md`）；[负载工具](../tools/bench/follow_camera.py)；[SHM 到 Follow API 集成](../tests/integration/semantic/test_follow_camera_api.py)；API 的 Follow 章节已同步 SDK 用法 |
 | 下一动作 | 本地完成自然语言 Agent 入口和语义搜索的组合回归；机器人接入后测匹配架构的运行时、真实 RGB-D、相机外参、浏览器/感知并行负载和完整产品启停，再进行监督下的基础导航与跟随 |
 
 ### 已有结果：视频环境与产品启停基础
@@ -369,7 +369,7 @@ Slippage上的排序不同，不能以单场景替换整套系统。内部GenZ�
 | 当前状态 | 已验收（本地）；真实目标板、完整机器人 Product、硬件编码与公网尚未验收 |
 | 已完成 | GStreamer 1.28.8 / gst-plugins-rs 0.15.4 固定环境；map/camera、nav/camera 显式 video；RunPlan v11；视频降级、原生新帧状态、断流恢复、标准构建和带架构检查的运行库安装/打包 |
 | 实际服务证据 | 安装并迁移后的程序与运行库启动临时 systemd 服务；601 代来源就绪、断流超过 6 秒、同进程恢复 602 代来源，NRestarts=0；停止后端口、临时单元与 SHM 清理 |
-| 结果入口 | [验收报告](../build/camera_video_foundation_tests/RESULTS.md)；[实现与研究记录](research/video.md#正式启停接入2026-10-17本地基础已实现)；[目标配置模板](../config/video.env.example) |
+| 结果入口 | 验收报告（`build/camera_video_foundation_tests/RESULTS.md`）；[实现与研究记录](research/video.md#正式启停接入2026-10-17本地基础已实现)；[目标配置模板](../config/video.env.example) |
 
 ### 已有结果：语义代码职责整理
 
@@ -742,4 +742,4 @@ simulation success does not qualify physical motion or authorize publication.
 保留已有三维障碍、地面与高度约束；局部实时碰撞仍归 SCAN，终点朝向归 Executor。
 此前 XYZ+yaw 接入和分部全局扫掠条目保留为历史实验，不再描述生产默认。
 MLS 三维表面连通图、补面与跨层验证仍是后续工作，未切换生产算法。
-证据：[2026-10-30 简化与表面调查](../build/xyz-global-20261030/README.md)。
+证据：2026-10-30 简化与表面调查（`build/xyz-global-20261030/README.md`）。

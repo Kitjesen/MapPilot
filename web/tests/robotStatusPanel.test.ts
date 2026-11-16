@@ -11,11 +11,11 @@ const sse = readFileSync(new URL('../src/hooks/useSSE.ts', import.meta.url), 'ut
 const planner = readFileSync(new URL('../src/components/PlannerTuning.tsx', import.meta.url), 'utf8')
 const localization = readFileSync(new URL('../src/components/LocalizationCard.tsx', import.meta.url), 'utf8')
 
-test('console shows current robot state without Product switch preview', () => {
-  assert.match(app, /<RobotStatusPanel/)
+test('scene consumes live robot state without Product switch preview', () => {
+  assert.match(app, /<SceneView/)
   assert.doesNotMatch(app, /ProductModePanel/)
   assert.match(panel, /await onRefresh\(\)/)
-  assert.match(app, /onRefresh=\{sseState\.refresh\}/)
+  assert.match(app, /sseState=\{sseState\}/)
   assert.match(panel, /globalRelocalize\(activeMap\)/)
   assert.doesNotMatch(panel, /target_product|ProductControl|copy.*command/i)
 })

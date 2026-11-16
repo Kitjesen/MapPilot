@@ -23,6 +23,7 @@ DOCUMENT_NAMES = (
     "roadmap.md",
 )
 CURATED_PAGES = tuple(DOCS_ROOT / name for name in DOCUMENT_NAMES)
+SUPPORT_DOCUMENT_NAMES = ("customer-deployment.md", "error-codes.md")
 DOCUMENT_IDS = {
     "home",
     "product",
@@ -89,7 +90,7 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
 
 
 def test_documentation_tree_contains_only_maintained_handbook_pages() -> None:
-    expected = {f"docs/{name}" for name in DOCUMENT_NAMES}
+    expected = {f"docs/{name}" for name in (*DOCUMENT_NAMES, *SUPPORT_DOCUMENT_NAMES)}
     actual = {
         path.relative_to(REPOSITORY_ROOT).as_posix()
         for path in DOCS_ROOT.glob("*.md")

@@ -106,9 +106,12 @@ pub(crate) fn place_nodes_with_forced(
         nodes.dedup();
     } else {
         let far_from_nodes = |nodes: &[usize], index: usize| {
-            nodes
-                .iter()
-                .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
+            nodes.iter().all(|&other| {
+                let same_column = cells[index].x == cells[other].x
+                    && cells[index].y == cells[other].y
+                    && cells[index].z != cells[other].z;
+                same_column || squared_distance(cells[index], cells[other]) >= spacing * spacing
+            })
         };
         let mut candidates: Vec<usize> = (0..cells.len())
             .filter(|&index| wall[index] + 1e-6 >= clearance && far_from_nodes(&nodes, index))
@@ -157,7 +160,7 @@ pub(crate) fn place_nodes_with_forced(
 mod tests {
     use super::*;
 
-    fn original_placement(
+    fn general_placement(
         cells: &[SurfaceCell],
         adjacency: &[Vec<(usize, f32)>],
         wall: &[f32],
@@ -172,9 +175,12 @@ mod tests {
         nodes.sort_unstable();
         nodes.dedup();
         let far = |nodes: &[usize], index: usize| {
-            nodes
-                .iter()
-                .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
+            nodes.iter().all(|&other| {
+                let same_column = cells[index].x == cells[other].x
+                    && cells[index].y == cells[other].y
+                    && cells[index].z != cells[other].z;
+                same_column || squared_distance(cells[index], cells[other]) >= spacing * spacing
+            })
         };
         let mut candidates = (0..cells.len())
             .filter(|&index| {
@@ -219,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn placement_matches_original() {
+    fn placement_matches_general_selection() {
         for levels in [&[0][..], &[0, 1, 5][..]] {
             let mut cells = Vec::new();
             for x in 0..8 {
@@ -245,7 +251,7 @@ mod tests {
                     let adjacency = crate::adjacency::build_adjacency(&cells, config);
                     assert_eq!(
                         place_nodes_with_forced(&cells, &adjacency, &wall, config, &forced),
-                        original_placement(&cells, &adjacency, &wall, config, &forced),
+                        general_placement(&cells, &adjacency, &wall, config, &forced),
                         "spacing={spacing} clearance={clearance} layers={levels:?}",
                     );
                 }

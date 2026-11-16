@@ -2,6 +2,11 @@
 
 日期：2026-11-15
 
+本文保留 2026-11-15 各阶段的历史结果。文中的“当前”和运行命令均指对应试验版本。
+使用 C++ `SurfaceIndex` 的 `mls_surface_compare.cpp` 已退役，历史源码可从
+`79f9562a` 获取。当前生产入口及迁移状态见
+[`mls-rust-migration-20261115.md`](../design/mls-rust-migration-20261115.md)。
+
 本轮使用同一份 OctoMap 文件：
 
 ```text
@@ -10,7 +15,7 @@ build/arrival-box-20261027/occlusion-map-final/same_source_map/octomap.ot
 
 地图分辨率为 0.10 m。占据叶节点展开为相同的整数体素列后，分别输入 Rust `lingtu_mls_core` 和 C++ `SurfaceIndex`。表面图统计使用同一个 C++ `SurfaceGraph` 和同一套搜索配置，隔离表面表示差异。全局几何复核使用当前 C++ `OctoPlanner3D`，起点和终点来自已通过的 MuJoCo 场景请求。
 
-运行命令：
+历史运行命令：
 
 ```powershell
 build/artifact-check/Release/octoplanner3d_mls_surface_compare.exe `
@@ -127,7 +132,7 @@ components`。节点和边的数量级已经接近，但 Rust 仍保留了 C++ �
 这一步的结果足以进入下一阶段的 Rust node/edge 接口对照，但不足以宣称
 现场默认规划器已经替换。
 
-当前复测命令仍为：
+该版本的历史复测命令为：
 
 ```powershell
 build/artifact-check/Release/octoplanner3d_mls_surface_compare.exe `
@@ -155,3 +160,14 @@ handle，`startPlan()` 先查询 Rust 路线，并对端点连接和每段路线
 几何复核。Rust query 保持一次静态路线搜索，几何拒绝交给 C++ fallback 或外层重新规划。该接入已在 arrival-box headless
 查询中看到 `used_rust_graph=true`，但还不代表 C++ `SurfaceGraph` 已删除或 Rust
 surface/cache 已完成迁移。
+
+
+## 2026-11-16 迁移收口
+
+生产 `PlannerArtifact` 持有 Rust 表面和路网。候选经 C++ OctoMap 几何复核，拒绝后
+最多进行一次 Rust 绕行重试，再回退 XYZ 网格 A*。C++ `SurfaceIndex` 已退出生产。
+原始支撑直接查询 OctoMap，Rust 支撑查询用于 inferred 补面，避免图候选的净空
+筛选丢失可用原始地面。prepared cache 使用 `.7` 格式恢复已保存的 Rust 表面和图。
+
+本文中的 C++/Rust 表面对齐、构图耗时和通过数量均保留其当时版本和地图范围。
+本次构建、取消、缓存恢复以及真实机器人执行的结果由对应验证记录给出。

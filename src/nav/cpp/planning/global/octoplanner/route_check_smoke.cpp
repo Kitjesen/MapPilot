@@ -80,7 +80,7 @@ void compare(const char* name, const std::shared_ptr<octomap::OcTree>& tree,
   }
   const LtMlsConfig surface{
       static_cast<int>(std::ceil((c.support_height_m + std::max(r, c.body_clearance_above_m)) / r)),
-      static_cast<unsigned>(std::ceil(c.surface_closing_radius_m / r)), 0, .70F,
+      static_cast<unsigned>(std::ceil(c.surface_closing_radius_m / r)),
       static_cast<float>(c.surface_closing_radius_m / r)};
   const LtMlsGraphConfig graph{1,5,0,0,0,0,.70F,4,2};
   LtMlsArtifact* raw = nullptr;

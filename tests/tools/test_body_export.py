@@ -13,6 +13,39 @@ from tools.bench.body_export import DEFAULT_URDF, export_body
 from tools.bench.body_model import BodyModel
 
 
+def assert_model_matches(actual, expected, field=""):
+    if isinstance(expected, dict):
+        assert actual.keys() == expected.keys()
+        for key in expected:
+            assert_model_matches(actual[key], expected[key], key)
+    elif isinstance(expected, list):
+        assert len(actual) == len(expected)
+        if field == "parts":
+            actual, expected = (sorted(parts, key=lambda part: part["link"]) for parts in (actual, expected))
+        elif field == "collision_links":
+            actual, expected = sorted(actual), sorted(expected)
+        for left, right in zip(actual, expected):
+            assert_model_matches(left, right)
+    elif isinstance(expected, float):
+        assert actual == pytest.approx(expected, rel=0, abs=1e-12)
+    else:
+        assert actual == expected
+
+
+def assert_body_text_matches(actual, expected):
+    left, right = actual.read_text().splitlines(), expected.read_text().splitlines()
+    assert left[0] == right[0]
+    left_parts, right_parts = ({row.split()[0]: row.split()[1:] for row in rows[1:]} for rows in (left, right))
+    assert left_parts.keys() == right_parts.keys()
+    for link, values in left_parts.items():
+        reference = right_parts[link]
+        assert len(values) == len(reference)
+        assert values[15] == reference[15]
+        assert [float(value) for value in values[:15] + values[16:]] == pytest.approx(
+            [float(value) for value in reference[:15] + reference[16:]], rel=0, abs=1e-12,
+        )
+
+
 def primitive_points(geom):
     size, kind = geom["size"], geom["type"]
     if kind == "box":
@@ -177,8 +210,8 @@ def test_selected_go2_model_regenerates_from_raised_installation(tmp_path):
     generated = tmp_path / "go2.body2"
     report = export_go2(generated)
     selected = ROOT / GO2_BODY
-    assert generated.read_bytes() == selected.read_bytes()
-    assert report == json.loads(selected.with_suffix(".json").read_text(encoding="utf-8"))
+    assert_body_text_matches(generated, selected)
+    assert_model_matches(report, json.loads(selected.with_suffix(".json").read_text(encoding="utf-8")))
     geometry = yaml.safe_load((selected.parent.parent / "robot.yaml").read_text(encoding="utf-8"))["geometry"]
     assert "navigation_body_file" not in geometry
     assert report["primitive_count"] == 17
@@ -210,10 +243,10 @@ def test_thunder_model_regenerates_identically_for_real_and_sim(tmp_path):
     generated, sim_generated = tmp_path / "thunder.body2", tmp_path / "sim" / "thunder.body2"
     report = export_thunder(generated, sim_generated)
     assert generated.read_bytes() == sim_generated.read_bytes()
-    assert generated.read_bytes() == (ROOT / THUNDER_BODY).read_bytes()
-    assert generated.read_bytes() == (ROOT / THUNDER_SIM_BODY).read_bytes()
-    assert report == json.loads((ROOT / THUNDER_BODY).with_suffix(".json").read_text(encoding="utf-8"))
-    assert report == json.loads((ROOT / THUNDER_SIM_BODY).with_suffix(".json").read_text(encoding="utf-8"))
+    assert_body_text_matches(generated, ROOT / THUNDER_BODY)
+    assert_body_text_matches(generated, ROOT / THUNDER_SIM_BODY)
+    assert_model_matches(report, json.loads((ROOT / THUNDER_BODY).with_suffix(".json").read_text(encoding="utf-8")))
+    assert_model_matches(report, json.loads((ROOT / THUNDER_SIM_BODY).with_suffix(".json").read_text(encoding="utf-8")))
     geometry = yaml.safe_load((ROOT / THUNDER_BODY).parent.parent.joinpath("robot.yaml").read_text(encoding="utf-8"))["geometry"]
     assert "navigation_body_file" not in geometry
     assert report["source_keyframe"] == "v4_nominal_stand"

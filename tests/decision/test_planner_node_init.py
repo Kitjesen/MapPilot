@@ -540,7 +540,9 @@ class TestSemanticPlannerAgentLoop:
             ]
         )
 
-        state = asyncio.run(mod._run_agent_loop("greet the operator"))
+        run = mod._new_run("greet the operator")
+        run.requires_execution_evidence = False  # This fixture exercises an informational skill.
+        state = asyncio.run(mod._run_agent_loop(run.instruction, run=run))
 
         assert state.completed
         assert state.summary == "ok"

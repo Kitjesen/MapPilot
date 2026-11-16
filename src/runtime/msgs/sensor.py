@@ -78,18 +78,19 @@ class JointState:
     def decode(cls, data: bytes) -> JointState:
         return json_message_decode(data, cls)
 
-POINT_DTYPE = np.dtype(
-    [
-        ("x", "<f4"),
-        ("y", "<f4"),
-        ("z", "<f4"),
-        ("intensity", "<f4"),
-        ("offset_time_ns", "<u4"),
-        ("tag", "u1"),
-        ("line", "u1"),
-        ("flags", "<u2"),
-    ]
-)
+_POINT_FIELDS = [
+    ("x", "<f4"),
+    ("y", "<f4"),
+    ("z", "<f4"),
+    ("intensity", "<f4"),
+    ("offset_time_ns", "<u4"),
+    ("tag", "u1"),
+    ("line", "u1"),
+    ("flags", "<u2"),
+]
+
+# Message classes remain importable when an optional NumPy DLL cannot load.
+POINT_DTYPE = np.dtype(_POINT_FIELDS) if numpy_import_is_safe() else None
 
 
 @dataclass

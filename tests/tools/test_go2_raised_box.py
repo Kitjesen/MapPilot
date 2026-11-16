@@ -100,22 +100,28 @@ def test_nominal_optical_and_imu_chains_match_slam_and_robot_config(variant):
     assert body_imu @ imu_lidar == pytest.approx(body_lidar, abs=1e-10)
 
 
-def test_candidate_changes_only_mount_calibration_and_clearance(variant):
+def test_historical_candidate_retains_robot_geometry_and_unverified_mount(variant):
     design, _ = variant
     original = load_yaml(MODEL / "robot.yaml")
     candidate = load_yaml(design / "candidate/robot.yaml")
     assert candidate["calibration"]["slam"]["status"] == "unverified"
-    candidate["calibration"]["slam"] = original["calibration"]["slam"]
-    for key in ("offset_x", "offset_y", "offset_z", "roll", "pitch", "yaw"):
-        candidate["lidar"][key] = original["lidar"][key]
-    # These pre-installation snapshots predate the installed mount's taller envelope.
-    candidate["geometry"]["collision_clearance_above"] = original["geometry"]["collision_clearance_above"]
-    assert candidate == original
+    assert candidate["calibration"]["camera"]["status"] == "unverified"
+    for section in ("robot", "driver", "safety"):
+        assert candidate[section] == original[section]
+    for key in ("vehicle_height", "vehicle_width", "vehicle_length", "collision_cylinder_radius",
+                "collision_cylinder_offset", "collision_clearance_below", "support_height",
+                "support_height_tolerance", "sensor_offset_x", "sensor_offset_y"):
+        assert candidate["geometry"][key] == original["geometry"][key]
+    assert candidate["geometry"]["collision_clearance_above"] == 0.1
+    assert candidate["geometry"]["collision_hard_margin"] == 0.1
+    for key in ("network_interface", "lidar_ip", "host_ip"):
+        assert candidate["lidar"][key] == original["lidar"][key]
+    for key in ("max_linear", "max_angular"):
+        assert candidate["speed"][key] == original["speed"][key]
     original_slam = load_yaml(MODEL / "sensors/mid360_ltlio.yaml")
     candidate_slam = load_yaml(design / "candidate/mid360_ltlio.yaml")
-    for key in ("navigation_body_from_imu_rotation", "navigation_body_from_imu_translation"):
-        candidate_slam[key] = original_slam[key]
-    assert candidate_slam == original_slam
+    for key in ("r_il", "t_il", "acc_scale", "time_diff_lidar_to_imu"):
+        assert candidate_slam[key] == original_slam[key]
 
 
 def test_visual_resources_exist_and_print_orientation_does_not_leak_into_urdf(variant):

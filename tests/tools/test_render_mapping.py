@@ -14,6 +14,16 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+@pytest.fixture
+def arial_font():
+    from matplotlib.font_manager import findfont
+
+    try:
+        findfont("Arial", fallback_to_default=False)
+    except ValueError:
+        pytest.skip("Arial is required for publication rendering at 10 pt")
+
+
 def binary_cloud(path: Path) -> None:
     """Write a tiny synthetic parser fixture, never dataset evidence."""
     values = np.zeros(9, dtype=[("intensity", "<f4"), ("z", "<f8"), ("x", "<f4"), ("y", "<f4")])
@@ -66,7 +76,7 @@ def test_plan_failure_never_displays_a_stale_route(tmp_path):
     np.testing.assert_array_equal(MODULE.load_plan(result)[0], [[0, 0, 0], [1, 2, 3]])
 
 
-def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_path):
+def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_path, arial_font):
     map_dir = tmp_path / "synthetic-map"
     map_dir.mkdir()
     binary_cloud(map_dir / "map.pcd")
@@ -81,7 +91,7 @@ def test_render_exports_separate_figures_and_reports_test_input_truthfully(tmp_p
     assert (tmp_path / "figures/figures.json").is_file()
 
 
-def test_focus_is_a_declared_display_crop_and_does_not_overwrite_full_evidence(tmp_path):
+def test_focus_is_a_declared_display_crop_and_does_not_overwrite_full_evidence(tmp_path, arial_font):
     map_dir = tmp_path / "synthetic-map"
     map_dir.mkdir()
     binary_cloud(map_dir / "map.pcd")

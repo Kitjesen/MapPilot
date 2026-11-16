@@ -10,26 +10,26 @@ namespace {
 nav_kernel::Vec3 projectSegment(const nav_kernel::Vec3& point,
                                 const nav_kernel::Vec3& from,
                                 const nav_kernel::Vec3& to) {
-  const nav_kernel::Vec3 delta{
-      to.x - from.x,
-      to.y - from.y,
-      to.z - from.z,
-  };
-  const double length_squared =
-      delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+  // Route progress is measured on the ground plane. A large height change
+  // must not move the horizontal join point behind the measured robot pose.
+  const double dx = to.x - from.x;
+  const double dy = to.y - from.y;
+  const double length_squared = dx * dx + dy * dy;
   if (length_squared <= 1e-12) return from;
   const double ratio = std::clamp(
-      ((point.x - from.x) * delta.x +
-       (point.y - from.y) * delta.y +
-       (point.z - from.z) * delta.z) /
-          length_squared,
+      ((point.x - from.x) * dx + (point.y - from.y) * dy) / length_squared,
       0.0,
       1.0);
   return {
-      from.x + ratio * delta.x,
-      from.y + ratio * delta.y,
-      from.z + ratio * delta.z,
+      from.x + ratio * dx,
+      from.y + ratio * dy,
+      from.z + ratio * (to.z - from.z),
   };
+}
+
+double horizontalDistance(const nav_kernel::Vec3& left,
+                          const nav_kernel::Vec3& right) {
+  return std::hypot(left.x - right.x, left.y - right.y);
 }
 
 }  // namespace
@@ -90,19 +90,17 @@ Executor::SegmentTarget Executor::buildSegment(
       map_body.position,
       route[first_segment],
       route[first_segment + 1]);
-  double nearest_distance =
-      nav_kernel::distance3D(map_body.position, projection);
+  double nearest_distance = horizontalDistance(map_body.position, projection);
   for (std::size_t index = first_segment + 1;
        index + 1 < route.size(); ++index) {
     const nav_kernel::Vec3 vertex = route[index];
     const nav_kernel::Vec3 candidate = projectSegment(
         map_body.position, vertex, route[index + 1]);
-    const double distance =
-        nav_kernel::distance3D(map_body.position, candidate);
+    const double distance = horizontalDistance(map_body.position, candidate);
     const bool closer = distance < nearest_distance - 1e-9;
     const bool forward_vertex_tie =
         std::abs(distance - nearest_distance) <= 1e-9 &&
-        nav_kernel::distance3D(map_body.position, vertex) <=
+        horizontalDistance(map_body.position, vertex) <=
             std::max(0.01, config_.waypoint_reached_m);
     if (closer || forward_vertex_tie) {
       nearest_segment = index;

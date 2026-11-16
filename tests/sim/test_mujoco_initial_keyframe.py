@@ -133,7 +133,7 @@ def test_policy_mode_requires_the_declared_thunderv4_baseline(
     from drivers.sim.mujoco import driver as driver_module
 
     missing = tmp_path / "policy_1119.onnx"
-    monkeypatch.setattr(driver_module, "resolve_robot_default_policy", lambda _root: {"artifact": missing})
+    monkeypatch.setattr(driver_module, "resolve_robot_default_policy", lambda _root, _robot: {"artifact": missing})
 
     with pytest.raises(FileNotFoundError, match="ThunderV4 policy is missing"):
         driver_module.MujocoDriverModule(drive_mode="policy")

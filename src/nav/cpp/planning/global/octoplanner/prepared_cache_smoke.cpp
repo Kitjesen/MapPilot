@@ -103,12 +103,12 @@ int main() try {
     cleared_floor.updateInnerOccupancy();
     require(cleared_floor.write(map.string()),"cannot write known-free floor edit");
     ++identity.content_epoch;
-    require(session.run(map,identity,hole).ok && session.prepareCount()==prepares,
-            "known-free edit changed the current surface-closing rules");
+    require(!session.run(map,identity,hole).ok && session.prepareCount()==prepares,
+            "known-free floor edit was filled as inferred support");
     {
       r::PlannerSession restored;
-      require(restored.run(map,identity,hole).ok && restored.cacheLoadCount()==1,
-              "cache restore changed support after a known-free edit");
+      require(!restored.run(map,identity,hole).ok && restored.cacheLoadCount()==1,
+              "cache restore filled a known-free floor cell");
       require(tree.write(map.string()),"cannot restore unknown floor cell");
       ++identity.content_epoch;
       require(restored.run(map,identity,hole).ok && restored.prepareCount()==1,
@@ -133,7 +133,7 @@ int main() try {
   }
   for (const auto& entry : std::filesystem::directory_iterator(directory/".nav")) {
     auto payload = bytes(entry.path());
-    const std::string format = "lingtu.navigation.prepared.8";
+    const std::string format = "lingtu.navigation.prepared.9";
     const auto offset = payload.find(format);
     if (offset == std::string::npos) continue;
     payload[offset + format.size() - 1] = '6';

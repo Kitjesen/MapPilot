@@ -631,8 +631,6 @@ CliConfig parseArgs(int argc, char **argv) {
               "LINGTU_NAV_OCTO_SUPPORT_DEPTH_CELLS");
   applyEnvDouble(cfg.octoplanner_options.search_resolution_m, "LINGTU_NAV_OCTO_SEARCH_RESOLUTION_M");
   applyEnvDouble(cfg.octoplanner_options.surface_closing_radius_m, "LINGTU_NAV_OCTO_SURFACE_CLOSING_RADIUS_M");
-  applyEnvDouble(cfg.octoplanner_options.surface_max_hole_area_m2, "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2");
-  applyEnvDouble(cfg.octoplanner_options.surface_max_slope, "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE");
   applyEnvDouble(cfg.octoplanner_options.support_height_m, "LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M");
   applyEnvDouble(cfg.octoplanner_options.support_height_tolerance_m,
                  "LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M");
@@ -860,10 +858,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.octoplanner_options.search_resolution_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-surface-closing-radius-m") {
       cfg.octoplanner_options.surface_closing_radius_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-surface-max-hole-area-m2") {
-      cfg.octoplanner_options.surface_max_hole_area_m2 = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-surface-max-slope") {
-      cfg.octoplanner_options.surface_max_slope = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-support-height-m") {
       cfg.octoplanner_options.support_height_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-support-height-tolerance-m") {
@@ -1234,8 +1228,6 @@ CliConfig parseArgs(int argc, char **argv) {
   octo.support_depth_cells = std::max(1, octo.support_depth_cells);
   octo.search_resolution_m = std::max(0.0, octo.search_resolution_m);
   octo.surface_closing_radius_m = std::max(0.0, octo.surface_closing_radius_m);
-  octo.surface_max_hole_area_m2 = std::max(0.0, octo.surface_max_hole_area_m2);
-  octo.surface_max_slope = std::max(0.0, octo.surface_max_slope);
   octo.support_height_m = std::max(0.0, octo.support_height_m);
   octo.support_height_tolerance_m = std::max(0.0, octo.support_height_tolerance_m);
   octo.support_patch_radius_cells = std::max(0, octo.support_patch_radius_cells);

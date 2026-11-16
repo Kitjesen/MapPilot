@@ -473,12 +473,22 @@ def test_portable_writer_rejects_zero_timestamp_without_committing(tmp_path):
 
 
 def test_cpp_camera_service_uses_shm_as_default_image_data_plane():
+    import yaml
+
+    from lingtu.assembly.config.camera import camera_environment
+    from runtime.config import CameraConfig
+    from scripts.build.settings import generate
+
     source = Path("src/drivers/real/camera/native/camera_dds.cpp").read_text(encoding="utf-8")
     contract = Path("src/drivers/real/camera/native/shm_frame_ring.hpp").read_text(encoding="utf-8")
     service = Path("scripts/deploy/thunder/lt-camera.service").read_text(encoding="utf-8")
 
-    assert "publish_image_dds{false}" in source
-    assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=0" in service
+    settings_dir = Path("config/system/settings")
+    settings = yaml.safe_load((settings_dir / "camera.yaml").read_text(encoding="utf-8"))["camera"]
+    assert "publish_image_dds{lingtu::settings::camera::camera::shm::publish_image_dds}" in source
+    assert "inline constexpr bool publish_image_dds = false;" in generate(settings_dir)
+    assert camera_environment(settings, CameraConfig(), include_video=False)["LINGTU_CAMERA_PUBLISH_IMAGE_DDS"] == "0"
+    assert "EnvironmentFile=/run/lingtu/session.env" in service
     assert "Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=1" not in service
     assert 'arg == "--publish-image-dds"' in source
     assert "FrameWriter color_shm" in source

@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 import yaml
 
 from decision.frontiers.types import Frontier

@@ -122,7 +122,7 @@ epoch/sequence 尚未积累足够历史而额外拒绝。缺地图、地图边�
 | 遥控来源没有持有权、被另一来源持有、租约过期、epoch/sequence 不匹配、zero barrier 尚未完成 | 不接纳该输入，必要时保持零命令 | [operator.cpp](../../src/nav/cpp/endpoint/nav/control/operator.cpp)。原因包括 `no_active_authority`、`authority_busy`、`authority_lease_expired`、`zero_barrier_pending` |
 | 遥控样本无效/来自未来/过旧/deadline 过期；松开 deadman | 停止沿旧按键指令运动 | 同上及 [admission.cpp](../../src/nav/cpp/endpoint/nav/control/admission.cpp)。默认样本 0.35 s、最大租期 2 s，不代表每 2 s 需人工重新接管 |
 | 遥控接管禁用、恢复前的旧样本 | 拒绝该次样本 | `teleop_takeover_disabled`、`teleop_source_predates_resume` 等，源于模式与旧输入处理 |
-| 持续控制环 deadline miss | 临时保持零命令，调度恢复后自动释放自身保持，保留路线 | [guard.cpp](../../src/nav/cpp/endpoint/nav/control/guard.cpp)、[loop.cpp](../../src/nav/cpp/endpoint/nav/app/loop.cpp)。不再建立人工接管锁；P95 与历史 miss-ratio 警告本身不建锁 |
+| 持续控制环 deadline miss | 临时保持零命令，调度恢复后自动释放自身保持，保留路线 | [guard.cpp](../../src/nav/cpp/endpoint/nav/app/loop.cpp)、[loop.cpp](../../src/nav/cpp/endpoint/nav/app/loop.cpp)。不再建立人工接管锁；P95 与历史 miss-ratio 警告本身不建锁 |
 | 速度平滑器无效/超时或 commit 失败 | 最终输出零 | [final.cpp](../../src/nav/cpp/endpoint/nav/control/final.cpp)。属于运行故障，不应报几何无路 |
 | 命令过期；普通遥控平移小于最小运动量 | 零或限幅；自主跟踪在此将 min_motion 设为 0 | [command.cpp](../../src/nav/cpp/endpoint/nav/safety/command.cpp)、[autonomy.cpp](../../src/nav/cpp/endpoint/nav/control/autonomy.cpp)。限速/限加速度本身通常只改变输出，不是拒绝规划 |
 | 实际运动或待发送命令的制动扫掠阻塞 | `aegis_move_blocked`；可缩放时 `aegis_move_limited` | [main.cpp](../../src/nav/cpp/endpoint/nav/main.cpp:1245)。两者输入不同；有轨迹仍可能在这里停止，应追到同一份碰撞证据 |

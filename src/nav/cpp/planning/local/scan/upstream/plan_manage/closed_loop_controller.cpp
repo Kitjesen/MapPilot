@@ -48,7 +48,9 @@ bool ClosedLoopController::setTrajectory(const BsplineTrajectory &trajectory,
 
   positionTrajectory_ = std::move(position);
   velocityTrajectory_ = positionTrajectory_.getDerivative();
-  accelerationTrajectory_ = velocityTrajectory_.getDerivative();
+  hasAcceleration_ = trajectory.order >= 2;
+  if (hasAcceleration_)
+    accelerationTrajectory_ = velocityTrajectory_.getDerivative();
   durationS_ = duration;
   trajectoryId_ = trajectory.trajectoryId;
   executionTimeS_ = clamp(nowS - trajectory.startTimeS, 0.0, durationS_);
@@ -83,10 +85,12 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   const double yawError = state.desiredYawRate ? 0.0 : normalizeAngle(desiredHeading - state.yaw);
   const double yawLimit =
       std::min(kMaxYawRateLimit, std::max(0.0, params.maxYawRate));
+  // Keep a small numerical band around the official threshold to avoid
+  // freezing a trajectory on a boundary fluctuation.
   const bool aligning = !state.desiredYawRate &&
-      std::abs(yawError) > std::max(0.0, params.headingErrorThreshold);
+      std::abs(yawError) > std::max(0.0, params.headingErrorThreshold) + 0.002;
   double yawFeedforward=0;
-  if(params.timeForward<=0 && !state.desiredHeading && !state.desiredYawRate &&
+  if(hasAcceleration_ && params.timeForward<=0 && !state.desiredHeading && !state.desiredYawRate &&
      !aligning && desiredVelocity.head<2>().norm()>0.03) {
     const Eigen::Vector3d acceleration=accelerationTrajectory_.evaluateDeBoorT(evaluationTime);
     yawFeedforward=(desiredVelocity.x()*acceleration.y()-desiredVelocity.y()*acceleration.x())/
@@ -156,6 +160,7 @@ void ClosedLoopController::reset() noexcept {
   positionTrajectory_ = {};
   velocityTrajectory_ = {};
   accelerationTrajectory_ = {};
+  hasAcceleration_ = false;
   durationS_ = 0.0;
   executionTimeS_ = 0.0;
   lastUpdateTimeS_ = 0.0;

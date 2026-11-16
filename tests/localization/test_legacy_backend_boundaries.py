@@ -37,7 +37,8 @@ def test_native_slam_has_no_python_binding_build_surface() -> None:
         "LINGTU_SLAM_BUILD_PYTHON_BINDINGS",
         "nanobind",
         "FetchContent",
-        "_native",
+        "add_library(_native",
+        "pybind11_add_module",
     ):
         assert obsolete not in cmake
 

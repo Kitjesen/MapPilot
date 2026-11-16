@@ -193,11 +193,18 @@ class Commands(Module, layer=3):
         request_id: str | None = None,
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
+        map_id: str | None = None,
+        map_content_epoch: int = 0,
     ) -> NavigationCommandReceipt:
-        return self._navigation_client.start_task(
-            x, y, z, yaw, task_id=task_id, request_id=request_id,
-            max_speed_mps=max_speed_mps, acceptance_radius_m=acceptance_radius_m,
-        )
+        kwargs: dict[str, Any] = {
+            "task_id": task_id,
+            "request_id": request_id,
+            "max_speed_mps": max_speed_mps,
+            "acceptance_radius_m": acceptance_radius_m,
+        }
+        if map_id is not None or map_content_epoch:
+            kwargs.update(map_id=map_id, map_content_epoch=map_content_epoch)
+        return self._navigation_client.start_task(x, y, z, yaw, **kwargs)
 
     @rpc
     def cancel_task(

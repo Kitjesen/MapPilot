@@ -215,7 +215,7 @@ def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> No
         "src/nav/cpp/endpoint/nav/control/autonomy.cpp"
     ).read_text(encoding="utf-8")
     runtime = Path(
-        "src/nav/cpp/endpoint/nav/app/navigation.cpp"
+        "src/nav/cpp/endpoint/nav/app/goal/runtime.cpp"
     ).read_text(encoding="utf-8")
 
     assert "output.recovery_exhausted" in controller
@@ -240,10 +240,7 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
         "src/nav/cpp/endpoint/nav/safety/stop.cpp"
     ).read_text(encoding="utf-8")
     transaction = Path(
-        "src/nav/cpp/endpoint/nav/app/goal/terminal.cpp"
-    ).read_text(encoding="utf-8")
-    runtime = Path(
-        "src/nav/cpp/endpoint/nav/app/navigation.cpp"
+        "src/nav/cpp/endpoint/nav/app/goal/runtime.cpp"
     ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -257,7 +254,7 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     assert "motion_stop.cancel()" not in endpoint
     assert "motion_stop_.cancel()" not in cancel_router
     assert "GoalReplanRuntimeInterruption::kStop" in endpoint
-    assert "runtime.interrupt(" in endpoint
+    assert "runtime.interruptAndService(" in endpoint
     assert "stop_.stopPreservingGoalTerminal(" in transaction
     assert "stop_.stopWithoutTerminalCommit(" in transaction
     assert "motion_stop.stop()" not in endpoint
@@ -268,15 +265,14 @@ def test_safety_stop_transitions_use_single_coordinator() -> None:
     assert "GoalReplanRuntimeInterruption::kDriverAuthorityLost" not in endpoint
     assert "driver_authority_previous" not in endpoint
     assert "auto confirm_last_zero" not in endpoint
-    assert "goal_terminal_.advance(runtime_result" in runtime
     terminal_block = transaction.split(
-        "GoalTerminal::advance", 1
-    )[1].split("GoalTerminal::stopPending", 1)[0]
+        "GoalReplanRuntimeCoordinator::serviceTerminal", 1
+    )[1].split("MotionStopResult GoalReplanRuntimeCoordinator::commitRelated", 1)[0]
     confirmation_block = coordinator.split(
         "MotionStopBarrier::confirmAndCommitTerminal", 1
     )[1].split("MotionStopResult MotionStopBarrier::confirmLastZero", 1)[0]
-    assert "stop_.stopPreservingGoalTerminal(terminal.commit)" in terminal_block
-    assert "stop_.commitGoalTerminalAfterStop" in terminal_block
+    assert "motion_stop_.stopPreservingGoalTerminal(terminal.commit)" in terminal_block
+    assert "motion_stop_.commitGoalTerminalAfterStop" in terminal_block
     assert "confirmTransition(" in confirmation_block
     assert "commit_terminal()" in confirmation_block
     poll_block = coordinator.split("MotionStopBarrier::poll()", 1)[1].split(

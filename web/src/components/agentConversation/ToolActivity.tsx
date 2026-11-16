@@ -79,6 +79,7 @@ export function ToolActivityGroup({ messages, active, runningId, awaiting, now, 
   let completedCount = 0
   let failedCount = 0
   let runningCount = 0
+  let startedCount = 0
   let keepVisible = active || messages.length <= 3
   for (const message of messages) {
     try {
@@ -89,7 +90,8 @@ export function ToolActivityGroup({ messages, active, runningId, awaiting, now, 
       const failed = state === 'failed' || Boolean(result?.error) || result?.success === false || result?.ok === false || result?.accepted === false || (exitCode != null && exitCode !== 0)
       const running = state === 'started' || state === 'running' || state === 'awaiting'
       if (failed) failedCount += 1
-      else if (running) runningCount += 1
+      else if (running && active) runningCount += 1
+      else if (running) startedCount += 1
       else completedCount += 1
       keepVisible ||= message.kind === 'web_search' || message.kind === 'web_extract' || result?.confirmation_required === true
       // Errors and map-preview actions remain visible without opening the history.
@@ -97,10 +99,11 @@ export function ToolActivityGroup({ messages, active, runningId, awaiting, now, 
     } catch { names.add(message.kind ?? '工具') }
   }
   const rows = <ol className={styles.toolSteps} aria-label="执行步骤">{messages.map(message => <li key={message.id} className={styles.toolStep}>
-    <ToolActivity message={message} onSelectModel={onSelectModel} onOpenConnections={onOpenConnections} now={now} running={message.id === runningId} awaiting={awaiting} />
+    <ToolActivity message={message} onSelectModel={onSelectModel} onOpenConnections={onOpenConnections} now={now} active={active} running={message.id === runningId} awaiting={awaiting} />
   </li>)}</ol>
   if (keepVisible) return rows
-  const summaryStatus = failedCount > 0 ? `${failedCount} 个失败` : runningCount > 0 ? `${runningCount} 个进行中` : `${completedCount} 个已完成`
+  const summaryStatus = failedCount > 0 ? `${failedCount} 个失败` : runningCount > 0 ? `${runningCount} 个进行中`
+    : startedCount > 0 ? `${startedCount} 个已发起` : `${completedCount} 个已完成`
   return <details className={styles.toolGroup} onKeyDown={event => {
     if (event.key === 'Escape' && event.currentTarget.open) {
       event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false
@@ -113,7 +116,7 @@ export function ToolActivityGroup({ messages, active, runningId, awaiting, now, 
   </details>
 }
 
-export function ToolActivity({ message, running = false, awaiting = [], now, onSelectModel, onOpenConnections }: { message: ConversationMessage; running?: boolean; awaiting?: string[]; now?: number; onSelectModel?: (model: string) => void; onOpenConnections?: () => void }) {
+export function ToolActivity({ message, active = true, running = false, awaiting = [], now, onSelectModel, onOpenConnections }: { message: ConversationMessage; active?: boolean; running?: boolean; awaiting?: string[]; now?: number; onSelectModel?: (model: string) => void; onOpenConnections?: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [enlarged, setEnlarged] = useState(false)
   const [copyState, setCopyState] = useState('')
@@ -133,9 +136,10 @@ export function ToolActivity({ message, running = false, awaiting = [], now, onS
   const failed = activity === 'failed' || Boolean(result.error) || result.success === false || result.ok === false || result.accepted === false || (exitCode != null && exitCode !== 0)
   const reason = result.error ?? result.reason
   const waiting = activity === 'awaiting' || (started && awaiting.includes(name))
-  const elapsed = message.metadata?.duration_ms ?? (started && now != null && message.metadata?.started_at != null ? Math.max(0, (now - message.metadata.started_at) * 1000) : undefined)
-  const state = activity === 'cancelled' ? 'cancelled' : failed ? 'failed' : waiting ? 'awaiting' : activity === 'running' || activity === 'started' || running || name === 'specialist_review' ? 'running' : 'completed'
-  const status = { cancelled: '已中断', failed: '未完成', awaiting: '待确认', running: '调用中', completed: '已返回' }[state]
+  const elapsed = message.metadata?.duration_ms ?? (started && active && now != null && message.metadata?.started_at != null ? Math.max(0, (now - message.metadata.started_at) * 1000) : undefined)
+  const state = activity === 'cancelled' ? 'cancelled' : failed ? 'failed' : waiting ? 'awaiting'
+    : started && !active ? 'started' : started || running ? 'running' : 'completed'
+  const status = { cancelled: '已中断', failed: '未完成', awaiting: '待确认', started: '已发起', running: '调用中', completed: '已返回' }[state]
   const recipe = Boolean(result.preview_request)
   const codexMethod = (message.metadata as (ConversationMessage['metadata'] & { method?: string }) | undefined)?.method
   const usage = message.kind === 'codex_event' && codexMethod === 'turn/usage/updated'
@@ -191,7 +195,7 @@ export function ToolActivity({ message, running = false, awaiting = [], now, onS
     }}>
     <button ref={toggle} type="button" className={styles.toolToggle} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
       <span className={styles.stepMark} aria-hidden="true">
-        <IconGlyph name={failed ? 'warning' : state === 'running' ? 'pending' : 'success'} size={16} className={state === 'running' ? styles.toolSpinner : undefined} />
+        <IconGlyph name={failed ? 'warning' : state === 'completed' ? 'success' : 'pending'} size={16} className={state === 'running' ? styles.toolSpinner : undefined} />
       </span>
       <strong>{displayName}</strong><Roll align="start">{status}</Roll>{exitCode != null && <small className={styles.toolDuration}>退出 {exitCode}</small>}{elapsed != null && <small className={styles.toolDuration} title="单次工具调用时间，不含模型生成；包含等待确认">{elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} 秒`}</small>}<ChevronDown size={12} className={styles.toolChevron} />
     </button>

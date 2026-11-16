@@ -249,7 +249,7 @@ class MujocoDriverModule(Module, layer=1):
         self._policy_path = (
             "" if self._drive_mode == "kinematic"
             else _resolve_sim_path(policy_path) if policy_path
-            else str(resolve_robot_default_policy(_SIM_ROOT.parent)["artifact"])
+            else str(resolve_robot_default_policy(_SIM_ROOT.parent, "thunderv4@1.0.3")["artifact"])
         )
         if self._drive_mode == "policy" and not Path(self._policy_path).is_file():
             raise FileNotFoundError(f"ThunderV4 policy is missing: {self._policy_path}")

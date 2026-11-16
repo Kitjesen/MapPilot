@@ -6,7 +6,7 @@ import json
 from io import BytesIO
 from typing import Any
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 from fastapi.responses import JSONResponse, Response
 
 from gateway.services.measurement_preview import measurement_preview

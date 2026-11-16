@@ -23,10 +23,10 @@ function observationScene(
       producer_boot_id: 'mapd-a', reset_epoch: '2', generation: 4, observation_sequence: 8, live: true,
     },
     layers: [{
-      id: 'maps.occupancy', type: 'grid', frame_id: 'map',
+      id: 'maps.surface_projection', type: 'grid', frame_id: 'map',
       producer_boot_id: 'mapd-a', reset_epoch: '2', generation: 4, observation_sequence: 8, live: true,
       stamp_s: 100, rows: 2, cols: 3, resolution: 0.5, origin: [10, 20, 0.2], yaw: 0,
-      encoding: 'int8', value_semantics: 'height_band_occupancy_not_traversability', scope: 'rolling_window',
+      encoding: 'int8', value_semantics: 'ground_relative_surface_not_traversability', scope: 'rolling_window',
       downsample_factor: 1, grid_b64: Buffer.from(values).toString('base64'),
       unknown_count: values.filter(value => value === -1).length,
       free_count: values.filter(value => value === 0).length,
@@ -119,7 +119,7 @@ test('an explicit omitted grid clears prior data without reporting missing sourc
   assert.equal(resolveMappingObservation(scene, { nowS: 101 }).status, 'ready')
   const omitted = {
     ...scene,
-    layers: [{ id: 'maps.occupancy', payload: 'omitted', retain_previous: false }],
+    layers: [{ id: 'maps.surface_projection', payload: 'omitted', retain_previous: false }],
   }
   const state = resolveMappingObservation(omitted, { nowS: 101 })
   assert.deepEqual(state, { status: 'unavailable', message: '观测图暂不可用，等待新数据' })

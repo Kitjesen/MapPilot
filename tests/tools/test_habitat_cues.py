@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+pytest.importorskip("torch")
 from PIL import Image
 from tools.datasets.habitat_cues import run
 

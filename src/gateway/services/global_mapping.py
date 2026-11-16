@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from gateway.services.native_status import read_json_snapshot
 from runtime.msgs.sensor import PointCloud2

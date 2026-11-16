@@ -439,10 +439,6 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "0.15",
       "--octo-surface-closing-radius-m",
       "0.4",
-      "--octo-surface-max-hole-area-m2",
-      "0.12",
-      "--octo-surface-max-slope",
-      "0.5",
       "--octo-support-height-m",
       "0.55",
       "--octo-support-height-tolerance-m",
@@ -491,8 +487,6 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
   require(octo.support_depth_cells == 8, "support depth must parse");
   require(std::abs(octo.search_resolution_m - 0.15) < 1e-12, "search resolution must parse");
   require(std::abs(octo.surface_closing_radius_m - 0.4) < 1e-12, "surface closing radius must parse");
-  require(std::abs(octo.surface_max_hole_area_m2 - 0.12) < 1e-12, "surface hole area must parse");
-  require(std::abs(octo.surface_max_slope - 0.5) < 1e-12, "surface fit slope must parse");
   require(std::abs(octo.support_height_m - 0.55) < 1e-12, "support height must parse");
   require(std::abs(octo.support_height_tolerance_m - 0.05) < 1e-12, "support tolerance must parse");
   require(!octo.enable_preblocked_costmap, "preblocked soft cost must be configurable");

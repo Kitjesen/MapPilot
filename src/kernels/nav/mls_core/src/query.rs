@@ -682,11 +682,11 @@ mod tests {
     #[test]
     fn updated_surface_changes_the_next_route() {
         let cells = (0..5).map(|x| SurfaceCell::new(x, 0, 0)).collect();
-        let mut state = PlannerState::from_surface(cells, Vec::new(), GraphConfig::default());
+        let mut state = PlannerState::new(cells, Vec::new(), crate::SurfaceConfig::default(), GraphConfig::default());
         let start = SurfaceCell::new(0, 0, 0);
         let goal = SurfaceCell::new(4, 0, 0);
         assert!(plan(&state, start, goal, 0, 100, false, |_, _, _| 1).is_ok());
-        state.update_region(crate::RegionBounds::new(2, 2, 0, 0, 0, 0), &[], &[]);
+        state.update_region(crate::RegionBounds::new(2, 2, 0, 0, 0, 0), &[], &[]).unwrap();
         assert_eq!(
             plan(&state, start, goal, 0, 100, false, |_, _, _| 1),
             Err(QueryError::Exhausted)
@@ -694,7 +694,7 @@ mod tests {
         let added = (2..=5)
             .map(|x| SurfaceCell::new(x, 0, 0))
             .collect::<Vec<_>>();
-        state.update_region(crate::RegionBounds::new(2, 5, 0, 0, 0, 0), &added, &[]);
+        state.update_region(crate::RegionBounds::new(2, 5, 0, 0, 0, 0), &added, &[]).unwrap();
         let restored = plan(
             &state,
             start,

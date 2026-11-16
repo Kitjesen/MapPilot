@@ -56,10 +56,13 @@ arrival heading; the graph does not store a full heading state. Endpoints,
 detours and retries share the request budget,
 and cancellation returns without publishing a route. Exhaustion and errors
 return from that same backend; a second C++ search no longer hides its result.
-The old grid and C++ `SurfaceGraph` remain only for explicit legacy
-callers. New `.8` prepared artifacts restore the Rust graph directly and attach
+The old grid remains available for requests without a prepared MLS artifact.
+The standalone C++ `SurfaceGraph` is linked only by its regression target.
+New `.9` prepared artifacts restore the Rust graph directly and attach
 raw occupied/free evidence from the same OctoMap without rebuilding the graph.
 The map-bound geometry index is reused by edge checks and invalidated by updates.
+Incremental graph state is initialized on the first source update from the saved
+graph, preserving node IDs without a second graph build during preparation.
 
 The sparse graph retains the four-neighbor topology of the pinned DimOS
 reference in [SURFACE_NOTICE](SURFACE_NOTICE), commit
@@ -101,7 +104,7 @@ The migration smoke test covers artifact creation, surface and graph export,
 graph-only query, limited endpoint query, regional update, stable revision, and
 destruction. Production `PlannerSession` owns the loaded OctoMap and updates its
 Rust artifact and query caches under the same mutex. The
-legacy C++ graph remains only for explicit compatibility callers; new prepared
+standalone C++ graph remains available for regression comparisons; new prepared
 caches contain only the Rust artifact.
 
 Rust exposes metric route checks for production queries and same-input geometry
@@ -152,12 +155,9 @@ connector search, not another choice of final goal. Lattice-indexed body and
 snap caches are cleared when the query lattice changes; validated grid vertices
 reuse their collision result while continuous edges are still checked.
 
-Prepared graph vertices use the nearest collision-free stance within the
-existing support-height band, including voxel extent, rather than forcing
-every vertex to exactly ground plus nominal body height. Static body clearance,
-support and metric edge limits are checked at construction. Query-time checks
-still apply the request start exemption, no-go policy and temporary overlays.
-This changes the derived graph, not the saved OctoMap or the completion limits.
+Prepared graph vertices describe candidate surfaces. Endpoint connections
+and the chosen route receive the request's geometry checks, including its
+start exemption, no-go policy and temporary overlays.
 
 ## Persistent preparation and query controls
 
@@ -373,8 +373,8 @@ The current SCAN grid does not recheck an optimized local curve against this
 saved support surface. It checks its live collision geometry, which alone does
 not prove a local detour has continuous support. The final arrival contract
 follows the original requested goal rather than adding the selected endpoint's
-displacement to the execution tolerance. See the
-[implementation and evidence](../../../../../../build/navigation-repair-20261031/README.md).
+displacement to the execution tolerance. Historical implementation evidence was recorded under
+`build/navigation-repair-20261031`; generated build directories are local artifacts.
 
 The production route uses OctoPlanner3D's neighbouring occupied-support query
 so a single missing floor voxel in a saved scan does not block an otherwise
@@ -420,10 +420,10 @@ configured geometric and metric constraints, not successful physical motion.
 | File | Responsibility |
 | --- | --- |
 | `octoplanner3d_core.hpp/.cpp` | Adapts `GlobalPlanRequest/Result` to OctoPlanner3D, loads immutable OctoMaps, caches a map-bound `PlannerSession`, and applies terminal constraints. Explicit temporary overlays remain an offline/request-level capability; the field local-obstacle loop does not provide them. |
-| `surface.hpp/.cpp` | Immutable occupied columns and inferred multi-layer support surfaces; does not rewrite the saved map. |
-| `surface_graph.hpp/.cpp` | Prepared three-dimensional surface adjacency and sparse corridors, with bounded endpoint connections and request-local edge checks. |
+| `mls_backend.hpp/.cpp` | Rust artifact ownership, C ABI adaptation and prepared surface/graph serialization. |
+| `surface_graph.hpp/.cpp` | Standalone C++ surface graph retained for algorithm regression tests. |
 | `route_smoothing.hpp/.cpp` | Validated equal-height shortcuts and relaxation, preserving height-transition anchors and measured endpoints. |
-| `surface_graph_smoke.cpp` | Sparse corridors, separated floors, walls, explicit overlay rerouting, request reset, stairs, bounded endpoint connection and build/query cancellation. |
+| `surface_graph_smoke.cpp` | Standalone C++ graph regression for corridors, floors, walls, overlays, stairs and cancellation. |
 | `route_smoothing_smoke.cpp` | Walls, stacked floors, stair resampling, long-platform lookahead, measured flat height, endpoint retention, length and cancellation. |
 | `xyz_smoke.cpp` | Continuous XYZ guidance, explicit cylinder corridor, obstacles, support and cancellation. |
 | `octoplanner3d_headless.cpp` | Standalone JSON stdin/stdout frontend used by diagnostics and compatibility tooling. |

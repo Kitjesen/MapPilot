@@ -34,6 +34,16 @@ const addSource = ts.transpileModule(readFileSync(new URL('../src/components/age
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText
 export function conversationDependency(name: string) {
+  if (name.endsWith('/DecisionInbox.tsx') || name.endsWith('/FollowSelectionCard')) {
+    const component = name.endsWith('/DecisionInbox.tsx') ? 'DecisionInbox' : 'FollowSelectionCard'
+    const exports: Record<string, unknown> = {}
+    const code = ts.transpileModule(readFileSync(new URL(`../src/components/agentConversation/${component}.tsx`, import.meta.url), 'utf8'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText
+    runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('/services/api') ? {}
+      : dependency.endsWith('.css') ? { default: new Proxy({}, { get: (_target, key) => key }) } : require(dependency) })
+    return exports
+  }
   if (name.endsWith('/ObservationCard')) {
     const exports: Record<string, unknown> = {}
     const code = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/ObservationCard.tsx', import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText
@@ -143,6 +153,7 @@ export function conversationDependency(name: string) {
     runInNewContext(source, { exports, require: (dependency: string) => {
       if (dependency.endsWith('/ObservationCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/LiveCameraCard')) return conversationDependency(dependency)
+      if (dependency.endsWith('/FollowSelectionCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/ComputerProgressCard')) return { ComputerProgressCard: () => null }
       if (dependency.endsWith('/SavedMapCard')) return conversationDependency(dependency)
       if (dependency.includes('/stageshow/motion/')) return conversationDependency(dependency)

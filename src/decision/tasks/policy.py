@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
 
