@@ -1085,7 +1085,7 @@ def test_ab_trackers_are_real_person_trackers_and_only_variant_gets_dino() -> No
         tracker.lock_target(target, crop)
 
     assert all(isinstance(tracker, PersonTracker) for tracker in trackers.values())
-    assert trackers["baseline"].status()["appearance_backend"] == "clip_osnet"
+    assert trackers["baseline"].status()["appearance_backend"] == "clip"
     assert trackers["dino"].status()["appearance_backend"] == "dino"
 
 

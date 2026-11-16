@@ -1,0 +1,105 @@
+{
+  "extends": "local_base.json",
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "mujoco_nav_3d_course",
+  "description": "Three-dimensional Thunder navigation course with a 2.00 m L corridor, 3.00 m door, ramp, raised landing, and static obstacles.",
+  "product_contract": {
+    "product": "nav",
+    "route": "standard",
+    "source": "config/system/products/nav.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "localization",
+    "requires_map": true
+  },
+  "scene_contract": {
+    "world": "nav_3d_course@1.0.0",
+    "session": "sim/sessions/examples/thunderv4_nav_3d_course/session.yaml"
+  },
+  "world": "sim/packages/worlds/nav_3d_course/physics/nav_3d_course.xml",
+  "asset_builder": {
+    "kind": "saved_map_plan_gate",
+    "scene_preset": "nav_3d_course",
+    "length": 30.0,
+    "width": 20.0,
+    "spacing": 0.10,
+    "hits_per_cell": 3,
+    "resolution": 0.20,
+    "map_source": "synthetic_hits"
+  },
+  "start": [2.0, 5.65, 0.465, 0.0],
+  "goal": [27.0, 11.0, 0.655, 0.0],
+  "navigation_runtime": {
+    "local_planner": "scan",
+    "path_follower_lookahead_m": 0.35,
+    "path_follower_max_accel_mps2": 1.0,
+    "path_follower_max_speed_mps": 0.6,
+    "path_follower_max_yaw_rate_rad_s": 0.8
+  },
+  "planner_constraints": {
+    "collision_cylinder_radius_m": 0.32,
+    "collision_cylinder_offset_m": 0.0,
+    "collision_clearance_below_m": 0.0,
+    "collision_clearance_above_m": 0.0,
+    "robot_radius_m": 0.32,
+    "body_clearance_below_m": 0.0,
+    "body_clearance_above_m": 0.0,
+    "max_iterations": 240000,
+    "ground_support": true,
+    "direct_support_only": false,
+    "support_depth_cells": 2,
+    "support_height_m": 0.45,
+    "support_height_tolerance_m": 0.11,
+    "enable_preblocked_costmap": false,
+    "preblocked_radius_cells": 0,
+    "lowest_traversable_only": false,
+    "max_step_height_m": 0.25,
+    "max_slope": 0.65,
+    "same_floor_preference": true,
+    "same_floor_z_tolerance_m": 0.75,
+    "obstacle_clearance_radius_cells": 0,
+    "obstacle_clearance_weight": 0.0,
+    "terminal_goal_xy_tolerance_m": 0.6,
+    "terminal_goal_z_tolerance_m": 0.75
+  },
+  "sensor_runtime": {
+    "publish_hz": 5.0,
+    "imu_hz": 200.0,
+    "mid360_samples_per_frame": 2000,
+    "scan_time_profile": "instantaneous",
+    "physics_integrator": "euler",
+    "stop_on_nav_goal_reached": true
+  },
+  "runtime_tolerances": {
+    "sim_hardware_realtime_factor": 1.0
+  },
+  "thresholds": {
+    "startup_timeout_s": 30.0,
+    "startup_ready_stable_s": 1.0,
+    "plan_timeout_s": 30.0,
+    "min_global_path_points": 2,
+    "min_local_path_points": 2,
+    "min_cmd_vel_samples": 3,
+    "require_slam_tracking": false,
+    "require_slam_accuracy": false,
+    "require_continuous_map_tracking": false,
+    "min_motion_m": 10.0,
+    "min_net_displacement_m": 10.0,
+    "min_goal_distance_reduction_m": 10.0,
+    "require_goal_reached": true,
+    "max_goal_error_m": 0.7
+  },
+  "acceptance_scope": {
+    "coverage": "component",
+    "claims": [
+      "MuJoCo compiles the published three-dimensional course",
+      "SCAN consumes the course map and native navigation chain",
+      "the global planner reports whether the L corridor and door reach the raised landing",
+      "terminal driver stop and owned-process cleanup are recorded"
+    ],
+    "excluded_claims": [
+      "LTLIO localization quality",
+      "field stair capability",
+      "physical robot motion"
+    ]
+  }
+}

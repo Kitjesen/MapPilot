@@ -5094,8 +5094,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     scan_duration_ns = int(1_000_000_000 * lidar_period_s)
     navigation_fixture = bool(getattr(args, "navigation_fixture", False))
     external_arm_config = _external_arm_config_from_args(args)
-    if external_arm_config is not None:
-        _prepare_external_arm_files(external_arm_config)
+    # The acceptance runner owns both per-run rendezvous files and removes
+    # them before launching this process.  Do not unlink the arm request here:
+    # the parent may publish it before sensor initialization finishes.
     external_arm_gate: ExternalArmGate | None = None
     external_arm_failure_gap = ""
     motion_interval_completed = False

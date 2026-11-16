@@ -52,7 +52,7 @@ def test_inspection_idl_and_native_endpoint_are_wired() -> None:
     idl = Path("src/message/idl/inspection.idl").read_text(encoding="utf-8")
     endpoint = Path("src/nav/cpp/endpoint/nav/app/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/nav/app/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/app/inspection/runtime.cpp"
     ).read_text(encoding="utf-8")
     cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
@@ -66,14 +66,14 @@ def test_inspection_idl_and_native_endpoint_are_wired() -> None:
     assert "inspection_runtime.tick(" in endpoint
     assert "inspection_runtime.onGoalReached" in endpoint
     assert "executor_.PendingGoal()" in controller
-    assert "nav/app/inspection/inspection_runtime_controller.cpp" in cmake
+    assert "nav/app/inspection/runtime.cpp" in cmake
     assert "lingtu_inspection_core" in cmake
 
 
 def test_inspection_action_deadline_is_started_before_evidence_publish() -> None:
     endpoint = Path("src/nav/cpp/endpoint/nav/app/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/nav/app/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/app/inspection/runtime.cpp"
     ).read_text(encoding="utf-8")
     action_block = controller.split(
         "if (const auto action = executor_.PendingAction()) {", 1
@@ -135,7 +135,7 @@ def test_native_inspection_library_candidates_cover_repo_and_deployed_builds(
 
 def test_inspection_resume_requires_autonomy_control_before_executor_resume() -> None:
     coordinator = Path(
-        "src/nav/cpp/endpoint/nav/app/inspection/inspection_command_coordinator.cpp"
+        "src/nav/cpp/endpoint/nav/app/inspection/commands.cpp"
     ).read_text(encoding="utf-8")
     resume_block = coordinator.split("CommandKind::kResume", 1)[1].split(
         "CommandKind::kCancel", 1
@@ -149,7 +149,7 @@ def test_inspection_resume_requires_autonomy_control_before_executor_resume() ->
 def test_active_map_change_clears_inspection_motion_immediately() -> None:
     endpoint = Path("src/nav/cpp/endpoint/nav/app/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
-        "src/nav/cpp/endpoint/nav/app/inspection/inspection_runtime_controller.cpp"
+        "src/nav/cpp/endpoint/nav/app/inspection/runtime.cpp"
     ).read_text(encoding="utf-8")
     map_block = controller.split("const InspectionRunState state_before_map_check", 1)[1].split(
         "if (executor_.status().state != InspectionRunState::kPlanning)", 1

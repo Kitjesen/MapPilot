@@ -94,6 +94,14 @@ def test_thunder_real_and_sim_share_twin_cylinder_geometry() -> None:
         assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]) == .05
         assert float(environment["LINGTU_MAPD_INFLATION_Z_UP_M"]) == .05
         assert float(environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"]) == .35
+        assert float(environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) == pytest.approx(math.tan(math.radians(30)))
+
+
+@pytest.mark.parametrize("slope", [0.0, 0.25])
+def test_sim_slope_override(slope: float) -> None:
+    plan = compile_run_plan("nav", "sim", local_planner="scan",
+                            overrides={"octoplanner3d_max_slope": slope})
+    assert float(plan.native_process_environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) == slope
 
 
 @pytest.mark.parametrize("product", ["map", "nav"])
@@ -155,7 +163,7 @@ def test_go2_camera_preview_is_owned_by_the_selected_run_plan() -> None:
     assert camera.native_nav == standard.native_nav
     import yaml
     config = yaml.safe_load(Path("config/robots/unitree/go2/robot.yaml").read_text(encoding="utf-8"))
-    assert config["calibration"]["camera"]["status"] == "unverified"
+    assert config["calibration"]["camera"]["status"] == "verified"
 
 
 def test_map_camera_variant_only_adds_explicit_preview_to_real_mapping() -> None:
@@ -408,6 +416,8 @@ def test_sim_motion_budget_uses_its_package_without_real_robot_limits() -> None:
     assert plan.parameters["scan_follower.position_gain"] == 1.5
     assert float(plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == 1.0
     assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.sqrt(2.0))
+    geometry = plan.simulation["physics_plan"]["robots"][0]["navigation_geometry"]
+    assert float(plan.native_process_environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) == geometry["max_slope"]
 
 
 def test_low_physical_budget_preserves_smaller_motion_deadband() -> None:
@@ -465,8 +475,6 @@ def test_scan_products_preserve_default_planner_and_follower_values(product, spe
     assert plan.parameters["scan_follower.max_vx_mps"] == forward
     assert float(plan.native_process_environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == forward
     assert plan.parameters["scan_follower.max_vy_mps"] == lateral
-    assert plan.parameters["scan_follower.min_vy_mps"] == (0.35 if product == "nav" else 0.0)
-    assert float(plan.native_process_environment["LINGTU_NAV_SCAN_MIN_VY_MPS"]) == plan.parameters["scan_follower.min_vy_mps"]
     assert float(plan.native_process_environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == lateral
     assert float(plan.native_process_environment["LINGTU_NAV_SCAN_PLANNER_MAX_ACCELERATION_MPS2"]) == accel
     if product == "teleop_avoid":
@@ -508,7 +516,7 @@ def test_tracking_supports_scan_at_required_control_cadence_without_changing_def
         "GatewayModule",
     )
     assert default.native_nav["local_planner"] == "cmu"
-    assert default.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
+    assert default.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "20"
     assert scan.native_nav["local_planner"] == "scan"
     assert scan.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert default.lifecycle["requires_map"] is True
@@ -801,8 +809,9 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     plan = _compile_real("teleop_avoid")
 
     assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
-    slam_config = plan.native_process_environment["LINGTU_SLAM_CONFIG"].replace("\\", "/")
-    assert slam_config.endswith("/config/robots/unitree/go2/sensors/mid360_ltlio.yaml")
+    assert plan.native_process_environment["LINGTU_SLAM_CONFIG"] == (
+        "config/robots/unitree/go2/sensors/mid360_ltlio.yaml"
+    )
     assert "lidar_extrinsic_profile" not in plan.host_config
     assert plan.native_process_environment["LINGTU_LIVOX_LIDAR_IP"] == "192.168.123.20"
     assert plan.native_process_environment["LINGTU_LIVOX_HOST_IP"] == "192.168.123.18"

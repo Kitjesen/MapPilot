@@ -5,7 +5,9 @@ kind: robot
 description: Thunder V4 quadruped simulation package with high-fidelity visual meshes.
 compatibility:
   runtime_abi: lingtu.sim.robot.v1
-  mujoco: 3.10.x
+  mujoco:
+    - 3.10.x
+    - 4.0.x
 physics:
   mjcf: mjcf/thunderv4.xml
   attach_root: base_link
@@ -31,6 +33,8 @@ navigation_geometry:
   # tolerance for support voxelization and normal body heave.
   support_height_m: 0.435
   support_height_tolerance_m: 0.10
+  # Same navigation climb limit as the real model's 30 degree tilt setting.
+  max_slope: 0.5773502691896257
 frames:
   - name: base_link
     role: body

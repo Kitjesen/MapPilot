@@ -1,4 +1,4 @@
-# Native mapd publication, occupancy, surface fitting and persistent-map saving.
+# Native mapd publication, occupancy and persistent-map saving.
 # Robot collision dimensions and Product/session identity are resolved separately.
 
 maps:
@@ -33,9 +33,6 @@ maps:
     radius_m: 0.25
     z_up_m: 0.10
     z_down_m: 0.10
-  surface:
-    residual_m: 0.04
-    min_columns: 3
   capacity:
     cloud_bytes: 16777216
     point_fields: 16

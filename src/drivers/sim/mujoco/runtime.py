@@ -161,8 +161,8 @@ class LiveViewer:
                 "brake_blocked": "Obstacle within stopping distance; stopped",
                 "cmd_blocked": "Candidate command has no braking space",
                 # Recorded sessions retain the earlier reason names.
-                "scan_actual_motion_blocked": "Obstacle within stopping distance; stopped",
-                "scan_command_motion_blocked": "Candidate command has no braking space",
+                "aegis_move_blocked": "Obstacle within stopping distance; stopped",
+                "aegis_cmd_blocked": "Candidate command has no braking space",
             }.get(reason, "Stopped: " + str(reason or "motion blocked"))
         elif authority.get("hold_reason"):
             navigation_message = str(authority["hold_reason"])
@@ -175,8 +175,8 @@ class LiveViewer:
                 "local_blocked": "No reachable local trajectory; change goal or wait for clear space",
                 "local_no_path": "No local trajectory; change goal or wait for clear space",
                 "local_near_field_stop": "Obstacle within local stopping distance; stopped",
-                "scan_initialization_failed": "Local trajectory blocked near robot; back away or change goal",
-                "scan_local_target_blocked": "No reachable local target; change goal or wait for clear space",
+                "aegis_init_failed": "Local trajectory blocked near robot; back away or change goal",
+                "aegis_goal_blocked": "No reachable local target; change goal or wait for clear space",
             }.get(reason, str(reason or "active"))
         elif local.get("goal_reached") or plan.get("reached_goal"):
             navigation_message = "goal reached"

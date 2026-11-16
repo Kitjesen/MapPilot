@@ -2332,6 +2332,10 @@ def _mujoco_truth_speed_blocker(
 def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
     config = dict(manifest.get("planner_constraints") or {})
     options = {
+        "collision_cylinder_radius_m": ("--collision-cylinder-radius-m", float),
+        "collision_cylinder_offset_m": ("--collision-cylinder-offset-m", float),
+        "collision_clearance_below_m": ("--collision-clearance-below-m", float),
+        "collision_clearance_above_m": ("--collision-clearance-above-m", float),
         "robot_radius_m": ("--octo-robot-radius-m", float),
         "body_clearance_below_m": ("--octo-body-clearance-below-m", float),
         "body_clearance_above_m": ("--octo-body-clearance-above-m", float),
@@ -3381,9 +3385,10 @@ def _run_phase(
         _native_path_arg(binaries["navigation"], paths["planner"]),
         *_planner_constraint_args(manifest),
         "--tick-hz",
-        str(float(navigation_runtime_cfg.get(
-            "tick_hz", navigation_environment["LINGTU_NAV_DDS_TICK_HZ"]
-        ))),
+        str(float(
+            navigation_runtime_cfg.get("tick_hz")
+            or navigation_environment.get("LINGTU_NAV_DDS_TICK_HZ", 100.0)
+        )),
         "--control-loop-deadline-miss-ratio-limit",
         str(
             float(
@@ -3640,6 +3645,23 @@ def _run_phase(
                     "affinity_mask": process.affinity_mask,
                 }
             )
+        # The motion input gate requires driver control, while the sensor
+        # runner only publishes driver control after the external arm file is
+        # acknowledged. Arm before waiting for the full runtime gate.
+        if motion_arm_enabled:
+            motion_arm_result = _arm_mujoco_motion(
+                arm_file=motion_arm_file,
+                status_file=motion_arm_status,
+                token=motion_arm_token,
+                domain_id=domain_id,
+                scenario=motion_arm_scenario,
+                sensor=sensor,
+                # The sensor creates its arm gate after loading MuJoCo,
+                # the policy and the native publisher.  Use the same
+                # per-run timeout as that gate so startup time does not
+                # consume the acknowledgement window in the parent.
+                timeout_s=motion_arm_timeout_s,
+            )
         startup_ok, startup_reason = _wait_for_startup(
             sensor=sensor,
             evidence=evidence,
@@ -3652,16 +3674,6 @@ def _run_phase(
         )
         if startup_ok:
             plan_timeout_s = float(thresholds.get("plan_timeout_s") or 12.0)
-            if motion_arm_enabled:
-                motion_arm_result = _arm_mujoco_motion(
-                    arm_file=motion_arm_file,
-                    status_file=motion_arm_status,
-                    token=motion_arm_token,
-                    domain_id=domain_id,
-                    scenario=motion_arm_scenario,
-                    sensor=sensor,
-                    timeout_s=min(10.0, plan_timeout_s),
-                )
             if deferred_goal is not None:
                 resume_result = _resume_when_ready(
                     binaries["navigation_control"],

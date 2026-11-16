@@ -1,8 +1,15 @@
 """Follow ownership through real Host ports and the navigation task ledger."""
 
+import json
+import time
+from types import SimpleNamespace
+
 import pytest
 
+from decision.llm.client import LLMConfig
+from decision.modules.agent_planner import AgentPlannerModule
 from decision.modules.visual_servo import VisualServoModule
+from decision.tasks.sdk_agent import TurnResult
 from nav.services.goals import GoalService
 from runtime.msgs.nav import NavigationCommandKind, NavigationCommandReceipt, NavigationGoalState, NavigationGoalStatus
 from runtime.msgs.numpy_compat import np
@@ -73,6 +80,160 @@ def native(goals, ids, state, sequence):
     )
     goals.navigation_goal_status._deliver(event)
     return event
+
+
+@pytest.fixture
+def chat(chain, tmp_path, monkeypatch):
+    servo, goals, _ = chain
+    monkeypatch.setattr(AgentPlannerModule, "_init_llm", lambda self: None)
+    agent = AgentPlannerModule(conversation_db_path=str(tmp_path / "chat.db"))
+    agent._llm_client = SimpleNamespace(config=LLMConfig())
+    monkeypatch.setattr(agent, "conversation_available", lambda: True)
+    agent.on_system_modules({"VisualServoModule": servo})
+    agent.setup()
+    goals.task_status.subscribe(agent.navigation_goal_status._deliver)
+    cid = agent.create_conversation()["conversation_id"]
+    yield agent, cid
+    agent.stop()
+
+
+def chat_turn(chat, text, **kwargs):
+    agent, cid = chat
+    receipt = agent.submit_conversation_message(
+        cid, f"message-{time.monotonic_ns()}", text,
+        motion_guard=lambda admit, call_id: admit(), **kwargs,
+    )
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        turn = agent.get_conversation_turn(cid, receipt["turn_id"])
+        if turn["state"] != "running":
+            return turn
+        time.sleep(0.01)
+    pytest.fail("conversation turn did not finish")
+
+
+def test_conversation_follow_survives_reply_queries_and_stops_after_native_feedback(chat, chain, monkeypatch):
+    agent, cid = chat
+    servo, goals, commands = chain
+    receipts = []
+
+    async def runner(text, invoke_tool, **kwargs):
+        if text == "跟随穿红衣服的人":
+            receipts.append(json.loads(await invoke_tool("follow_person", {"description": "穿红衣服的人"}, "start")))
+        return TurnResult("reply", "已收到。", [])
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    turn = chat_turn(chat, "跟随穿红衣服的人", permission_mode="full_access")
+    assert turn["state"] == "completed"
+    ref = receipts[-1]
+    assert ref["accepted"] and ref["phase"] == "selecting"
+    assert not ref["execution_confirmed"]
+    assert turn["run_id"] == ref["run_id"]
+    assert agent.get_conversation(cid)["turns"][-1]["run_id"] == ref["run_id"]
+    assert json.loads(agent.get_agent_status())["state"] == "running"
+
+    chat_turn(chat, "你好", permission_mode="read_only")
+    query = chat_turn(chat, "跟随状态", permission_mode="read_only")
+    assert "正在选择人员" in query["text"]
+    assert len(receipts) == 1 and len(servo._follow_tasks) == 1
+    status = json.loads(agent.get_agent_status())
+    assert status["navigation"]["follow_task_id"] == ref["follow_task_id"]
+    assert status["navigation"]["product_session_id"] == ref["product_session_id"]
+
+    publish(servo)
+    child = commands.goals[-1]
+    cancelled = chat_turn(chat, "停止跟随", permission_mode="read_only")
+    assert "停止尚未确认" in cancelled["text"]
+    assert commands.cancels[-1][0] == child[0]
+    assert not json.loads(agent.get_agent_status())["stop_confirmed"]
+    servo._on_goal_status({
+        "action": "visual_servo_stop", "task_id": child[0],
+        "accepted": False, "reason": "temporarily_unavailable",
+    })
+    cancel_count = len(commands.cancels)
+    chat_turn(chat, "停止跟随", permission_mode="read_only")
+    assert len(commands.cancels) == cancel_count + 1
+    assert commands.cancels[-1][0] == child[0]
+    blocked = chat_turn(chat, "跟随穿红衣服的人", permission_mode="full_access")
+    assert blocked["state"] == "failed" and receipts[-1]["reason"] == "stop_unconfirmed"
+    assert len(servo._follow_tasks) == 1
+
+    native(goals, child, NavigationGoalState.CANCELLED, 1)
+    final = json.loads(agent.get_agent_status())
+    assert final["state"] == "cancelled" and final["stop_confirmed"]
+    assert final["native_navigation_status"]["task_id"] == child[0]
+    assert view(servo, ref)["terminal"]
+    next_turn = chat_turn(chat, "跟随穿红衣服的人", permission_mode="full_access")
+    assert next_turn["state"] == "completed" and receipts[-1]["accepted"]
+    assert receipts[-1]["follow_task_id"] != ref["follow_task_id"]
+    assert json.loads(agent.cancel_agent_task(ref["run_id"]))["reason"] == "not_current"
+    assert view(servo, receipts[-1])["state"] == "running"
+
+
+@pytest.mark.parametrize("mode", ["read_only", "full_access"])
+def test_conversation_model_tools_keep_permissions_and_exact_follow_owner(chat, chain, monkeypatch, mode):
+    servo, _, _ = chain
+    results = []
+
+    async def runner(text, invoke_tool, **kwargs):
+        if text == "start":
+            results.append(json.loads(await invoke_tool("follow_person", {"description": "person in red"}, "start")))
+        else:
+            current = json.loads(await invoke_tool("get_agent_status", {}, "query"))
+            results.append(json.loads(await invoke_tool("cancel_agent_task", {"run_id": current["run_id"]}, "cancel")))
+        return TurnResult("reply", "已收到。", [])
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    denied = chat_turn(chat, "start", permission_mode="read_only")
+    assert denied["state"] == "failed" and results[-1]["reason"] == "permission_read_only"
+    assert len(servo._follow_tasks) == 0
+    chat_turn(chat, "start", permission_mode="full_access")
+    ref = results[-1]
+    chat_turn(chat, "让刚才的跟随结束吧", permission_mode=mode)
+    if mode == "read_only":
+        assert results[-1]["reason"] == "permission_read_only"
+        assert view(servo, ref)["state"] == "running"
+    else:
+        assert results[-1]["cancel_requested"] and results[-1]["stop_confirmed"]
+        assert view(servo, ref)["state"] == "cancelled"
+
+
+def test_conversation_follow_unknown_and_external_cancel_are_not_success(chat, chain, monkeypatch):
+    agent, _ = chat
+    servo, _, _ = chain
+
+    async def runner(invoke_tool, **kwargs):
+        await invoke_tool("follow_person", {"description": "person in red"}, "start")
+        return TurnResult("reply", "已收到。", [])
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    chat_turn(chat, "start", permission_mode="full_access")
+    ref = agent._active_run.follow_ref
+    with monkeypatch.context() as patch:
+        patch.setattr(servo, "get_follow_task", lambda **kwargs: {"found": False, "reason": "follow_task_not_found"})
+        status = json.loads(agent.get_agent_status())
+        assert status["navigation"]["state"] == "FOLLOW_UNKNOWN"
+        assert not status["stop_confirmed"] and not status["navigation"]["terminal"]
+    servo.cancel_follow_task(**ref)
+    status = json.loads(agent.get_agent_status())
+    assert status["state"] == "cancelled" and status["stop_confirmed"]
+    assert not status["motion_success"]
+
+
+def test_conversation_failure_cancels_its_accepted_follow(chat, chain, monkeypatch):
+    agent, _ = chat
+    servo, _, _ = chain
+
+    async def runner(invoke_tool, **kwargs):
+        receipt = json.loads(await invoke_tool("follow_person", {"description": "person in red"}, "start"))
+        assert receipt["accepted"]
+        raise RuntimeError("provider disconnected after admission")
+
+    monkeypatch.setattr("decision.tasks.sdk_agent.run_turn", runner)
+    turn = chat_turn(chat, "start", permission_mode="full_access")
+    assert turn["state"] == "failed"
+    assert servo.get_follow_task(**agent._active_run.follow_ref)["state"] == "cancelled"
+    assert json.loads(agent.get_agent_status())["stop_confirmed"]
 
 
 @pytest.mark.parametrize("description", ["我", "他", "她", "那个人", "me", "him", "her", "ME！"])

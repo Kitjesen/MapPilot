@@ -150,7 +150,7 @@ def compile_run_plan(
                      "collision_clearance_below_m", "collision_clearance_above_m"):
             if name in geometry:
                 resolved_config.setdefault(name, geometry[name])
-        for name in ("support_height_m", "support_height_tolerance_m"):
+        for name in ("support_height_m", "support_height_tolerance_m", "max_slope"):
             if name in geometry:
                 resolved_config.setdefault(f"octoplanner3d_{name}", geometry[name])
     if env_name == "sim" and has_camera:
@@ -617,7 +617,11 @@ def _process_environment(
                 "</NetworkInterfaceAddress></General></Domain></CycloneDDS>"
             )
         if "slam" in roles:
-            values["LINGTU_SLAM_CONFIG"] = env_spec.slam_config_ref
+            values["LINGTU_SLAM_CONFIG"] = (
+                env_spec.slam_config_ref.relative_to(_REPO_ROOT).as_posix()
+                if env_spec.slam_config_ref is not None
+                else None
+            )
         if "lidar" in roles:
             environment.update(lidar_environment(settings["lidar"], robot_config))
             values.update(

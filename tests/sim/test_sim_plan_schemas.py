@@ -325,6 +325,23 @@ def test_physics_plan_robot_geometry_accepts_resolved_twin_cylinders(version: in
     _validate(geometry, schema["$defs"]["robot"]["properties"]["navigation_geometry"], schema)
 
 
+@pytest.mark.parametrize("name", ["robot.v1", "physics-plan.v1", "physics-plan.v2"])
+def test_slope_schema(name: str) -> None:
+    schema = json.loads((SCHEMA_ROOT / f"{name}.json").read_text(encoding="utf-8"))
+    geometry = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))["navigation_geometry"]
+    owner = schema if name == "robot.v1" else schema["$defs"]["robot"]
+    geometry_schema = owner["properties"]["navigation_geometry"]
+    for slope in (0.0, 0.5):
+        geometry["max_slope"] = slope
+        _validate(geometry, geometry_schema, schema)
+    for slope in (-0.1, True):
+        geometry["max_slope"] = slope
+        with pytest.raises(SchemaError):
+            _validate(geometry, geometry_schema, schema)
+    geometry.pop("max_slope")
+    _validate(geometry, geometry_schema, schema)
+
+
 def _common(name: str) -> dict[str, Any]:
     schema_name = "transport-intent" if name == "transport" else f"{name}-plan"
     document: dict[str, Any] = {

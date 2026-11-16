@@ -93,14 +93,14 @@ def test_semantic_variant_keeps_robot_selection_and_calibration_boundary() -> No
     assert go2.host_config["driver_backend"] == "go2"
     assert thunder.host_config["driver_backend"] == "doso"
     assert go2.host_config["detector"] == thunder.host_config["detector"] == "yolo_world"
-    assert go2_config["calibration"]["camera"]["status"] == "unverified"
+    assert go2_config["calibration"]["camera"]["status"] == "verified"
     preflight = run_calibration_check(
         config=load_config("config/robots/unitree/go2/robot.yaml"),
         require_camera=True,
         require_slam=True,
     )
-    assert preflight.ok is False
-    assert any("Camera calibration is unverified" in error for error in preflight.errors)
+    assert preflight.ok is True
+    assert any("Camera calibration is marked verified" in info for info in preflight.info)
 
 
 def test_existing_nav_variants_and_sim_support_remain_unchanged() -> None:

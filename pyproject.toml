@@ -19,7 +19,10 @@ dependencies = [
 # ONNX Runtime 1.24.x has no CPython 3.10 wheels, while the product still
 # supports Python 3.10 and the ThunderV4 MuJoCo policy is an ONNX model.
 sim-mujoco = [
-    "mujoco>=3.2",
+    # MuJoCo 4 wheels require Python 3.11+; retain the Python 3.10 line for
+    # existing field/simulation environments that still use that interpreter.
+    "mujoco==3.10.0; python_version < '3.11'",
+    "mujoco>=4.0,<4.1; python_version >= '3.11'",
     "mujoco-lidar==0.3.3",
     "onnxruntime>=1.17,<1.24; python_version == '3.10'",
     "onnxruntime>=1.24; python_version >= '3.11'",

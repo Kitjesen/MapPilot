@@ -286,6 +286,8 @@ def resolve_product_host_runtime(
             raise ValueError(
                 f"Product {resolved_product_name!r} does not support local planner {selected!r}"
             )
+        if selected == "scan" and native_nav.get("tick_hz", 20.0) == 20.0:
+            native_nav = {**native_nav, "tick_hz": 100.0}
         resolved_product_spec["native_nav"] = {
             **native_nav,
             "local_planner": selected,

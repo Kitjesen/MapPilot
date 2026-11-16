@@ -385,6 +385,10 @@
             "support_height_tolerance_m": {
               "type": "number",
               "exclusiveMinimum": 0
+            },
+            "max_slope": {
+              "type": "number",
+              "minimum": 0
             }
           }
         }

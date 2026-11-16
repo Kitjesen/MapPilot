@@ -213,9 +213,9 @@ def test_support_clearance_mixed_group_preserves_mesh_and_heightfield(surface):
         ({"ready": True}, {"active": False, "reason": "driver_control_lost"}, "ready for a goal", {"ready": True, "healthy": True}),
         ({"ready": False, "reason": "odometry_stale"}, {"active": True}, "odometry_stale", {}),
         ({"ready": True}, {"active": True, "reason": "tracking"}, "tracking", {"ready": True, "healthy": True}),
-        ({"ready": True}, {"active": True, "reason": "scan_initialization_failed"},
+        ({"ready": True}, {"active": True, "reason": "aegis_init_failed"},
          "Local trajectory blocked near robot; back away or change goal", {"ready": True, "healthy": True}),
-        ({"ready": True}, {"active": True, "reason": "scan_local_target_blocked"},
+        ({"ready": True}, {"active": True, "reason": "aegis_goal_blocked"},
          "No reachable local target; change goal or wait for clear space", {"ready": True, "healthy": True}),
         ({"ready": True}, {"active": True, "reason": "execution_stalled"},
          "Motion stalled; stopped. Change goal or use keyboard to back away", {"ready": True, "healthy": True}),
@@ -235,11 +235,11 @@ def test_support_clearance_mixed_group_preserves_mesh_and_heightfield(surface):
             "applied": True, "stopped": True, "reason": "cmd_blocked"}},
          "Candidate command has no braking space", {"ready": True, "healthy": True}),
         ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
-            "applied": True, "stopped": True, "reason": "scan_actual_motion_blocked"}},
+            "applied": True, "stopped": True, "reason": "aegis_move_blocked"}},
          "Obstacle within stopping distance; stopped\nTiming warning: deadline_miss_ratio_high",
          {"ready": True, "healthy": False, "reason": "deadline_miss_ratio_high"}),
         ({"ready": True}, {"active": True, "reason": "tracking", "final_safety": {
-            "applied": True, "stopped": True, "reason": "scan_command_motion_blocked"}},
+            "applied": True, "stopped": True, "reason": "aegis_cmd_blocked"}},
          "Candidate command has no braking space", {"ready": True, "healthy": True}),
         ({"ready": True}, {"active": True, "final_safety": {
             "applied": True, "stopped": True, "reason": "traversability_blocked"}},

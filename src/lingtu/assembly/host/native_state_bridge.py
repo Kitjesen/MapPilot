@@ -530,10 +530,6 @@ class HostBus(Module):
             "occupancy": TOPICS.maps_occupancy,
             "elevation": TOPICS.maps_elevation,
             "esdf": TOPICS.maps_esdf,
-            "surface_projection": None,
-            "ground_height": None,
-            "ground_roughness": None,
-            "ground_support": None,
         }
         for name, topic in grid_topics.items():
             grid = raw_grids.get(name)

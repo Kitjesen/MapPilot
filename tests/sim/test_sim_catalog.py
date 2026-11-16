@@ -388,8 +388,25 @@ def test_robot_navigation_cylinders_resolve_with_the_selected_physics_model() ->
     robot = resolved.physics_plan["robots"][0]
     assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .32
     assert robot["navigation_geometry"]["collision_cylinder_offset_m"] == .23
+    assert robot["navigation_geometry"]["max_slope"] == pytest.approx(0.5773502691896257)
     assert "body_file" not in robot["navigation_geometry"]
     assert robot["model"]["mjcf"] == "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"
+
+
+@pytest.mark.parametrize("slope", [-0.1, True])
+def test_model_slope_rejects_invalid_values(tmp_path: Path, slope: float) -> None:
+    package = _write_robot_package(tmp_path, "semantic:\n  class: quadruped\n")
+    manifest = package / "robot.package.yaml"
+    geometry = {
+        "collision_cylinder_radius_m": .32, "collision_cylinder_offset_m": .23,
+        "collision_clearance_below_m": .05, "collision_clearance_above_m": .35,
+        "support_height_m": .435, "support_height_tolerance_m": .10,
+        "max_slope": slope,
+    }
+    manifest.write_text(manifest.read_text(encoding="utf-8") +
+                        "\nnavigation_geometry: " + json.dumps(geometry) + "\n", encoding="utf-8")
+    with pytest.raises(CatalogError, match=r"navigation_geometry.max_slope"):
+        CatalogResolver(tmp_path, [package])
 
 
 @pytest.mark.parametrize("projection", [None, "../robot.visual-projection.json"])
@@ -1359,3 +1376,13 @@ def test_mujoco_compatibility_is_checked(tmp_path: Path) -> None:
 
     with pytest.raises(CatalogError, match=r"requires MuJoCo 3\.10\.x"):
         _resolver().resolve(session)
+
+
+def test_mujoco_4_compatibility_is_accepted(tmp_path: Path) -> None:
+    source = SESSION.read_text(encoding="utf-8").replace("mujoco_version: 3.10.0", "mujoco_version: 4.0.1")
+    session = tmp_path / "mujoco4.yaml"
+    session.write_text(source, encoding="utf-8")
+
+    resolved = _resolver().resolve(session)
+
+    assert resolved.session["mujoco_version"] == "4.0.1"

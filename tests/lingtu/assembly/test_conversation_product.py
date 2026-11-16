@@ -22,3 +22,14 @@ def test_standard_products_include_conversation_without_perception(robot, produc
 def test_semantic_variant_keeps_one_agent():
     plan = compile_run_plan("nav", "real", robot="unitree/go2", product_variant="semantic")
     assert list(host_builder_from_run_plan(plan).module_names).count("AgentPlannerModule") == 1
+
+
+@pytest.mark.parametrize("env,robot", [("real", "unitree/go2"), ("sim", "doso/thunder_v4")])
+def test_tracking_conversation_uses_visual_servo_without_semantic_planner(env, robot, allow_unbuilt_process_artifacts):
+    plan = compile_run_plan("tracking", env, robot=robot)
+    names = list(host_builder_from_run_plan(plan).module_names)
+    assert names.count("AgentPlannerModule") == 1
+    assert "VisualServoModule" in names and "PerceptionModule" in names
+    assert "SemanticPlannerModule" not in names
+    assert plan.host_config["enable_conversation"] is True
+    assert names == list(plan.modules)

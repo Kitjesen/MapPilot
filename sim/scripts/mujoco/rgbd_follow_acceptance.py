@@ -1,4 +1,4 @@
-"""Run a long RGB-D person-fixture follow in the industrial park."""
+"""Run a long RGB-D pedestrian follow in the industrial park."""
 
 from __future__ import annotations
 

@@ -5,7 +5,9 @@ kind: robot
 description: Two-wheel differential-drive cart with direct wheel-torque actuation; the legacy package ID does not imply holonomic motion.
 compatibility:
   runtime_abi: lingtu.sim.robot.v1
-  mujoco: 3.10.x
+  mujoco:
+    - 3.10.x
+    - 4.0.x
 physics:
   mjcf: omni_cart.xml
   attach_root: base_link

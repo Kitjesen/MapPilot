@@ -29,17 +29,18 @@ native_nav:
     support_patch_min_samples: 0
     lowest_traversable_only: false
     # Height-change costs bias the route without prohibiting cross-floor paths.
-    floor_change_penalty: 6.0
+    floor_change_penalty: 0.0
     max_step_height_m: 0.45
-    same_floor_preference: true
+    same_floor_preference: false
     same_floor_z_tolerance_m: 0.75
 
-    preblocked: true  # Soft proximity cost; does not mark cells occupied.
+    preblocked: false  # Disabled by default; explicit occupied geometry remains authoritative.
     preblocked_radius_cells: 3
-    preblocked_weight: 2.5
-    # Soft obstacle proximity cost; cell counts use the underlying map resolution.
-    obstacle_clearance_radius_cells: 2
-    obstacle_clearance_weight: 1.5
+    preblocked_weight: 0.0
+    # Soft wall preference, preserved by smoothing; it never forbids a narrow passage.
+    # Cell counts use the saved map resolution (8 cells = 0.4 m at 0.05 m).
+    obstacle_clearance_radius_cells: 8
+    obstacle_clearance_weight: 2.0
 
     # Per-query goal snapping limits; these do not rebuild the .nav profile.
     # Separate from task-arrival tolerances in follower.yaml.

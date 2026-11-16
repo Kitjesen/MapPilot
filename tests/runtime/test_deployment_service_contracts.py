@@ -332,3 +332,4 @@ def test_field_host_uses_current_task_journals():
     unit = _read("scripts/deploy/thunder/lt-host.service")
     assert "/var/lib/lingtu/task_journal/explore_runs.json" in unit
     assert "/var/lib/lingtu/task_journal/navigation_tasks.sqlite3" in unit
+    assert "SupplementaryGroups=video render" in unit
