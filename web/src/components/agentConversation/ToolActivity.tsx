@@ -7,6 +7,7 @@ import { SavedMapsResult } from './SavedMapsResult'
 import { SavedMapCard } from './SavedMapCard'
 import { ObservationCard, type ObservationView } from './ObservationCard'
 import { LiveCameraCard } from './LiveCameraCard'
+import { FollowSelectionCard } from './FollowSelectionCard'
 import { CloudPreview } from './CloudPreview'
 import { SensorResult } from './SensorResult'
 import { ComputerProgressCard, type ComputerProgressState } from './ComputerProgressCard'
@@ -90,7 +91,7 @@ export function ToolActivityGroup({ messages, active, runningId, awaiting, now, 
       if (failed) failedCount += 1
       else if (running) runningCount += 1
       else completedCount += 1
-      keepVisible ||= message.kind === 'web_search' || message.kind === 'web_extract'
+      keepVisible ||= message.kind === 'web_search' || message.kind === 'web_extract' || result?.confirmation_required === true
       // Errors and map-preview actions remain visible without opening the history.
       keepVisible ||= message.metadata?.status === 'failed' || Boolean(result?.observation_view || result?.camera_view || result?.map_view || result?.error || result?.preview_request || result?.sensor || result?.sensors || message.kind === 'get_model_connections') || result?.success === false || result?.ok === false || result?.accepted === false || (typeof result?.exit_code === 'number' && result.exit_code !== 0)
     } catch { names.add(message.kind ?? '工具') }
@@ -157,13 +158,16 @@ export function ToolActivity({ message, running = false, awaiting = [], now, onS
   const codexTerminal = Boolean(codexCommand || codexOutput) || codexItem?.type === 'commandExecution'
   const observationView = name === 'view_robot_card' && ['robot', 'joints', 'imu', 'navigation'].includes(String(result.observation_view)) ? result.observation_view as ObservationView : null
   const cameraView = name === 'view_live_camera' && (result.camera_view as { source?: unknown } | undefined)?.source === 'robot'
+  const followSelection = name === 'follow_person' && result.accepted === true && result.confirmation_required === true
+    && typeof result.follow_task_id === 'string' && typeof result.product_session_id === 'string'
+    ? { follow_task_id: result.follow_task_id, product_session_id: result.product_session_id } : null
   const view = result.map_view as { map_id?: unknown } | undefined
   const mapView = name === 'view_saved_map' && view && typeof view.map_id === 'string' && view.map_id.trim()
     ? { name: view.map_id } : null
   const computerView = result.computer_view && typeof result.computer_view === 'object' && !Array.isArray(result.computer_view)
     ? result.computer_view as Record<string, unknown> : null
   const hasResultCard = Boolean(computerView) || (!started && !failed && (result.sensor != null || result.sensors != null
-    || observationView || cameraView || mapView || name === 'list_saved_maps' && Array.isArray(result.maps)
+    || observationView || cameraView || followSelection || mapView || name === 'list_saved_maps' && Array.isArray(result.maps)
     || (name === 'web_search' || name === 'web_extract') && Array.isArray(result.sources)
     || usage || codexPlan || codexFileChange || codexTerminal))
 
@@ -208,6 +212,7 @@ export function ToolActivity({ message, running = false, awaiting = [], now, onS
       error={typeof computerView.error === 'string' ? computerView.error : typeof reason === 'string' ? reason : undefined}
     />}
     {cameraView && <LiveCameraCard />}
+    {followSelection && <FollowSelectionCard key={followSelection.follow_task_id} task={followSelection} />}
     {mapView && <SavedMapCard key={mapView.name} name={mapView.name} />}
     {!started && !failed && (result.sensor != null || result.sensors != null) && <SensorResult result={result} />}
     {name === 'list_saved_maps' && !started && !failed && Array.isArray(result.maps) && <SavedMapsResult maps={result.maps} />}

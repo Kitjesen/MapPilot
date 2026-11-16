@@ -186,7 +186,7 @@ _PLANNER_HANDLER_TOOLS.extend([
     {"type": "function", "function": {
         "name": "follow_person", "description": (
             "Start an Agent-owned continuous follow task for the described person. The conversation entry "
-            "returns after Follow admission so later control messages can stop it. The standalone Agent loop "
+            "returns a person-selection card after Follow admission. The Web operator must confirm the boxed person before movement; do not claim following has begun. Later control messages can stop it. The standalone Agent loop "
             "will wait for its real terminal result. Success requires verified domain feedback, not only task submission. "
             "The result includes accepted, state, terminal, reason, and task references when available. "
             "Use visible clothing or appearance from the user's description; me or him alone does not "

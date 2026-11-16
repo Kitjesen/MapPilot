@@ -505,6 +505,15 @@ class FollowTaskCancelRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
 
+class FollowTargetConfirmRequest(BaseModel):
+    follow_task_id: str = Field(min_length=1, max_length=128)
+    product_session_id: str = Field(min_length=1, max_length=128)
+    target_id: str = Field(min_length=1, max_length=128)
+    observation_sequence: int = Field(ge=1)
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str = Field(default="unknown", max_length=128)
+
+
 class StopRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)

@@ -782,7 +782,7 @@ class AgentPlannerModule(Module, layer=4):
                     return _json.dumps({"accepted": False, "reason": blocked})
                 if permission_mode == "read_only":
                     blocked = "permission_read_only"
-                elif permission_mode == "default":
+                elif permission_mode == "default" and name != "follow_person":
                     approval = store.request_approval(conversation_id, turn_id, tool_call_id, name, args)
                     if approval["state"] == "pending":
                         set_activity_state("awaiting")
@@ -921,6 +921,7 @@ class AgentPlannerModule(Module, layer=4):
                     phase = ("cancelling" if navigation.get("state") == "cancelling" else
                              navigation.get("phase") or navigation.get("state") or status["state"])
                     label = {"selecting": "正在选择人员", "following": "正在跟随",
+                             "awaiting_confirmation": "等待确认跟踪人员",
                              "reacquiring": "正在重新识别人员", "lost": "跟随目标丢失",
                              "cancelling": "等待取消确认", "cancelled": "已取消"}.get(phase, phase)
                     result_text = f"当前任务：{status.get('instruction') or '无'}。状态：{label}。"
@@ -984,7 +985,7 @@ class AgentPlannerModule(Module, layer=4):
                 "Draft steps do not grant permission or start motion or persistent writes; generating a plan is not task completion. "
                 f"This turn's permission mode is {permission_mode}. Read-only mode forbids motion, Python execution and persistent map/location writes. "
                 "Default mode asks the operator to approve each motion, Python execution or persistent write tool. A denied action must not be retried. "
-                "Continuous following is available only through follow_person when the configured VisualServo adapter can select and track the described person. Require visible clothing or appearance; 'me' or 'him' alone is ambiguous. Admission does not mean the person is selected or motion has begun. The follow task remains active across conversation turns; use get_agent_status to read its phase and cancel_agent_task with that run_id to stop it. Never restart it just to answer a follow-up question. "
+                "Continuous following is available only through follow_person when the configured VisualServo adapter can select and track the described person. Require visible clothing or appearance; 'me' or 'him' alone is ambiguous. The tool prepares a person-selection card; the operator must select a boxed person and explicitly confirm before any follow navigation is dispatched, even in full_access mode. Ask them to confirm in that card; never claim motion has begun or confirm on their behalf. The follow task remains active across conversation turns; use get_agent_status to read its phase and cancel_agent_task with that run_id to stop it. Never restart it just to answer a follow-up question. "
                 "During an Agent-owned navigation or follow task, get_agent_status reports the live native task state. The operator can pause, resume, or cancel a supported navigation task through the exact control phrases; do not create a replacement goal to simulate pause or resume. "
                 "When a task is incomplete, reason from get_agent_status and the native task evidence before choosing the next step. If the native task explicitly remains resumable, continue that task through its existing control path; never submit a replacement goal. If it is failed, interrupted, or not resumable, gather read-only evidence or explain the blocker first. Retry a failed read-only observation at most once; never repeat a motion or persistent write tool without a new user request and its normal approval. "
                 "Use get_robot_capabilities before sensor tasks. Select the configured adapter; never guess robot endpoints, joint counts, units or clocks. "
@@ -1563,7 +1564,8 @@ class AgentPlannerModule(Module, layer=4):
                 return _json.dumps({"accepted": False, "reason": "visual_servo_unavailable"})
             run.motion_attempted = True
             run.motion_success = False
-            result = servo.start_follow(description=description, request_id=run.run_id, client_id="agent")
+            result = servo.start_follow(description=description, request_id=run.run_id, client_id="agent",
+                                        require_confirmation=True)
             if result.get("accepted") is not True:
                 return _json.dumps(result, ensure_ascii=False)
             run.planner = servo

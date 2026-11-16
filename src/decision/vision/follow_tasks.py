@@ -86,6 +86,8 @@ class FollowTaskLedger(MutableMapping[str, dict[str, Any]]):
         view["found"] = True
         view["kind"] = "follow"
         view["available_operations"] = [] if task["terminal"] else ["cancel"]
+        if not task["terminal"] and task.get("confirmation_required"):
+            view["available_operations"].insert(0, "confirm")
         view["retention"] = self.retention_label
         if current and not task["terminal"]:
             view["details"] = details or {}

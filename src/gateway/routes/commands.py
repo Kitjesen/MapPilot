@@ -6,7 +6,7 @@ import asyncio
 import time
 from typing import Any
 
-from fastapi import Query
+from fastapi import HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from gateway.navigation.commands import (
@@ -23,6 +23,7 @@ from gateway.schemas import (
     ConversationQueueEditRequest,
     ConversationUpdateRequest,
     FollowTaskCancelRequest,
+    FollowTargetConfirmRequest,
     GatewayErrorResponse,
     InstructionRequest,
     LeaseRequest,
@@ -400,6 +401,28 @@ def register_command_routes(app, gw) -> None:
             "product_session_id": product_session_id,
             "reason": "invalid_follow_task_view",
         }
+
+    @app.get("/api/v1/follow/{follow_task_id}/selection", summary="Read the frame and candidates for operator confirmation")
+    async def get_follow_selection(follow_task_id: str, product_session_id: str, refresh: bool = False):
+        servo = (getattr(gw, "_all_modules", {}) or {}).get("VisualServoModule")
+        if servo is None:
+            return {"found": False, "reason": "visual_servo_unavailable"}
+        return await asyncio.to_thread(servo.get_follow_selection, follow_task_id, product_session_id, refresh)
+
+    @app.post("/api/v1/follow/{follow_task_id}/confirm", summary="Confirm the person selected by the operator")
+    async def confirm_follow_target(follow_task_id: str, body: FollowTargetConfirmRequest):
+        if body.follow_task_id != follow_task_id:
+            raise HTTPException(422, detail={"reason": "follow_task_mismatch"})
+        servo = (getattr(gw, "_all_modules", {}) or {}).get("VisualServoModule")
+        if servo is None:
+            return {"accepted": False, "reason": "visual_servo_unavailable"}
+        return await asyncio.to_thread(
+            command_service.run_motion_guarded_command, "follow_confirm", body,
+            lambda: servo.confirm_follow_target(
+                follow_task_id, body.product_session_id, body.target_id,
+                body.observation_sequence, body.request_id or "",
+            ),
+        )
 
     @app.post(
         "/api/v1/follow/{follow_task_id}/cancel",
