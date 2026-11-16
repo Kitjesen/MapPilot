@@ -58,6 +58,8 @@ def _adapt(payload: dict):
         observed_ids=set(),
         frame_id="map",
         source_ts=10.0,
+        map_id="test-map",
+        content_epoch=1,
     )
 
 

@@ -5,7 +5,7 @@ import math
 import zipfile
 
 import grpc
-import numpy as np
+from runtime.msgs.numpy_compat import np
 
 from gateway.maps.routes import public_map_name_error
 from gateway.maps.transport import map_client

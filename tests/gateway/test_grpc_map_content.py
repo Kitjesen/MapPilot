@@ -213,7 +213,9 @@ def test_map_client_uses_current_deadline_despite_cached_query_client(monkeypatc
         return fake.open_artifact(name, capability)
 
     monkeypatch.setattr(map_content.MapClient, "open_artifact", open_artifact)
-    with serve(gateway) as channel:
-        list(rpc.MapsStub(channel).PointCloud(pb.MapContentRequest(map_name="yard"), timeout=0.5))
-    assert calls[0][0] == "/saved/mapd.sock"
-    assert 0 < calls[0][1] <= 0.5
+    context = SimpleNamespace(time_remaining=lambda: 0.5, is_active=lambda: True,
+                              abort=lambda *args: pytest.fail(str(args)))
+    list(map_content.point_cloud(gateway, pb.MapContentRequest(map_name="yard"),
+                                 context, threading.BoundedSemaphore(1)))
+    assert calls == [("/saved/mapd.sock", 0.5)]
+    assert selected.timeout_s == 360

@@ -7,12 +7,8 @@ ENDPOINT_LOOP = NAV_ENDPOINT / "app" / "loop.cpp"
 TASK_CANCEL_ROUTER_SOURCE = (
     NAV_ENDPOINT / "command" / "cancel.cpp"
 )
-NAVIGATION_RUNTIME_SOURCE = (
-    NAV_ENDPOINT / "app" / "navigation.cpp"
-)
-TERMINAL_TRANSACTION_SOURCE = (
-    NAV_ENDPOINT / "app" / "goal" / "terminal.cpp"
-)
+NAVIGATION_RUNTIME_SOURCE = NAV_ENDPOINT / "app" / "goal" / "runtime.cpp"
+TERMINAL_TRANSACTION_SOURCE = NAVIGATION_RUNTIME_SOURCE
 RUNTIME_HEADER = NAV_ENDPOINT / "app" / "goal" / "runtime.hpp"
 RUNTIME_SOURCE = NAV_ENDPOINT / "app" / "goal" / "runtime.cpp"
 GOAL_PLAN_HEADER = NAV_ENDPOINT / "app" / "goal" / "plan.hpp"
@@ -83,31 +79,28 @@ def test_runtime_terminal_intent_carries_stop_policy_for_active_stop() -> None:
 
 
 def test_endpoint_replays_active_cancel_terminal_with_cancel_preserving_barrier() -> None:
-    endpoint = _read(ENDPOINT_LOOP)
-    router = _read(TASK_CANCEL_ROUTER_SOURCE)
-    transaction = _read(TERMINAL_TRANSACTION_SOURCE)
-    endpoint_router = _block_between(endpoint, "GoalTaskCancelRouter task_cancel_router(", "while (running)")
+    runtime = _read(RUNTIME_SOURCE)
     cancel_policy = _block_between(
-        transaction, "case TerminalStopPolicy::kCancel:", "break;"
+        runtime, "case TerminalStopPolicy::kCancel:", "case TerminalStopPolicy::kEstop:"
     )
-    cancel_block = _block_between(
-        router,
-        "if (request.task_id == snapshot.deferred_replacement_task_id",
-        'return {false, "task_not_active"};',
+    cancel_method = _block_between(
+        runtime,
+        "CommandAck GoalReplanRuntimeCoordinator::cancelTask",
+        "std::pair<bool, std::string> GoalReplanRuntimeCoordinator::pauseTask",
     )
 
-    assert "stop_.cancelPreservingGoalTerminal" in cancel_policy
-    assert "motion_stop.cancelPreservingGoalTerminal" not in cancel_block
-    assert "terminal_service_(runtime_result)" in cancel_block
-    assert "navigation_runtime_controller.completeTerminal(runtime_result)" in endpoint_router
+    assert "motion_stop_.cancelPreservingGoalTerminal" in cancel_policy
+    assert "GoalTaskCancelRouter cancel(" in cancel_method
+    assert "completeTerminal(result)" in cancel_method
+    assert "return cancel.handle(request)" in cancel_method
 
 
 def test_endpoint_services_terminal_from_planning_cycle_before_autonomy_tick() -> None:
     runtime = _read(NAVIGATION_RUNTIME_SOURCE)
 
-    advance_index = runtime.index("goal_replan_runtime_.advancePlanningCycle(frame)")
+    advance_index = runtime.index("result.planning_result = advancePlanningCycle(frame)")
     autonomy_tick_index = runtime.index("actions.run_autonomy", advance_index)
-    service_index = runtime.index("completeTerminal(result.planning_result)", advance_index)
+    service_index = runtime.index("serviceTerminal(result.planning_result)", advance_index)
 
     assert "planning_schedule.service_terminal" in runtime[advance_index:service_index]
     assert service_index < autonomy_tick_index
@@ -116,13 +109,13 @@ def test_endpoint_services_terminal_from_planning_cycle_before_autonomy_tick() -
 def test_endpoint_skips_autonomy_tick_while_terminal_delivery_is_pending() -> None:
     runtime = _read(NAVIGATION_RUNTIME_SOURCE)
 
-    advance_index = runtime.index("goal_replan_runtime_.advancePlanningCycle(frame)")
+    advance_index = runtime.index("result.planning_result = advancePlanningCycle(frame)")
     autonomy_tick_index = runtime.index("actions.run_autonomy", advance_index)
     pre_autonomy = runtime[advance_index:autonomy_tick_index]
     gate_start = runtime.rfind("if (planning_schedule.run_autonomy_tick)", 0, autonomy_tick_index)
 
     assert "decideGoalTerminalScheduling" in pre_autonomy
-    assert "goal_replan_runtime_.terminalPending()" in pre_autonomy
+    assert "terminalPending()" in pre_autonomy
     assert gate_start > advance_index
     assert "planning_schedule.run_autonomy_tick" in runtime[gate_start:autonomy_tick_index]
     assert "continue;" not in pre_autonomy
@@ -139,7 +132,7 @@ def test_runtime_interrupt_closes_deferred_replacement_before_legacy_interrupt_p
     source = _read(RUNTIME_SOURCE)
     interrupt = _block_between(
         source,
-        "GoalReplanRuntimeCoordinator::interrupt",
+        "GoalReplanRuntimeCoordinator::interrupt(GoalReplanRuntimeInterruption",
         "std::optional<GoalReplanRuntimeResult>",
     )
 
@@ -160,31 +153,25 @@ def test_runtime_external_goal_rejects_after_terminal_interrupt_without_submit_b
     runtime = _read(NAVIGATION_RUNTIME_SOURCE)
     submit_goal = _block_between(
         runtime,
-        "NavigationRuntimeController::submitGoal",
-        "GoalTerminalResult",
+        "NavigationRuntimeGoalSubmissionResult GoalReplanRuntimeCoordinator::submitGoal",
+        "GoalTerminalResult GoalReplanRuntimeCoordinator::completeTerminal",
     )
 
-    interrupt_index = submit_goal.index("interrupt(GoalReplanRuntimeInterruption::kNewGoal")
-    retain_index = submit_goal.index("result.preemption_terminal = preemption.terminal")
-    reject_index = submit_goal.index('"goal_terminal_pending"', retain_index)
-    submit_index = submit_goal.index("goal_plan_.submit")
+    reject_index = submit_goal.index('"goal_terminal_pending"')
+    submit_index = submit_goal.index("result.plan_result = goal_plan_.submit")
+    interrupt_index = submit_goal.index("interruptAndService(GoalReplanRuntimeInterruption::kNewGoal")
 
-    assert interrupt_index < retain_index < reject_index < submit_index
-    assert "preemption.runtime_result.terminal_after_stop" in submit_goal[retain_index:reject_index]
+    assert reject_index < submit_index < interrupt_index
+    assert "result.preemption_terminal = preemption.terminal" in submit_goal
 
 
 def test_endpoint_targeted_cancel_routes_hidden_replacement_before_task_not_active() -> None:
     endpoint = _read(ENDPOINT_LOOP)
-    router = _read(TASK_CANCEL_ROUTER_SOURCE)
-    handle_cancel = _block_between(
-        router,
-        "CommandAck GoalTaskCancelRouter::handle",
-        "}  // namespace lingtu::nav::endpoint",
-    )
-    endpoint_router = _block_between(
-        endpoint,
-        "GoalTaskCancelRouter task_cancel_router(",
-        "while (running)",
+    runtime = _read(RUNTIME_SOURCE)
+    cancel_method = _block_between(
+        runtime,
+        "CommandAck GoalReplanRuntimeCoordinator::cancelTask",
+        "std::pair<bool, std::string> GoalReplanRuntimeCoordinator::pauseTask",
     )
     typed_dispatch = _block_between(
         endpoint,
@@ -192,20 +179,10 @@ def test_endpoint_targeted_cancel_routes_hidden_replacement_before_task_not_acti
         "} else if (kind == CommandKind::TaskPause) {",
     )
 
-    deferred_match_index = handle_cancel.index(
-        "request.task_id == snapshot.deferred_replacement_task_id"
-    )
-    interrupt_index = handle_cancel.index(
-        "GoalReplanRuntimeInterruption::kCancel", deferred_match_index
-    )
-    service_index = handle_cancel.index("terminal_service_(runtime_result)", interrupt_index)
-    accepted_index = handle_cancel.index('"cancel_requested"', service_index)
-    not_active_index = handle_cancel.index('"task_not_active"', accepted_index)
-
-    assert deferred_match_index < interrupt_index < service_index < accepted_index < not_active_index
-    assert "auto handle_cancel =" not in endpoint
-    assert "navigation_runtime_controller.completeTerminal(runtime_result)" in endpoint_router
-    assert "task_cancel_router.handle" in typed_dispatch
+    assert "GoalTaskCancelRouter cancel(" in cancel_method
+    assert "completeTerminal(result)" in cancel_method
+    assert "return cancel.handle(request)" in cancel_method
+    assert "runtime.cancelTask" in typed_dispatch
     assert "GoalTaskCancelRequest" in typed_dispatch
     assert "deferred_replacement_request_id" in _read(GOAL_PLAN_HEADER)
     assert "deferred_replacement_goal_epoch" in _read(GOAL_PLAN_SOURCE)

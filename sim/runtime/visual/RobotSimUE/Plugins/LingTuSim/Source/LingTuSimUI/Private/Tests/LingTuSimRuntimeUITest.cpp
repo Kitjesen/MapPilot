@@ -846,7 +846,7 @@ bool FLingTuRuntimeUIGamepadDeadZoneClampAndCameraAxesStaySeparateTest::RunTest(
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLingTuRuntimeUIMotionRequiresDriveAndForegroundTest,
-                                 "LingTuSim.UI.Runtime.MotionRequiresDriveAndForeground",
+                                 "LingTuSim.UI.Runtime.MotionRequiresDriveDeadmanAndForeground",
                                  EAutomationTestFlags::EditorContext |
                                      EAutomationTestFlags::EngineFilter)
 

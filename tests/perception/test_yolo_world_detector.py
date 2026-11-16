@@ -17,6 +17,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
+import pytest
+
+pytest.importorskip("torch")
 
 from perception.detection.yolo_world_detector import YOLOWorldDetector
 

@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
+from tools.validate.validate_docs import _is_external_evidence_link
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DOCS_ROOT = REPOSITORY_ROOT / "docs"
 
@@ -89,7 +91,7 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
 
 
 def test_documentation_tree_contains_only_maintained_handbook_pages() -> None:
-    expected = {f"docs/{name}" for name in DOCUMENT_NAMES}
+    expected = {f"docs/{name}" for name in DOCUMENT_NAMES} | {"docs/customer-deployment.md"}
     actual = {
         path.relative_to(REPOSITORY_ROOT).as_posix()
         for path in DOCS_ROOT.glob("*.md")
@@ -105,6 +107,8 @@ def test_curated_documentation_links_resolve() -> None:
     for source in CURATED_PAGES:
         for target in MARKDOWN_LINK.findall(source.read_text(encoding="utf-8")):
             local_target = _local_link_path(source, target)
+            if local_target is not None and _is_external_evidence_link(local_target):
+                continue
             if local_target is not None and not local_target.exists():
                 missing.append(
                     f"{source.relative_to(REPOSITORY_ROOT).as_posix()} -> {target}"

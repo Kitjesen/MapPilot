@@ -59,7 +59,7 @@ def _intent() -> dict[str, Any]:
                     "instance_id": "robot_01",
                     "package": "thunderv4@1.0.3",
                     "sensor_rig": "thunderv4_truth_telemetry@1.0.0",
-                    "controller": "thunderv4_locomotion@1.0.0",
+                    "controller": "thunderv4_cts_moe@1.0.0",
                     "spawn": {
                         "position_m": [0.0, 0.0, 0.0],
                         "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],

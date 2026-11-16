@@ -147,7 +147,8 @@ def authored_plan(sensor_plan):
     session["world"] = "test_world@1.0.0"
     session["session_id"] = session_id
     session["robots"][0]["package"] = "test_robot@1.0.0"
-    session["robots"][0].pop("controller")
+    # Controller selection is authored in the compiled control plan now.
+    session["robots"][0].pop("controller", None)
     source.write_text(yaml.safe_dump(session), encoding="utf-8")
     # The catalog compiler preserves the exact authored source in the bundle.
     shutil.copyfile(source, bundle / "session.yaml")

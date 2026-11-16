@@ -17,7 +17,7 @@ from drivers.sim.mujoco.runtime import build_engine
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORLD_XML = REPO_ROOT / "sim" / "packages" / "worlds" / "open_field" / "physics" / "open_field.xml"
 ROBOT_XML = REPO_ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
-POLICY = resolve_robot_default_policy(REPO_ROOT)["artifact"]
+POLICY = resolve_robot_default_policy(REPO_ROOT, "thunderv4@1.0.3")["artifact"]
 FORWARD_COMMAND_X_MPS = 0.6
 POLICY_STARTUP_STAND_HOLD_S = 0.5
 MAX_WARMUP_DISPLACEMENT_M = 0.08

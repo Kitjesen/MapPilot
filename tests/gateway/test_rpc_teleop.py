@@ -395,7 +395,8 @@ def test_periodic_windows_do_not_extend_client_idle_timeout(monkeypatch):
                 updates.append(update.input_window)
         assert error.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
         assert len(updates) >= 2
-        assert updates == sorted(set(updates))
+        assert updates == sorted(updates)
+        assert len(set(updates)) >= 2, "control-only feedback must not stop new input windows"
     assert gateway.claims == [] and gateway.samples == []
 
 

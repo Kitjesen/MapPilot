@@ -126,8 +126,8 @@ TSharedRef<SWidget> SLingTuSimRuntimeHUD::BuildLoginScreen() {
   ReadabilityVeil->SetRenderOpacity(FactoryBackgroundBrush.IsValid() ? 1.F : .50F);
   return SNew(SOverlay)
     + SOverlay::Slot()[WelcomeShowroom.ToSharedRef()]
-    + SOverlay::Slot()[SNew(SBox).Tag(TEXT("LingTu.Welcome.FactoryBackground"))
-      .Visibility(FactoryBackgroundBrush.IsValid() ? EVisibility::HitTestInvisible : EVisibility::Collapsed)
+    + SOverlay::Slot()[SNew(SBox).Tag(TEXT("LingTu.Welcome.FrontEndBackgroundBrush"))
+      .Visibility(this, &SLingTuSimRuntimeHUD::GetFrontEndStaticBackdropVisibility)
       [SNew(SScaleBox).Stretch(EStretch::ScaleToFill)
         [SNew(SBox).WidthOverride(1920).HeightOverride(1080)
           [SNew(SImage).Image(FactoryBackgroundBrush.Get())]]]]

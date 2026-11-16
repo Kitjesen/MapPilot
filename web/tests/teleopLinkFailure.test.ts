@@ -170,13 +170,15 @@ for (const ackType of ['input_ack', 'ingress_ack']) {
   })
 }
 
-test('idle connection probes detect a silent broken cable without sending velocity', async () => {
+test('idle connection probes detect a silent broken cable without sending velocity', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] })
   const socket = new FakeSocket()
   const client = new TeleopWsClient({ url: '/ws/teleop', inputTimeoutMs: 5, socketFactory: () => socket })
   client.connect()
   socket.open()
   try {
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    t.mock.timers.tick(1000)
+    t.mock.timers.tick(5)
     assert.equal(client.isOpen(), false)
     assert.equal(socket.sent.length, 1)
     assert.equal(JSON.parse(socket.sent[0]).type, 'input_request')

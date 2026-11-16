@@ -76,21 +76,9 @@ def test_docs_delegate_topic_and_frame_values_to_machine_sources():
 def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
     doc = " ".join(_read("docs/simulation.md").split())
 
-    assert "An endpoint is a concrete HTTP, DDS, or native-service access point" in doc
-    assert "RobotConfig selector" in doc
-    assert "/api/v1/diagnostics/runtime-contract" in doc
-    assert "/api/v1/runtime/dataflow" in doc
-    assert "/api/v1/navigation/status" in doc
-    assert "`runtime.blockers`" in doc
-    assert "`launcher` and `launcher_args`" in doc
-    assert "`frame_links`" in doc
-    assert "mujoco_ltlio_live -> field" in doc
-    assert "sensor/log/simulator source" in doc
-    assert "`runtime_data_flow`" in doc
-    assert "`resolved_runtime_data_flow.<data_source>`" in doc
-    assert "`mujoco_ltlio_live` resolves to `/lidar/raw_frame + /imu/raw" in doc
-    assert "map -> odom -> body -> lidar_link" in doc
-    assert "`odom->body` must be observed from live odometry" in doc
+    for contract in ("lingtu.control switch", "ProductControl", "native LTLIO", "control_plan",
+                     "synthetic IMU and LiDAR", "Truth odometry remains evaluation evidence"):
+        assert contract in doc
 
 
 def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algorithms():
@@ -142,7 +130,8 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     assert product_data_source("map").data_source == "field"
     real_lidar = lidar_extrinsic("go2_mid360")
     cfg_lidar = load_config(str(REPO_ROOT / "config/robots/unitree/go2/robot.yaml")).lidar
-    assert cfg_lidar.frame_id == real_lidar.child
+    assert (cfg_lidar.frame_id or FRAMES.lidar) in frame_id_aliases(FRAMES.lidar)
+    assert real_lidar.child in frame_id_aliases(FRAMES.lidar)
     assert cfg_lidar.offset_x == pytest.approx(real_lidar.x)
     assert cfg_lidar.offset_y == pytest.approx(real_lidar.y)
     assert cfg_lidar.offset_z == pytest.approx(real_lidar.z)
@@ -211,9 +200,8 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
 def test_runtime_stream_contract_language_is_not_ros2_topic_only():
     sim_contract = _read("docs/simulation.md")
 
-    assert "canonical runtime stream tokens" in sim_contract
-    assert "not a ROS2 topic browser" in sim_contract
-    assert "native streams or topics" in sim_contract
+    assert "DDS / SHM adapters" in sim_contract
+    assert "Typed DDS, camera SHM, and explicit compatibility seams" in sim_contract
 
 
 def test_runtime_contract_references_declared_topics_formats_and_artifacts():

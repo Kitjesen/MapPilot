@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytest.importorskip("agents")
+
 from decision.llm.client import LLMConfig
 from decision.modules.agent_planner import AgentPlannerModule
 from decision.tasks.conversation import ConversationError, ConversationStore

@@ -15,7 +15,7 @@ def test_development_entrypoints_follow_robot_default_controller():
 
     from drivers.sim.mujoco.driver import MujocoDriverModule
 
-    policy = resolve_robot_default_policy(ROOT)
+    policy = resolve_robot_default_policy(ROOT, "thunderv4@1.0.3")
     assert policy["artifact"].name == "policy_cts_moe_v39_61128.onnx"
     assert policy["manifest"].name == "policy_v39_manifest.json"
     assert Path(RobotConfig.default_thunder_v4().policy_onnx) == policy["artifact"]
@@ -59,7 +59,7 @@ def test_explicit_cts_engine_keeps_embedded_timing_without_resolving_defaults(mo
     pytest.importorskip("onnxruntime")
     from drivers.sim.mujoco.runtime import build_engine
 
-    policy = resolve_robot_default_policy(ROOT)["artifact"]
+    policy = resolve_robot_default_policy(ROOT, "thunderv4@1.0.3")["artifact"]
 
     def unexpected_default(cls):
         raise AssertionError("runtime must use its resolved policy")

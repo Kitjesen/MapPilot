@@ -66,21 +66,22 @@ test('all map entry points select maps inside the integrated viewer', () => {
   }
 })
 
-test('map tools expose direct actions with surface editing unavailable', () => {
+test('map tools expose editing actions directly', () => {
   const { render } = mapView('garage')
   const tools = render().find(e => e.props.role === 'group' && e.props['aria-label'] === '地图工具')!
   const actions = walk(tools)
   assert.deepEqual(actions.filter(e => e.type === 'button').map(e => e.props['aria-label']),
-    ['裁剪点云', '清洗点云', '设置禁行区', '人工补面（待接入）'])
+    ['裁剪点云', '清洗点云', '设置禁行区', '人工补面', '编辑巡检点'])
   assert.equal(actions.some(e => e.type === 'details'), false)
-  assert.equal(actions.find(e => e.props['aria-label'] === '人工补面（待接入）')!.props.disabled, true)
+  assert.equal(actions.find(e => e.props['aria-label'] === '人工补面')!.props.disabled, false)
 })
 
-test('no-go action opens its settings directly', () => {
-  const { render, settingsOpened } = mapView('garage')
+test('no-go action opens the region editor directly', () => {
+  const { render } = mapView('garage')
   const noGo = render().find(e => e.props['aria-label'] === '设置禁行区')!
   ;(noGo.props.onClick as () => void)()
-  assert.deepEqual(settingsOpened, ['no-go'])
+  const gallery = render().find(e => e.type === 'map-gallery')!
+  assert.equal((gallery.props.editing as { tool: string }).tool, 'region')
 })
 
 test('cleaning stays unavailable without the global settings provider', () => {
