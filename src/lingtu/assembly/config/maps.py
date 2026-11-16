@@ -101,8 +101,13 @@ def mapd_environment(settings: Mapping[str, Any], native_environment: Mapping[st
     environment: dict[str, str] = {}
     for group, fields in _FIELDS.items():
         values = settings[group]
-        if not isinstance(values, Mapping) or set(values) != fields.keys():
+        build_defaults = {"max_hole_area_m2", "max_slope"} if group == "surface" else set()
+        if not isinstance(values, Mapping) or set(values) != fields.keys() | build_defaults:
             raise ValueError(f"maps.{group} has missing or unknown settings")
+        for field in build_defaults:
+            value = values[field]
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"maps.{group}.{field} must be a finite nonnegative number")
         for field, env_key in fields.items():
             value = values[field]
             name = f"maps.{group}.{field}"

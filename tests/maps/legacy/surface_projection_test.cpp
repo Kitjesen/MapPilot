@@ -4,8 +4,8 @@
 #include <limits>
 #include <vector>
 
-#include "lingtu/maps/layers/ground_surface.hpp"
-#include "lingtu/maps/layers/surface_projection.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
+#include "lingtu/maps/legacy/surface_projection.hpp"
 
 using namespace lingtu::maps::layers;
 

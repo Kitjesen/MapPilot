@@ -284,7 +284,7 @@ int main()
     support_footprint_options.snap_search_radius_cells = 4;
     support_footprint_options.robot_radius = 0.1;
 
-    // The floor ends at iy=8; keep the route inside the supported footprint.
+    // The floor ends at iy=8, and this route remains inside it.
     const auto support_footprint_result = plan(
       map_path.string(),
       {center(-18), center(6), center(1)},
@@ -321,6 +321,14 @@ int main()
       std::cerr << "changed map identity did not rebuild prepared planner state\n";
       return 12;
     }
+    auto changed_options = cached_request;
+    ++changed_options.options.max_iterations;
+    const auto retuned = session.run(map_path, map_identity, changed_options);
+    if (!retuned.ok || session.mapLoadCount() != 2 || session.prepareCount() != 2) {
+      std::cerr << "query-only iteration limit rebuilt prepared planner state\n";
+      return 35;
+    }
+
     const auto overlay_map_path = writeOverlayMap();
     lingtu::nav::plan::MapIdentity overlay_map_identity{
       "overlay-smoke-map", 1, "map"};
@@ -531,6 +539,16 @@ int main()
       {center(-18), center(0), center(4)},
       {center(18), center(0), center(1)},
       displaced_start_options);
+    if (!displaced_start_result.ok || !displaced_start_result.reached_goal ||
+        displaced_start_result.path.empty() ||
+        std::abs(displaced_start_result.path.front().x-center(-18)) > 1e-6 ||
+        std::abs(displaced_start_result.path.front().y-center(0)) > 1e-6 ||
+        std::abs(displaced_start_result.path.front().z-center(4)) > 1e-6) {
+      std::cerr << "actual-start exemption lost the requested departure pose; reason="
+                << displaced_start_result.failure_reason << "\n";
+      return 30;
+    }
+
     auto supported_layer_options = testOptions();
     supported_layer_options.snap_search_radius_cells = 6;
     supported_layer_options.support_depth_cells = 5;

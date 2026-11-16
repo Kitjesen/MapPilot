@@ -310,6 +310,8 @@ class Executor {
   double local_blocked_since_s_{-1.0};
   double final_motion_blocked_since_s_{-1.0};
   bool traj_frozen_{false};
+  bool route_start_pending_{false};
+  bool stair_replan_pending_{false};
   bool intent_mode_{false};
 };
 

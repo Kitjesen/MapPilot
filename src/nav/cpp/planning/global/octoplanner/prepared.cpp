@@ -1,11 +1,8 @@
 #include "prepared.hpp"
 #include "mls_backend.hpp"
-#include "surface_graph.hpp"
 #include "lingtu/maps/io/binary.hpp"
 
 #include <chrono>
-#include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -21,9 +18,9 @@ using lingtu::maps::BinaryWriter;
 using lingtu::nav::plan::MapIdentity;
 using global_planner::PlannerConfig;
 // Bump when prepared geometry semantics or the binary layout changes.
-constexpr const char* kFormat="lingtu.navigation.prepared.6";
+constexpr const char* kFormat="lingtu.navigation.prepared.7";
 constexpr std::uint32_t kEndian=0x01020304U;
-struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,23> preparation; };
+struct Header { MapIdentity map; std::uint64_t size; std::int64_t modified; std::array<double,21> preparation; };
 
 Header readHeader(BinaryReader& in) {
   if(in.text()!=kFormat || in.value<std::uint32_t>()!=kEndian)
@@ -65,50 +62,21 @@ bool restorePrepared(const std::filesystem::path& directory,const std::filesyste
     if(!lingtu::nav::plan::sameMapIdentity(header.map,identity) ||
         header.preparation!=config.preparation() || header.size!=std::filesystem::file_size(source) ||
         header.modified!=std::filesystem::last_write_time(source).time_since_epoch().count())return false;
-    const auto has_rust_graph=in.value<std::uint8_t>();
-    if (has_rust_graph > 1) throw std::runtime_error("prepared map has invalid Rust graph flag");
-    std::optional<global_planner::mls::Artifact> rust_artifact;
-    if (has_rust_graph) {
-      rust_artifact = global_planner::mls::read(in, false);
-      if (rust_artifact->resolution_m != map->getResolution())
-        throw std::runtime_error("prepared Rust graph resolution mismatch");
-    } else {
-      throw std::runtime_error("prepared map has no Rust MLS artifact");
-    }
+    auto rust_artifact=global_planner::mls::read(in,false);
+    if(rust_artifact.resolution_m!=map->getResolution())
+      throw std::runtime_error("prepared Rust graph resolution mismatch");
     const auto rust_abi=in.value<std::uint32_t>();
     if(rust_abi!=lt_mls_abi_version())
       throw std::runtime_error("prepared map Rust MLS ABI changed");
     if(!in.complete())throw std::runtime_error("unexpected prepared map tail");
-    if (rust_artifact) {
-      const double resolution = map->getResolution();
-      const int stride = std::max(1, static_cast<int>(std::ceil(
-          config.search_resolution_m / resolution)));
-      const int height_stride = config.max_slope > 0.0
-          ? std::max(stride, static_cast<int>(std::ceil(1.0 / config.max_slope)))
-          : stride;
-      const int step_cells = std::max(0, static_cast<int>(std::ceil(
-          config.max_step_height / resolution)));
-      const LtMlsGraphConfig rust_config{
-          stride,
-          std::max(height_stride, step_cells),
-          0,
-          std::max(1, config.obstacle_clearance_radius_cells),
-          static_cast<float>(std::max(0.0, config.obstacle_clearance_weight)),
-          static_cast<float>(std::max(0.0, config.floor_change_penalty)),
-          static_cast<float>(std::max(0.0, config.max_slope)),
-          step_cells,
-          height_stride};
-      global_planner::mls::RustGraph rust_graph;
-      rust_graph.nodes = rust_artifact->nodes;
-      rust_graph.edges = rust_artifact->edges;
-      auto restored = std::make_shared<global_planner::mls::PreparedArtifactHandle>(
-          global_planner::mls::PreparedArtifactHandle::createFromGraph(
-              rust_artifact->observed, rust_artifact->inferred, rust_graph,
-              rust_config, rust_artifact->revision));
-      planner.setPreparedRustGraph(map, std::move(restored));
-    }
-    if(!planner.artifact() || !planner.artifact()->rust_graph)
-      throw std::runtime_error("prepared map Rust MLS artifact was not rebuilt");
+    global_planner::mls::RustGraph rust_graph{
+        std::move(rust_artifact.nodes),std::move(rust_artifact.edges)};
+    auto restored=std::make_shared<global_planner::mls::PreparedArtifactHandle>(
+        global_planner::mls::PreparedArtifactHandle::createFromGraph(
+            rust_artifact.observed,rust_artifact.inferred,rust_graph,
+            global_planner::mls::rustGraphConfig(config,map->getResolution()),
+            rust_artifact.revision));
+    planner.setPreparedRustGraph(map,std::move(restored));
     std::fprintf(stderr,"OctoPlanner3D restored prepared map: %s\n",path.string().c_str());
     return true;
   } catch(const std::exception& error) {

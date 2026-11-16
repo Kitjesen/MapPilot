@@ -68,8 +68,6 @@ ProductControl owns `switch`, `status`, and lifecycle `stop`. Web submits the
 same lifecycle requests; `systemctl` and `journalctl` are diagnostic tools,
 not an alternative startup sequence.
 
-现场生命周期入口统一为 **switch / status / stop**。Web、CLI 和诊断工具可按各自角色独立观测；当前 RunPlan 与 ProductControl 统一拥有 Product 选择、进程生命周期和回退结果。不要通过单独启动或重启某个 systemd unit 绕过这条边界。
-
 ## Build, save, and reload a map
 
 ### 1. Start mapping

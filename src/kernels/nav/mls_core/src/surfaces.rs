@@ -7,10 +7,10 @@ pub fn extract_surfaces(occupied: &[SurfaceCell], config: SurfaceConfig) -> Surf
     extract_surfaces_with_free(occupied, &[], config)
 }
 
-/// Extract surfaces while retaining the source arguments for the shared API.
+/// Extract surfaces while excluding observed free cells from inferred support.
 pub fn extract_surfaces_with_free(
     occupied: &[SurfaceCell],
-    _known_free: &[SurfaceCell],
+    known_free: &[SurfaceCell],
     config: SurfaceConfig,
 ) -> SurfaceMap {
     let columns = columns(occupied);
@@ -28,7 +28,7 @@ pub fn extract_surfaces_with_free(
     }
     observed.sort_unstable();
 
-    let inferred = close_holes(occupied, &by_z, config);
+    let inferred = close_holes(occupied, known_free, &by_z, config);
     SurfaceMap { observed, inferred }
 }
 
@@ -46,6 +46,7 @@ fn columns(occupied: &[SurfaceCell]) -> HashMap<(i32, i32), Vec<i32>> {
 
 fn close_holes(
     occupied: &[SurfaceCell],
+    known_free: &[SurfaceCell],
     by_z: &BTreeMap<i32, Vec<SurfaceCell>>,
     config: SurfaceConfig,
 ) -> Vec<SurfaceCell> {
@@ -58,6 +59,7 @@ fn close_holes(
         return Vec::new();
     }
     let columns = columns(occupied);
+    let known_free: HashSet<_> = known_free.iter().copied().collect();
     let mut inferred = HashSet::new();
     for (&z, layer) in by_z {
         let original: HashSet<(i32, i32)> = layer.iter().map(|cell| (cell.x, cell.y)).collect();
@@ -88,7 +90,8 @@ fn close_holes(
         }
         for (x, y) in closed.difference(&original) {
             let candidate = SurfaceCell::new(*x, *y, z);
-            if !is_standable(candidate, &columns, config.clearance_cells)
+            if known_free.contains(&candidate)
+                || !is_standable(candidate, &columns, config.clearance_cells)
                 || !has_support(&columns, *x, *y, z)
             {
                 continue;

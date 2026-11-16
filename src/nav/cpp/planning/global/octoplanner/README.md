@@ -12,58 +12,40 @@ navd
   -> system liboctomap
 ```
 
-The prepared state follows the same ownership split as the current DimOS MLS
-planner, while remaining a native C++ implementation:
+Rust MLS prepares observed/inferred multi-level surface cells, sparse nodes
+and Voronoi corridor edges from the immutable OctoMap. `PlannerArtifact` owns
+one map-bound Rust handle reused by route queries. Changes to preparation
+geometry rebuild it. Goal tolerances, attachment radius, iteration budget and
+same-floor preference update the query.
 
-```text
-OctoMap snapshot
-  -> Rust MLS            observed and inferred multi-level cells
-  -> Rust graph          sparse nodes and corridor edges
-  -> PlannerArtifact     one map-bound asset reused by route queries
-  -> OctoPlanner3D      endpoint attachment and route search
-```
+`lingtu_mls_core` is built by this directory's CMake target and exposes a C ABI.
+`startPlan()` queries its graph, converts surface cells to body positions and
+checks endpoint connections and candidate segments through the configured
+OctoMap support, body, step, slope and continuous-sweep queries. A geometry
+rejection can request one Rust detour around the rejected cell. The existing
+XYZ grid A* follows when the Rust candidate cannot serve the request.
+The standalone C++ `SurfaceGraph` has a regression-test target.
 
-`PlannerArtifact` owns the Rust prepared surface and graph together. A map or
-preparation-geometry change rebuilds that asset; query-only changes such as
-goal tolerance, snap radius, iteration budget, or same-floor preference update
-the existing graph query. This avoids rebuilding static geometry for every
-goal and leaves a small boundary for a future MLS or tomography backend to
-replace only the global route source.
+OctoMap owns raw occupancy, known-free evidence and observed support. Rust
+provides inferred support and route-height fitting. The surface candidate's
+nominal headroom filter can omit a floor that admits a lower stance, so raw
+support queries read the original OctoMap. Explicitly observed free cells are
+excluded from inferred filling. Rust surface preparation uses closing radius
+and column headroom. `maps.surface.max_hole_area_m2` and `max_slope` in
+`config/system/settings/maps.yaml` supply build-time defaults for C++ map
+cleanup. Rebuild native programs after changing those map defaults.
 
-The Rust graph backend is built by this CMake target. The dependency-free
-`lingtu_mls_core` crate exposes multi-level surface extraction and a native
-sparse graph through a small C ABI. Its graph core follows the DimOS shape with
-four-neighbor surface edges, wall-distance node placement, a multi-source
-Voronoi partition, and predecessor corridors. On the fixed arrival-box map,
-with DimOS-compatible floor step conversion, the Rust native graph reports
-29 nodes, 45 edges, and 2 components. DimOS reports 29 nodes, 47 edges, and 2
-components. The former C++ graph reported 36 nodes, 43 edges, and 9
-components. Rust corridors pass the same C++ endpoint, body, support, step,
-slope, and continuous sweep checks after geometry-aware edge filtering.
+Prepared cache format `lingtu.navigation.prepared.7` restores the saved Rust
+surface, nodes, edges and corridors through one handle. Incremental graph
+state is initialized when an occupancy update first needs it, avoiding a
+second graph build during preparation or restore. Navigation's surface/graph
+handles reject raw occupancy updates. The production mapd regional-delta input
+still needs wiring into the navigation owner.
 
-The production `PlannerArtifact` now holds a Rust MLS graph handle. `startPlan()` queries Rust first, converts its cells to executable
-body poses, and sends the candidate through the existing C++ metric, support,
-body, step, slope, and continuous-sweep checks. A rejected Rust route falls back
-to the 3-D grid search. The C++ `SurfaceGraph` remains only for explicit legacy
-callers. New `.6` prepared artifacts restore the Rust graph directly and skip
-normal C++ graph construction. Raw OctoMap occupancy, support lookup, and continuous world-height
-fitting remain native geometry data.
-The C++ GeometryGate remains the final motion admission boundary for robot radius,
-clearance, support, step, slope, swept collision, no-go, start, and goal checks.
-Route height fitting now also reads the Rust `height` query. When the geometry
-adapter rejects a Rust route, the request uses the existing C++ fallback or the
-outer replanning cycle. Dynamic path truncation belongs to the local execution
-layer and follows the DimOS `truncate_to_safe` boundary.
-The migration boundary and removal order are recorded in
-`docs/design/mls-rust-migration-20261115.md`.
-
-`PreparedArtifactHandle` holds a Rust-side `PlannerState` through the C ABI.
-The migration smoke test covers artifact creation, surface and graph export,
-graph-only query, limited endpoint query, regional update, stable revision, and
-destruction. Production `PlannerSession` keeps raw OctoMap occupancy as the
-geometry boundary while Rust owns surface preparation and graph queries. The
-legacy C++ graph remains only for explicit compatibility callers; new prepared
-caches contain only the Rust artifact.
+The adapter polls cancellation during its C++ work and before and after Rust
+calls, including smoothing. Rust FFI calls currently run to completion before
+returning cancellation to the adapter. The migration and dated comparison
+results are recorded in `docs/design/mls-rust-migration-20261115.md`.
 
 `vendor/` contains only the four OctoPlanner3D files used by the product:
 the constrained planner header/source and the optional offline PCD converter
@@ -102,12 +84,9 @@ connector search, not another choice of final goal. Lattice-indexed body and
 snap caches are cleared when the query lattice changes; validated grid vertices
 reuse their collision result while continuous edges are still checked.
 
-Prepared graph vertices use the nearest collision-free stance within the
-existing support-height band, including voxel extent, rather than forcing
-every vertex to exactly ground plus nominal body height. Static body clearance,
-support and metric edge limits are checked at construction. Query-time checks
-still apply the request start exemption, no-go policy and temporary overlays.
-This changes the derived graph, not the saved OctoMap or the completion limits.
+Prepared graph vertices describe candidate surfaces. Endpoint connections
+and the chosen route receive the request's geometry checks, including its
+start exemption, no-go policy and temporary overlays.
 
 ## Persistent preparation and query controls
 
@@ -323,8 +302,8 @@ The current SCAN grid does not recheck an optimized local curve against this
 saved support surface. It checks its live collision geometry, which alone does
 not prove a local detour has continuous support. The final arrival contract
 follows the original requested goal rather than adding the selected endpoint's
-displacement to the execution tolerance. See the
-[implementation and evidence](../../../../../../build/navigation-repair-20261031/README.md).
+displacement to the execution tolerance. Historical implementation evidence was recorded under
+`build/navigation-repair-20261031`; generated build directories are local artifacts.
 
 The production route uses OctoPlanner3D's neighbouring occupied-support query
 so a single missing floor voxel in a saved scan does not block an otherwise
@@ -370,10 +349,10 @@ configured geometric and metric constraints, not successful physical motion.
 | File | Responsibility |
 | --- | --- |
 | `octoplanner3d_core.hpp/.cpp` | Adapts `GlobalPlanRequest/Result` to OctoPlanner3D, loads immutable OctoMaps, caches a map-bound `PlannerSession`, and applies terminal constraints. Explicit temporary overlays remain an offline/request-level capability; the field local-obstacle loop does not provide them. |
-| `surface.hpp/.cpp` | Immutable occupied columns and inferred multi-layer support surfaces; does not rewrite the saved map. |
-| `surface_graph.hpp/.cpp` | Prepared three-dimensional surface adjacency and sparse corridors, with bounded endpoint connections and request-local edge checks. |
+| `mls_backend.hpp/.cpp` | Rust artifact ownership, C ABI adaptation and prepared surface/graph serialization. |
+| `surface_graph.hpp/.cpp` | Standalone C++ surface graph retained for algorithm regression tests. |
 | `route_smoothing.hpp/.cpp` | Validated equal-height shortcuts and relaxation, preserving height-transition anchors and measured endpoints. |
-| `surface_graph_smoke.cpp` | Sparse corridors, separated floors, walls, explicit overlay rerouting, request reset, stairs, bounded endpoint connection and build/query cancellation. |
+| `surface_graph_smoke.cpp` | Standalone C++ graph regression for corridors, floors, walls, overlays, stairs and cancellation. |
 | `route_smoothing_smoke.cpp` | Walls, stacked floors, stair resampling, long-platform lookahead, measured flat height, endpoint retention, length and cancellation. |
 | `xyz_smoke.cpp` | Continuous XYZ guidance, explicit cylinder corridor, obstacles, support and cancellation. |
 | `octoplanner3d_headless.cpp` | Standalone JSON stdin/stdout frontend used by diagnostics and compatibility tooling. |

@@ -3,7 +3,7 @@
 #include <limits>
 #include <vector>
 
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 
 using namespace lingtu::maps::layers;
 

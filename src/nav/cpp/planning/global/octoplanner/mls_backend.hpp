@@ -52,10 +52,6 @@ struct Edge {
 struct Artifact {
   double resolution_m{0.0};
   std::uint64_t revision{0};
-  // Prepared surfaces keep their provenance.  `surfaces` remains an in-memory
-  // compatibility view for small tools that construct an artifact directly;
-  // persisted artifacts use observed/inferred below.
-  std::vector<SurfaceCell> surfaces;
   std::vector<SurfaceCell> observed;
   std::vector<SurfaceCell> inferred;
   std::vector<Node> nodes;
@@ -72,16 +68,9 @@ struct Artifact {
       return id(lhs) == id(rhs) && lhs.from == rhs.from && lhs.to == rhs.to &&
              lhs.cost == rhs.cost && lhs.corridor == rhs.corridor;
     };
-    const auto split = [](const Artifact& value) {
-      std::pair<std::vector<SurfaceCell>, std::vector<SurfaceCell>> result{
-          value.observed, value.inferred};
-      if (result.first.empty() && result.second.empty()) result.first = value.surfaces;
-      return result;
-    };
-    const auto left = split(*this);
-    const auto right = split(other);
     return resolution_m == other.resolution_m && revision == other.revision &&
-           left == right && nodes == other.nodes && edges.size() == other.edges.size() &&
+           observed == other.observed && inferred == other.inferred &&
+           nodes == other.nodes && edges.size() == other.edges.size() &&
            std::equal(edges.begin(), edges.end(), other.edges.begin(), same_edge);
   }
 };
@@ -165,14 +154,6 @@ public:
       const LtMlsGraphConfig& graph_config,
       std::uint64_t revision = 1);
 
-  static PreparedArtifactHandle createFromGraph(
-      const std::vector<SurfaceCell>& surfaces,
-      const RustGraph& graph,
-      const LtMlsGraphConfig& graph_config,
-      std::uint64_t revision = 1) {
-    return createFromGraph(surfaces, {}, graph, graph_config, revision);
-  }
-
   ArtifactSummary summary() const;
   SurfaceMap surfaces() const;
   std::optional<std::int32_t> below(std::int32_t x, std::int32_t y,
@@ -212,12 +193,11 @@ private:
 
 constexpr std::uint32_t kFormatVersion = 3;
 
+LtMlsGraphConfig rustGraphConfig(const PlannerConfig& config, double resolution);
+
 SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
                                const std::vector<SurfaceCell>& known_free,
-                               std::int32_t clearance_cells,
-                               std::uint32_t closing_passes,
-                               std::uint64_t max_hole_cells,
-                               double max_slope = 0.70);
+                               const LtMlsConfig& config);
 
 RustGraphSummary summarizeGraphRust(const std::vector<SurfaceCell>& surfaces,
                                     std::int32_t node_spacing_cells = 1,

@@ -15,8 +15,6 @@ typedef struct LtMlsCell {
 typedef struct LtMlsConfig {
   int32_t clearance_cells;
   uint32_t closing_passes;
-  uint64_t max_hole_cells;
-  float max_slope;
   // Exact closing radius in map cells. Zero keeps the legacy integer radius.
   float closing_radius_cells;
 } LtMlsConfig;
@@ -283,6 +281,8 @@ int32_t lt_mls_artifact_check_route(
     const LtMlsRouteCheckConfig* config,
     LtMlsRouteCheckResult* result);
 
+// Replaces occupied/free source evidence. Returns -2 for handles created from
+// extracted surfaces or a cached graph, leaving the handle and report unchanged.
 int32_t lt_mls_artifact_update(
     LtMlsArtifact* handle,
     LtMlsRegion region,

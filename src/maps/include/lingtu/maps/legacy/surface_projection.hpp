@@ -9,7 +9,7 @@
 
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
 #include "lingtu/maps/layers/grid.hpp"
-#include "lingtu/maps/layers/ground_surface.hpp"
+#include "lingtu/maps/legacy/ground_surface.hpp"
 
 namespace lingtu::maps::layers {
 

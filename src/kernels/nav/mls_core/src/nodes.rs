@@ -100,9 +100,12 @@ pub(crate) fn place_nodes_with_forced(
     nodes.dedup();
 
     let far_from_nodes = |nodes: &[usize], index: usize| {
-        nodes
-            .iter()
-            .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
+        nodes.iter().all(|&other| {
+            let same_column = cells[index].x == cells[other].x
+                && cells[index].y == cells[other].y
+                && cells[index].z != cells[other].z;
+            same_column || squared_distance(cells[index], cells[other]) >= spacing * spacing
+        })
     };
     let mut candidates: Vec<usize> = (0..cells.len())
         .filter(|&index| wall[index] + 1e-6 >= clearance && far_from_nodes(&nodes, index))

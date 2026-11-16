@@ -5,8 +5,7 @@
 
 namespace global_planner {
 
-// legacy: compatibility and fallback graph during Rust MLS migration. New
-// prepared artifacts query the Rust graph first.
+// Retained for the standalone algorithm regression; production uses Rust MLS.
 class SurfaceGraph {
  public:
   using PoseCheck = std::function<bool(const PointPose &)>;

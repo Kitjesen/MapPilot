@@ -11,7 +11,6 @@ namespace global_planner::mls {
 namespace {
 
 constexpr const char* kMagic = "lingtu.mls.artifact";
-constexpr std::uint32_t kLegacyFormatVersion = 2;
 
 struct CellKey {
   std::int32_t x;
@@ -65,6 +64,26 @@ std::vector<SurfaceCell> copyCells(const LtMlsBuffer& buffer) {
 }
 
 }  // namespace
+
+LtMlsGraphConfig rustGraphConfig(const PlannerConfig& config, double resolution) {
+  const int stride = std::max(1, static_cast<int>(std::ceil(
+      config.search_resolution_m / resolution)));
+  const int height_stride = config.max_slope > 0.0
+      ? std::max(stride, static_cast<int>(std::ceil(1.0 / config.max_slope)))
+      : stride;
+  const int step_cells = std::max(0, static_cast<int>(std::ceil(
+      config.max_step_height / resolution)));
+  return {
+      stride,
+      std::max(height_stride, step_cells),
+      0,
+      std::max(1, config.obstacle_clearance_radius_cells),
+      static_cast<float>(std::max(0.0, config.obstacle_clearance_weight)),
+      static_cast<float>(std::max(0.0, config.floor_change_penalty)),
+      static_cast<float>(std::max(0.0, config.max_slope)),
+      step_cells,
+      height_stride};
+}
 
 PreparedArtifactHandle::~PreparedArtifactHandle() {
   lt_mls_artifact_free(handle_);
@@ -392,13 +411,7 @@ ArtifactUpdateReport PreparedArtifactHandle::update(
 
 SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
                                const std::vector<SurfaceCell>& known_free,
-                               std::int32_t clearance_cells,
-                               std::uint32_t closing_passes,
-                               std::uint64_t max_hole_cells,
-                               double max_slope) {
-  if (clearance_cells < 0) {
-    throw std::invalid_argument("invalid MLS clearance");
-  }
+                               const LtMlsConfig& config) {
   const LtMlsCell dummy{0, 0, 0};
   std::vector<LtMlsCell> input;
   input.reserve(occupied.size());
@@ -408,8 +421,6 @@ SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
   free_input.reserve(known_free.size());
   for (const auto& cell : known_free) free_input.push_back({cell.x, cell.y, cell.z});
   const auto* free_ptr = free_input.empty() ? &dummy : free_input.data();
-  const LtMlsConfig config{clearance_cells, closing_passes, max_hole_cells,
-                           static_cast<float>(max_slope), 0.0F};
   RustBuffers buffers;
   const auto status = lt_mls_extract_surfaces(input_ptr, input.size(), free_ptr, free_input.size(), &config,
                                                &buffers.observed, &buffers.inferred);
@@ -538,17 +549,9 @@ bool validate(const Artifact& artifact, std::string* error) {
     return true;
   };
   std::unordered_set<CellKey, CellKeyHash> surfaces;
-  surfaces.reserve(artifact.surfaces.size() + artifact.observed.size() + artifact.inferred.size());
-  if (!artifact.observed.empty() || !artifact.inferred.empty()) {
-    if (!check_cells(artifact.observed, surfaces, "observed") ||
-        !check_cells(artifact.inferred, surfaces, "inferred")) return false;
-  } else if (!check_cells(artifact.surfaces, surfaces, "surface")) {
-    return false;
-  }
-  if (!artifact.surfaces.empty() && (!artifact.observed.empty() || !artifact.inferred.empty())) {
-    std::unordered_set<CellKey, CellKeyHash> legacy;
-    if (!check_cells(artifact.surfaces, legacy, "legacy surface")) return false;
-  }
+  surfaces.reserve(artifact.observed.size() + artifact.inferred.size());
+  if (!check_cells(artifact.observed, surfaces, "observed") ||
+      !check_cells(artifact.inferred, surfaces, "inferred")) return false;
 
   std::unordered_set<std::uint32_t> nodes;
   nodes.reserve(artifact.nodes.size());
@@ -584,19 +587,14 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
   out.value(artifact.resolution_m);
   out.value(artifact.revision);
 
-  const auto& observed = artifact.observed.empty() && artifact.inferred.empty()
-      ? artifact.surfaces : artifact.observed;
-  const std::vector<SurfaceCell> empty_inferred;
-  const auto& inferred = artifact.observed.empty() && artifact.inferred.empty()
-      ? empty_inferred : artifact.inferred;
-  out.value<std::uint64_t>(observed.size());
-  for (const auto& cell : observed) {
+  out.value<std::uint64_t>(artifact.observed.size());
+  for (const auto& cell : artifact.observed) {
     out.value(cell.x);
     out.value(cell.y);
     out.value(cell.z);
   }
-  out.value<std::uint64_t>(inferred.size());
-  for (const auto& cell : inferred) {
+  out.value<std::uint64_t>(artifact.inferred.size());
+  for (const auto& cell : artifact.inferred) {
     out.value(cell.x);
     out.value(cell.y);
     out.value(cell.z);
@@ -631,7 +629,7 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
     throw std::runtime_error("unsupported MLS artifact format");
   }
   const auto format = in.value<std::uint32_t>();
-  if (format != kLegacyFormatVersion && format != kFormatVersion) {
+  if (format != kFormatVersion) {
     throw std::runtime_error("unsupported MLS artifact format");
   }
 
@@ -660,11 +658,11 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
                                in.value<std::int32_t>()}});
   }
 
-  const auto edge_count = in.count(format >= kFormatVersion ? 32 : 24);
+  const auto edge_count = in.count(32);
   artifact.edges.reserve(edge_count);
   for (std::size_t i = 0; i < edge_count; ++i) {
     Edge edge;
-    edge.id = format >= kFormatVersion ? in.value<std::uint64_t>() : 0;
+    edge.id = in.value<std::uint64_t>();
     edge.from = in.value<std::uint32_t>();
     edge.to = in.value<std::uint32_t>();
     edge.cost = in.value<double>();

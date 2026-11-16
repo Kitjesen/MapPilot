@@ -1,13 +1,23 @@
-Rust MLS surface preparation and sparse graph construction follow the DimOS MLS
-shape, adapted for LingTu's native OctoMap and robot geometry.
-
-Reference implementation:
+Native surface repair derives the per-height closing/evidence algorithm from
+DimOS, Copyright 2025 Dimensional Inc., Apache License 2.0.
 https://github.com/dimensionalOS/dimos/blob/26144f7fd8424bdc33ab97dcd58e9497f2d413ee/dimos/navigation/global_planner/mls_planner/rust/src/surfaces.rs
 
-The production planner now uses `src/kernels/nav/mls_core` for observed and
-inferred surfaces, nodes, edges, and prepared-cache restore. OctoMap remains
-the source for raw occupancy and final body/swept geometry checks. The C++
-SurfaceIndex implementation is no longer part of the OctoPlanner build.
+LingTu changes (2026-10-30/31) include the C++ implementation over immutable
+OctoMap columns, per-height closing, separate inferred support storage,
+occupied-height acceleration blocks and native XYZ A* integration.
+surface_graph.cpp and route_smoothing.cpp adapt the pinned revision's
+multi-source Voronoi corridors, string pulling and elastic-path update ideas
+from nodes.rs, edges.rs, planner.rs and smoother.rs.
 
-DimOS-derived code is covered by the Apache 2.0 terms in LICENSE-Apache-2.0.
-The vendored OctoPlanner source remains under its accompanying MIT LICENSE.
+2026-11-08. SurfaceIndex moved to src/maps/cpp/layers/surface.cpp for reuse by
+navigation and mapd. Its attribution remains in src/maps/SURFACE_NOTICE.
+
+2026-11-15/16. src/kernels/nav/mls_core supplies Rust surface preparation and
+sparse graph queries through the C ABI. OctoMap supplies raw occupancy.
+C++ performs the final robot support, body, step, slope and swept-path checks.
+The standalone C++ SurfaceGraph remains available for regression tests.
+The historical SurfaceIndex comparison tool has been retired.
+
+The existing OctoPlanner3D source remains under its accompanying MIT LICENSE.
+The applicable Apache 2.0 terms for the DimOS adaptations are in
+LICENSE-Apache-2.0.
