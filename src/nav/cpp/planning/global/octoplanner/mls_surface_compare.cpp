@@ -184,18 +184,6 @@ void printCellSet(const char* name, const CellSet& cells) {
   std::cout << "]";
 }
 
-void printRejectionCounts(const std::vector<lingtu::maps::layers::SurfaceRejection>& rejections) {
-  std::map<std::string, std::size_t> counts;
-  for (const auto& rejection : rejections) ++counts[rejection.reason];
-  std::cout << "\"rejection_reason_counts\":{";
-  std::size_t index = 0;
-  for (const auto& [reason, count] : counts) {
-    if (index++) std::cout << ",";
-    std::cout << "\"" << reason << "\":" << count;
-  }
-  std::cout << "}";
-}
-
 GraphResult makeGraph(const std::vector<global_planner::PointPose>& points,
                       double resolution,
                       const global_planner::PointPose& start,
@@ -566,7 +554,7 @@ int main(int argc, char** argv) try {
       std::floor(0.45 / resolution + 1e-9));
   const auto cpp_surface_started = std::chrono::steady_clock::now();
   global_planner::SurfaceIndex cpp_index(
-      *tree, options.headroom, options.closing, options.max_hole_area, options.max_slope, true);
+      *tree, options.headroom, options.closing, options.max_hole_area, options.max_slope);
   const auto cpp_cells = cpp_index.surfaces(options.headroom);
   const double cpp_surface_ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - cpp_surface_started).count();
@@ -657,7 +645,6 @@ int main(int argc, char** argv) try {
             << ",\"bounded_holes\":" << cpp_index.stats().bounded_holes
             << ",\"filled_holes\":" << cpp_index.stats().filled_holes
             << ",\"free_rejected\":" << cpp_index.stats().free_rejected
-            << ",\"rejection_count\":" << cpp_index.rejectedInferred().size()
             << "},\"rust\":{"
             << "\"observed_surface_count\":" << rust_surface.observed.size()
             << ",\"inferred_surface_count\":" << rust_surface.inferred.size()
@@ -672,32 +659,10 @@ int main(int argc, char** argv) try {
     const auto& cell = rust_surface.inferred[i];
     std::cout << "[" << cell.x << "," << cell.y << "," << cell.z << "]";
   }
-  std::cout << "],\"inferred_rejections\":[";
-  bool first_rejection = true;
-  for (const auto& cell : rust_surface.inferred) {
-    bool matched = false;
-    for (const auto& rejection : cpp_index.rejectedInferred()) {
-      if (rejection.cell.x != cell.x || rejection.cell.y != cell.y ||
-          rejection.cell.z != cell.z) continue;
-      matched = true;
-      if (!first_rejection) std::cout << ",";
-      first_rejection = false;
-      std::cout << "{\"cell\":[" << cell.x << "," << cell.y << "," << cell.z
-                << "],\"reason\":\"" << rejection.reason << "\"}";
-    }
-    if (!matched) {
-      if (!first_rejection) std::cout << ",";
-      first_rejection = false;
-      std::cout << "{\"cell\":[" << cell.x << "," << cell.y << "," << cell.z
-                << "],\"reason\":\"not_generated_by_cpp\"}";
-    }
-  }
-  std::cout << "],";
+  std::cout << "],\"inferred_rejections\":[],";
   printCellSet("observed_only_cpp", cpp_only_observed);
   std::cout << ",";
   printCellSet("observed_only_rust", rust_only_observed);
-  std::cout << ",";
-  printRejectionCounts(cpp_index.rejectedInferred());
   std::cout << "},\"graphs\":{";
   printGraph("cpp_surface", cpp_graph);
   std::cout << ",";
