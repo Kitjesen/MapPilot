@@ -1,4 +1,4 @@
-"""Versioned shared-memory camera frame reader.
+"""Versioned shared-memory camera frame transport.
 
 The C++ camera service owns the POSIX SHM writer.  Python only maps the
 corresponding ``/dev/shm`` file and copies a frame after the slot seqlock,

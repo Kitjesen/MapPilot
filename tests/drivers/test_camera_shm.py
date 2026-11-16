@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from drivers.real.camera.shm import (
+from runtime.camera_shm import (
     FrameChanged,
     FrameCorrupt,
     FrameNotReady,

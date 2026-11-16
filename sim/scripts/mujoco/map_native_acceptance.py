@@ -24,7 +24,7 @@ from sim.scripts.mujoco.product_acceptance import (  # noqa: E402
     validate_product_contract,
 )
 
-from drivers.real.camera.shm import ShmFrameReader, StreamKind  # noqa: E402
+from runtime.camera_shm import ShmFrameReader, StreamKind  # noqa: E402
 from lingtu.product_lock import CURRENT_RUN_FILE_NAME  # noqa: E402
 from lingtu.sdk.client import LingTuClient  # noqa: E402
 from lingtu.sim.acceptance import validate_runner_plan  # noqa: E402

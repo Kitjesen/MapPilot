@@ -1,7 +1,7 @@
 """Platform-neutral implementation of ``lingtu.camera.shm_frame.v1``.
 
 The byte layout in this module is intentionally the same as
-``src/drivers/real/camera/shm.py`` and ``native/shm_frame_ring.hpp``.  The
+``src/runtime/camera_shm.py`` and ``native/shm_frame_ring.hpp``.  The
 in-memory backend makes the contract testable on every platform; the Windows
 backend maps the same bytes with a named file mapping.  Neither backend
 chooses a global stream name.

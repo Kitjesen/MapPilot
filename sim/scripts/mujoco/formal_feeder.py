@@ -87,7 +87,7 @@ from sim.scripts.mujoco.native_sensor_records import (
     encode_simulation_clock,
 )
 
-from drivers.real.camera.shm import ShmFrameWriter, StreamKind
+from runtime.camera_shm import ShmFrameWriter, StreamKind
 from drivers.sim.mujoco.runtime import (
     DEFAULT_MID360_PATTERN,
     DEFAULT_MID360_SAMPLES_PER_FRAME,

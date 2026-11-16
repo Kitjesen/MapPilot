@@ -83,7 +83,7 @@ def _depth_preview(gateway: GatewayModule) -> dict[str, Any]:
     import cv2
     import numpy as np
 
-    from drivers.real.camera.shm import ShmFrameReader, posix_shm_path
+    from runtime.camera_shm import ShmFrameReader, posix_shm_path
 
     path = os.environ.get("LINGTU_CAMERA_DEPTH_SHM", "/lingtu_camera_depth")
     with ShmFrameReader(posix_shm_path(path), max_age_s=2.0) as reader:
