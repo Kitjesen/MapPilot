@@ -91,7 +91,7 @@ def _has_exact_local_path_case(source: Path, target: str) -> bool:
 
 
 def test_documentation_tree_contains_only_maintained_handbook_pages() -> None:
-    expected = {f"docs/{name}" for name in DOCUMENT_NAMES} | {"docs/customer-deployment.md"}
+    expected = {f"docs/{name}" for name in DOCUMENT_NAMES} | {"docs/customer-deployment.md", "docs/error-codes.md"}
     actual = {
         path.relative_to(REPOSITORY_ROOT).as_posix()
         for path in DOCS_ROOT.glob("*.md")
