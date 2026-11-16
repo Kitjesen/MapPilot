@@ -474,6 +474,17 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        if (ground_support_) {
+            const auto start_cell = worldToGrid(
+                start_point_.x, start_point_.y, start_point_.z);
+            if (!artifact_ || !artifact_->surface || !artifact_->surface->below(
+                    start_cell.x, start_cell.y, start_cell.z)) {
+                endpoint_resolution_.failure =
+                    EndpointResolutionInfo::Failure::StartSnapExhausted;
+                endpoint_resolution_.start_failure = TraversabilityFailure::GroundSupport;
+                return false;
+            }
+        }
         if (!resolveGoal()) return false;
         if (artifact_ && artifact_->rust_graph) {
             const auto graph_started = std::chrono::steady_clock::now();
@@ -1037,8 +1048,7 @@ namespace global_planner
                     const auto support = worldToGrid(from.x(), from.y(), from.z());
                     const auto floor = artifact_->surface->below(
                         support.x, support.y, support.z);
-                    const bool robot_evidence = hasOccupiedNearZ(support, 2);
-                    if (floor && !robot_evidence && !hasFootprintGroundSupport(
+                    if (floor && !hasFootprintGroundSupport(
                             support, robot_radius_, support_depth_cells_)) {
                         if (failure) *failure = TraversabilityFailure::GroundSupport;
                         return false;
