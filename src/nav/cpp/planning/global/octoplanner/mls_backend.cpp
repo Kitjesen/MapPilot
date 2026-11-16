@@ -11,6 +11,7 @@ namespace global_planner::mls {
 namespace {
 
 constexpr const char* kMagic = "lingtu.mls.artifact";
+constexpr std::uint32_t kLegacyFormatVersion = 2;
 
 struct CellKey {
   std::int32_t x;
@@ -36,7 +37,9 @@ void fail(const char* message, std::string* error) {
 }
 
 std::uint64_t edgeKey(std::uint32_t from, std::uint32_t to) {
-  return (static_cast<std::uint64_t>(from) << 32) | to;
+  const auto a = std::min(from, to);
+  const auto b = std::max(from, to);
+  return (static_cast<std::uint64_t>(a) << 32) | b;
 }
 
 struct RustBuffers {
@@ -149,7 +152,8 @@ PreparedArtifactHandle PreparedArtifactHandle::createFromGraph(
   for (const auto& edge : graph.edges) {
     const auto offset = static_cast<std::uint64_t>(corridor.size());
     for (const auto& cell : edge.corridor) corridor.push_back({cell.x, cell.y, cell.z});
-    edges.push_back({edge.from, edge.to, static_cast<float>(edge.cost), offset,
+    edges.push_back({edge.id != 0 ? edge.id : edgeKey(edge.from, edge.to),
+                     edge.from, edge.to, static_cast<float>(edge.cost), offset,
                      static_cast<std::uint64_t>(edge.corridor.size())});
   }
   LtMlsArtifact* handle = nullptr;
@@ -267,7 +271,8 @@ RustGraph PreparedArtifactHandle::graph() const {
       lt_mls_free_graph(&output);
       throw std::runtime_error("Rust MLS artifact corridor is out of bounds");
     }
-    Edge converted{edge.from, edge.to, edge.cost, {}};
+    Edge converted{edge.from, edge.to, edge.cost, {},
+                   edge.id != 0 ? edge.id : edgeKey(edge.from, edge.to)};
     converted.corridor.reserve(static_cast<std::size_t>(edge.corridor_len));
     for (std::uint64_t j = edge.corridor_offset; j < end; ++j) {
       const auto& cell = output.corridor_ptr[j];
@@ -330,6 +335,30 @@ std::vector<SurfaceCell> PreparedArtifactHandle::query(
           handle_, {start.x, start.y, start.z}, {goal.x, goal.y, goal.z},
           max_snap_cells, max_iterations, &output) != 0) {
     throw std::runtime_error("Rust MLS budgeted graph query failed");
+  }
+  std::vector<SurfaceCell> result = copyCells(output);
+  lt_mls_free_buffer(&output);
+  return result;
+}
+
+std::vector<SurfaceCell> PreparedArtifactHandle::queryAvoiding(
+    SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
+    std::int32_t max_iterations,
+    const std::vector<SurfaceCell>& blocked_cells) const {
+  if (handle_ == nullptr) throw std::runtime_error("empty Rust MLS artifact handle");
+  if (max_snap_cells < 0 || max_iterations < 1) {
+    throw std::invalid_argument("invalid Rust MLS detour budget");
+  }
+  std::vector<LtMlsCell> blocked;
+  blocked.reserve(blocked_cells.size());
+  for (const auto& cell : blocked_cells) blocked.push_back({cell.x, cell.y, cell.z});
+  LtMlsBuffer output{};
+  const LtMlsCell dummy{0, 0, 0};
+  if (lt_mls_artifact_query_avoiding(
+          handle_, {start.x, start.y, start.z}, {goal.x, goal.y, goal.z},
+          max_snap_cells, max_iterations,
+          blocked.empty() ? &dummy : blocked.data(), blocked.size(), &output) != 0) {
+    throw std::runtime_error("Rust MLS detour query failed");
   }
   std::vector<SurfaceCell> result = copyCells(output);
   lt_mls_free_buffer(&output);
@@ -442,6 +471,7 @@ RustGraph buildGraphRust(const std::vector<SurfaceCell>& surfaces,
   for (std::uint64_t i = 0; i < output.edges_len; ++i) {
     const auto& edge = output.edges_ptr[i];
     Edge converted;
+    converted.id = edge.id != 0 ? edge.id : edgeKey(edge.from, edge.to);
     converted.from = edge.from;
     converted.to = edge.to;
     converted.cost = edge.cost;
@@ -532,9 +562,12 @@ bool validate(const Artifact& artifact, std::string* error) {
   std::unordered_set<std::uint64_t> edges;
   edges.reserve(artifact.edges.size());
   for (const auto& edge : artifact.edges) {
+    const auto expected_id = edgeKey(edge.from, edge.to);
     if (nodes.find(edge.from) == nodes.end() || nodes.find(edge.to) == nodes.end() ||
         edge.from == edge.to || !std::isfinite(edge.cost) || edge.cost <= 0.0 ||
-        edge.corridor.size() < 2 || !edges.insert(edgeKey(edge.from, edge.to)).second) {
+        edge.corridor.size() < 2 ||
+        (edge.id != 0 && edge.id != expected_id) ||
+        !edges.insert(expected_id).second) {
       fail("invalid MLS edge", error);
       return false;
     }
@@ -579,6 +612,8 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
 
   out.value<std::uint64_t>(artifact.edges.size());
   for (const auto& edge : artifact.edges) {
+    const auto id = edge.id != 0 ? edge.id : edgeKey(edge.from, edge.to);
+    out.value<std::uint64_t>(id);
     out.value(edge.from);
     out.value(edge.to);
     out.value(edge.cost);
@@ -592,7 +627,11 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
 }
 
 Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
-  if (in.text() != kMagic || in.value<std::uint32_t>() != kFormatVersion) {
+  if (in.text() != kMagic) {
+    throw std::runtime_error("unsupported MLS artifact format");
+  }
+  const auto format = in.value<std::uint32_t>();
+  if (format != kLegacyFormatVersion && format != kFormatVersion) {
     throw std::runtime_error("unsupported MLS artifact format");
   }
 
@@ -621,10 +660,11 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
                                in.value<std::int32_t>()}});
   }
 
-  const auto edge_count = in.count(24);
+  const auto edge_count = in.count(format >= kFormatVersion ? 32 : 24);
   artifact.edges.reserve(edge_count);
   for (std::size_t i = 0; i < edge_count; ++i) {
     Edge edge;
+    edge.id = format >= kFormatVersion ? in.value<std::uint64_t>() : 0;
     edge.from = in.value<std::uint32_t>();
     edge.to = in.value<std::uint32_t>();
     edge.cost = in.value<double>();
@@ -634,6 +674,7 @@ Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
       edge.corridor.push_back({in.value<std::int32_t>(), in.value<std::int32_t>(),
                                in.value<std::int32_t>()});
     }
+    if (edge.id == 0) edge.id = edgeKey(edge.from, edge.to);
     artifact.edges.push_back(std::move(edge));
   }
 

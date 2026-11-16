@@ -4,7 +4,7 @@
 //! planner. LingTu keeps map I/O, body geometry, support checks, route
 //! validation, and runtime ownership outside this crate.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 mod adjacency;
 mod corridor;
@@ -43,6 +43,8 @@ pub struct SurfaceConfig {
     pub clearance_cells: i32,
     /// Horizontal radius used by bounded closing.
     pub closing_passes: u32,
+    /// Exact closing radius in map cells. Zero uses `closing_passes`.
+    pub closing_radius_cells: f32,
     /// Maximum number of cells in one inferred hole.
     pub max_hole_cells: usize,
     /// Maximum fitted surface slope in rise/run units.
@@ -54,6 +56,7 @@ impl Default for SurfaceConfig {
         Self {
             clearance_cells: 1,
             closing_passes: 0,
+            closing_radius_cells: 0.0,
             max_hole_cells: 0,
             max_slope: 0.70,
         }
@@ -177,7 +180,7 @@ impl RegionBounds {
             && cell.z <= self.max_z
     }
 
-    fn expand(self, xy: i32, z: i32) -> Self {
+    pub(crate) fn expand(self, xy: i32, z: i32) -> Self {
         Self {
             min_x: self.min_x.saturating_sub(xy),
             max_x: self.max_x.saturating_add(xy),
@@ -189,11 +192,11 @@ impl RegionBounds {
     }
 }
 
-/// Evidence returned by an offline region update.
+/// Evidence returned by a region update.
 ///
-/// The current first implementation deliberately reports that graph assembly
-/// was rebuilt globally. Surface work is bounded; regional graph repair is the
-/// next step once mapd supplies a supported region delta.
+/// Surface extraction and graph repair are bounded to the changed region plus
+/// the configured halo. `graph_rebuilt_globally` is true only when the local
+/// graph cannot be repaired while preserving a valid route graph.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RegionUpdateReport {
     pub expanded_region: RegionBounds,
@@ -279,6 +282,29 @@ impl PlannerState {
             graph_config,
             artifact: PlannerArtifact { surface, graph },
             incremental_graph,
+            surface_source: true,
+        }
+    }
+
+    fn from_graph(
+        observed: Vec<SurfaceCell>,
+        inferred: Vec<SurfaceCell>,
+        graph: SurfaceGraph,
+        graph_config: GraphConfig,
+    ) -> Self {
+        let mut surface = SurfaceMap { observed, inferred };
+        surface.observed.sort_unstable();
+        surface.observed.dedup();
+        surface.inferred.sort_unstable();
+        surface.inferred.dedup();
+        let cells = graph_cells(&surface);
+        Self {
+            occupied: Vec::new(),
+            known_free: Vec::new(),
+            surface_config: SurfaceConfig::default(),
+            graph_config,
+            artifact: PlannerArtifact { surface, graph },
+            incremental_graph: IncrementalGraph::from_cells(&cells, graph_config),
             surface_source: true,
         }
     }
@@ -473,7 +499,11 @@ pub fn update_region(
     known_free.dedup();
 
     let expanded = region.expand(
-        surface_config.closing_passes as i32 + 1,
+        (if surface_config.closing_radius_cells > 0.0 {
+            surface_config.closing_radius_cells.ceil() as i32
+        } else {
+            surface_config.closing_passes as i32
+        }) + 1,
         surface_config.clearance_cells.max(1) + 1,
     );
     let local_occupied: Vec<_> = occupied
@@ -561,7 +591,7 @@ pub fn update_region(
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct LtMlsCell {
     pub x: i32,
     pub y: i32,
@@ -575,6 +605,7 @@ pub struct LtMlsConfig {
     pub closing_passes: u32,
     pub max_hole_cells: u64,
     pub max_slope: f32,
+    pub closing_radius_cells: f32,
 }
 
 #[repr(C)]
@@ -603,6 +634,8 @@ pub struct LtMlsGraphNode {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LtMlsGraphEdge {
+    /// Stable identity derived from the unordered endpoint pair.
+    pub id: u64,
     pub from: u32,
     pub to: u32,
     pub cost: f32,
@@ -674,6 +707,26 @@ pub struct LtMlsUpdateReport {
     pub graph_rebuilt_globally: u8,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LtMlsRouteCheckConfig {
+    pub body_radius_cells: i32,
+    pub body_height_cells: i32,
+    pub max_step_cells: i32,
+    pub max_slope: f32,
+    pub has_no_go: u8,
+    pub no_go: LtMlsRegion,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LtMlsRouteCheckResult {
+    pub valid: u8,
+    pub failure_kind: u32,
+    pub failed_segment: i32,
+    pub failed_cell: LtMlsCell,
+}
+
 #[allow(dead_code)]
 pub struct LtMlsArtifactHandle {
     state: PlannerState,
@@ -688,7 +741,7 @@ pub struct LtMlsBuffer {
     pub cap: u64,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 5;
+pub const LT_MLS_ABI_VERSION: u32 = 7;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {
@@ -743,6 +796,7 @@ fn graph_output(graph: SurfaceGraph, output: &mut LtMlsGraphOutput) -> Result<()
         }));
         let length = u64::try_from(corridor.len()).map_err(|_| ())? - offset;
         edges.push(LtMlsGraphEdge {
+            id: crate::stable_graph::edge_id(edge.a, edge.b),
             from: edge.a,
             to: edge.b,
             cost: edge.cost,
@@ -827,7 +881,7 @@ fn graph_route(
     start: SurfaceCell,
     goal: SurfaceCell,
 ) -> Option<Vec<SurfaceCell>> {
-    graph_route_limited(graph, start, goal, None)
+    graph_route_limited(graph, start, goal, None, None)
 }
 
 fn graph_route_limited(
@@ -835,6 +889,18 @@ fn graph_route_limited(
     start: SurfaceCell,
     goal: SurfaceCell,
     max_snap_cells: Option<i32>,
+    max_iterations: Option<usize>,
+) -> Option<Vec<SurfaceCell>> {
+    graph_route_limited_avoiding(graph, start, goal, max_snap_cells, max_iterations, &[])
+}
+
+fn graph_route_limited_avoiding(
+    graph: &SurfaceGraph,
+    start: SurfaceCell,
+    goal: SurfaceCell,
+    max_snap_cells: Option<i32>,
+    max_iterations: Option<usize>,
+    blocked_cells: &[SurfaceCell],
 ) -> Option<Vec<SurfaceCell>> {
     if graph.nodes.is_empty() {
         return None;
@@ -868,6 +934,7 @@ fn graph_route_limited(
         .enumerate()
         .map(|(index, node)| (node.id, index))
         .collect();
+    let blocked: HashSet<SurfaceCell> = blocked_cells.iter().copied().collect();
     let mut adjacency = vec![Vec::<(usize, usize)>::new(); graph.nodes.len()];
     for (edge_index, edge) in graph.edges.iter().enumerate() {
         let (Some(&a), Some(&b)) = (indices.get(&edge.a), indices.get(&edge.b)) else {
@@ -882,7 +949,12 @@ fn graph_route_limited(
         std::collections::BinaryHeap::<std::cmp::Reverse<(corridor::OrderedF32, usize)>>::new();
     distances[start_index] = 0.0;
     queue.push(std::cmp::Reverse((corridor::OrderedF32(0.0), start_index)));
+    let mut iterations = 0usize;
     while let Some(std::cmp::Reverse((corridor::OrderedF32(cost), current))) = queue.pop() {
+        iterations += 1;
+        if max_iterations.is_some_and(|limit| iterations > limit) {
+            return None;
+        }
         if cost > distances[current] + 1e-6 {
             continue;
         }
@@ -890,6 +962,14 @@ fn graph_route_limited(
             break;
         }
         for &(next, edge_index) in &adjacency[current] {
+            if !blocked.is_empty()
+                && graph.edges[edge_index]
+                    .corridor
+                    .iter()
+                    .any(|cell| blocked.contains(cell))
+            {
+                continue;
+            }
             let next_cost = cost + graph.edges[edge_index].cost;
             if next_cost + 1e-6 >= distances[next] {
                 continue;
@@ -938,6 +1018,113 @@ fn graph_route_limited(
     Some(route)
 }
 
+const ROUTE_OK: u32 = 0;
+const ROUTE_EMPTY: u32 = 1;
+const ROUTE_UNSUPPORTED: u32 = 2;
+const ROUTE_OCCUPIED: u32 = 3;
+const ROUTE_STEP: u32 = 4;
+const ROUTE_SLOPE: u32 = 5;
+const ROUTE_NO_GO: u32 = 6;
+const ROUTE_SOURCE_UNAVAILABLE: u32 = 7;
+const ROUTE_INVALID_CONFIG: u32 = 8;
+
+fn route_failure(kind: u32, segment: i32, cell: SurfaceCell) -> LtMlsRouteCheckResult {
+    LtMlsRouteCheckResult {
+        valid: 0,
+        failure_kind: kind,
+        failed_segment: segment,
+        failed_cell: LtMlsCell {
+            x: cell.x,
+            y: cell.y,
+            z: cell.z,
+        },
+    }
+}
+
+fn route_cell_in_region(cell: SurfaceCell, region: LtMlsRegion, radius: i32) -> bool {
+    cell.x >= region.min_x.saturating_sub(radius)
+        && cell.x <= region.max_x.saturating_add(radius)
+        && cell.y >= region.min_y.saturating_sub(radius)
+        && cell.y <= region.max_y.saturating_add(radius)
+        && cell.z >= region.min_z
+        && cell.z <= region.max_z
+}
+
+fn check_route(
+    state: &PlannerState,
+    route: &[SurfaceCell],
+    config: LtMlsRouteCheckConfig,
+) -> LtMlsRouteCheckResult {
+    if route.is_empty() {
+        return route_failure(ROUTE_EMPTY, -1, SurfaceCell::new(0, 0, 0));
+    }
+
+    let observed: HashSet<SurfaceCell> = state.artifact.surface.observed.iter().copied().collect();
+    let inferred: HashSet<SurfaceCell> = state.artifact.surface.inferred.iter().copied().collect();
+    for (index, &cell) in route.iter().enumerate() {
+        if !observed.contains(&cell) && !inferred.contains(&cell) {
+            return route_failure(ROUTE_UNSUPPORTED, index as i32, cell);
+        }
+        if config.has_no_go != 0
+            && route_cell_in_region(cell, config.no_go, config.body_radius_cells.max(0))
+        {
+            return route_failure(ROUTE_NO_GO, index.saturating_sub(1) as i32, cell);
+        }
+    }
+
+    if (config.body_radius_cells > 0 || config.body_height_cells > 0) && state.surface_source {
+        return route_failure(ROUTE_SOURCE_UNAVAILABLE, 0, route[0]);
+    }
+    if config.body_radius_cells < 0
+        || config.body_height_cells < 0
+        || config.max_step_cells < 0
+        || !config.max_slope.is_finite()
+        || config.max_slope < 0.0
+    {
+        return route_failure(ROUTE_INVALID_CONFIG, -1, route[0]);
+    }
+
+    for (index, &cell) in route.iter().enumerate() {
+        if config.body_radius_cells > 0 || config.body_height_cells > 0 {
+            let radius = config.body_radius_cells;
+            let min_z = cell.z.saturating_add(1);
+            let max_z = min_z.saturating_add(config.body_height_cells);
+            let blocked = state.occupied.iter().any(|occupied| {
+                occupied.x >= cell.x.saturating_sub(radius)
+                    && occupied.x <= cell.x.saturating_add(radius)
+                    && occupied.y >= cell.y.saturating_sub(radius)
+                    && occupied.y <= cell.y.saturating_add(radius)
+                    && occupied.z >= min_z
+                    && occupied.z <= max_z
+            });
+            if blocked {
+                return route_failure(ROUTE_OCCUPIED, index as i32, cell);
+            }
+        }
+        if let Some(&next) = route.get(index + 1) {
+            let dz = i64::from(next.z) - i64::from(cell.z);
+            let dx = i64::from(next.x) - i64::from(cell.x);
+            let dy = i64::from(next.y) - i64::from(cell.y);
+            if dz.unsigned_abs() > config.max_step_cells as u64 {
+                return route_failure(ROUTE_STEP, index as i32, next);
+            }
+            let horizontal = ((dx * dx + dy * dy) as f64).sqrt();
+            if horizontal > 0.0
+                && (dz.unsigned_abs() as f64) > f64::from(config.max_slope) * horizontal
+            {
+                return route_failure(ROUTE_SLOPE, index as i32, next);
+            }
+        }
+    }
+
+    LtMlsRouteCheckResult {
+        valid: 1,
+        failure_kind: ROUTE_OK,
+        failed_segment: -1,
+        failed_cell: LtMlsCell::default(),
+    }
+}
+
 unsafe fn read_cells(ptr: *const LtMlsCell, len: u64) -> Result<Vec<SurfaceCell>, i32> {
     if len > 0 && ptr.is_null() {
         return Err(-1);
@@ -950,6 +1137,89 @@ unsafe fn read_cells(ptr: *const LtMlsCell, len: u64) -> Result<Vec<SurfaceCell>
         .iter()
         .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
         .collect())
+}
+
+unsafe fn read_graph(
+    nodes: *const LtMlsGraphNode,
+    nodes_len: u64,
+    edges: *const LtMlsGraphEdge,
+    edges_len: u64,
+    corridor: *const LtMlsCell,
+    corridor_len: u64,
+) -> Result<SurfaceGraph, i32> {
+    if (nodes_len > 0 && nodes.is_null())
+        || (edges_len > 0 && edges.is_null())
+        || (corridor_len > 0 && corridor.is_null())
+    {
+        return Err(-1);
+    }
+    let nodes_len = usize::try_from(nodes_len).map_err(|_| -3)?;
+    let edges_len = usize::try_from(edges_len).map_err(|_| -3)?;
+    let corridor_len = usize::try_from(corridor_len).map_err(|_| -3)?;
+    let mut node_ids = std::collections::HashSet::with_capacity(nodes_len);
+    let mut graph_nodes = Vec::with_capacity(nodes_len);
+    let node_values = if nodes_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(nodes, nodes_len)
+    };
+    for node in node_values {
+        if !node_ids.insert(node.id) {
+            return Err(-2);
+        }
+        graph_nodes.push(Node {
+            id: node.id,
+            cell: SurfaceCell::new(node.x, node.y, node.z),
+        });
+    }
+    let node_ids = node_ids;
+    let corridor_values = if corridor_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(corridor, corridor_len)
+    };
+    let corridor_cells: Vec<SurfaceCell> = corridor_values
+        .iter()
+        .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
+        .collect();
+    let mut graph_edges = Vec::with_capacity(edges_len);
+    let edge_values = if edges_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(edges, edges_len)
+    };
+    for edge in edge_values {
+        let end = edge
+            .corridor_offset
+            .checked_add(edge.corridor_len)
+            .ok_or(-2)?;
+        let end = usize::try_from(end).map_err(|_| -3)?;
+        let start = usize::try_from(edge.corridor_offset).map_err(|_| -3)?;
+        if end > corridor_cells.len()
+            || start >= end
+            || edge.from == edge.to
+            || !node_ids.contains(&edge.from)
+            || !node_ids.contains(&edge.to)
+            || !edge.cost.is_finite()
+            || edge.cost <= 0.0
+        {
+            return Err(-2);
+        }
+        let expected_id = crate::stable_graph::edge_id(edge.from, edge.to);
+        if edge.id != 0 && edge.id != expected_id {
+            return Err(-2);
+        }
+        graph_edges.push(Edge {
+            a: edge.from,
+            b: edge.to,
+            cost: edge.cost,
+            corridor: corridor_cells[start..end].to_vec(),
+        });
+    }
+    Ok(SurfaceGraph {
+        nodes: graph_nodes,
+        edges: graph_edges,
+    })
 }
 
 fn region_from_ffi(region: LtMlsRegion) -> RegionBounds {
@@ -987,6 +1257,8 @@ pub unsafe extern "C" fn lt_mls_artifact_create(
         let surface_config = *surface_config;
         let graph_config = *graph_config;
         if surface_config.clearance_cells < 0
+            || !surface_config.closing_radius_cells.is_finite()
+            || surface_config.closing_radius_cells < 0.0
             || graph_config.node_spacing_cells < 1
             || graph_config.max_link_cells < 1
         {
@@ -998,6 +1270,7 @@ pub unsafe extern "C" fn lt_mls_artifact_create(
             SurfaceConfig {
                 clearance_cells: surface_config.clearance_cells,
                 closing_passes: surface_config.closing_passes,
+                closing_radius_cells: surface_config.closing_radius_cells,
                 max_hole_cells: usize::try_from(surface_config.max_hole_cells).map_err(|_| -3)?,
                 max_slope: surface_config.max_slope,
             },
@@ -1062,6 +1335,58 @@ pub unsafe extern "C" fn lt_mls_artifact_create_from_surface(
                 horizontal_hop_cells: graph_config.horizontal_hop_cells,
             },
         );
+        *out = Box::into_raw(Box::new(LtMlsArtifactHandle { state, revision }));
+        Ok(0)
+    }));
+    match result {
+        Ok(Ok(code)) => code,
+        Ok(Err(code)) => code,
+        Err(_) => -4,
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// All input buffers must remain readable for the duration of the call.
+pub unsafe extern "C" fn lt_mls_artifact_create_from_graph(
+    observed: *const LtMlsCell,
+    observed_len: u64,
+    inferred: *const LtMlsCell,
+    inferred_len: u64,
+    nodes: *const LtMlsGraphNode,
+    nodes_len: u64,
+    edges: *const LtMlsGraphEdge,
+    edges_len: u64,
+    corridor: *const LtMlsCell,
+    corridor_len: u64,
+    graph_config: *const LtMlsGraphConfig,
+    revision: u64,
+    out: *mut *mut LtMlsArtifactHandle,
+) -> i32 {
+    if graph_config.is_null() || out.is_null() {
+        return -1;
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let observed = read_cells(observed, observed_len)?;
+        let inferred = read_cells(inferred, inferred_len)?;
+        let graph = read_graph(nodes, nodes_len, edges, edges_len, corridor, corridor_len)?;
+        let graph_config = *graph_config;
+        if graph_config.node_spacing_cells < 1 || graph_config.max_link_cells < 1 {
+            return Err(-2);
+        }
+        let graph_config = GraphConfig {
+            node_spacing_cells: graph_config.node_spacing_cells,
+            max_link_cells: graph_config.max_link_cells,
+            wall_clearance_cells: graph_config.wall_clearance_cells,
+            wall_buffer_cells: graph_config.wall_buffer_cells,
+            wall_buffer_weight: graph_config.wall_buffer_weight,
+            step_penalty_weight: graph_config.step_penalty_weight,
+            max_slope: graph_config.max_slope,
+            max_step_cells: graph_config.max_step_cells,
+            horizontal_hop_cells: graph_config.horizontal_hop_cells,
+        };
+        let state = PlannerState::from_graph(observed, inferred, graph, graph_config);
         *out = Box::into_raw(Box::new(LtMlsArtifactHandle { state, revision }));
         Ok(0)
     }));
@@ -1201,6 +1526,99 @@ pub unsafe extern "C" fn lt_mls_artifact_inferred(
 #[no_mangle]
 /// # Safety
 ///
+/// `handle` must be a valid artifact pointer for the duration of the call.
+pub unsafe extern "C" fn lt_mls_artifact_occupied(
+    handle: *const LtMlsArtifactHandle,
+    x: i32,
+    y: i32,
+    min_z: i32,
+    max_z: i32,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let artifact = &*handle;
+    if artifact.state.surface_source {
+        return -2;
+    }
+    if artifact
+        .state
+        .occupied()
+        .iter()
+        .any(|cell| cell.x == x && cell.y == y && cell.z >= min_z && cell.z <= max_z)
+    {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle` and `result` must be valid pointers for the duration of the call.
+pub unsafe extern "C" fn lt_mls_artifact_occupied_below(
+    handle: *const LtMlsArtifactHandle,
+    x: i32,
+    y: i32,
+    z: i32,
+    result: *mut i32,
+) -> i32 {
+    if handle.is_null() || result.is_null() {
+        return -1;
+    }
+    let artifact = &*handle;
+    if artifact.state.surface_source {
+        return -2;
+    }
+    let floor = artifact
+        .state
+        .occupied()
+        .iter()
+        .filter(|cell| cell.x == x && cell.y == y && cell.z < z)
+        .map(|cell| cell.z)
+        .max();
+    match floor {
+        Some(value) => {
+            *result = value;
+            1
+        }
+        None => 0,
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle` must be a valid artifact pointer for the duration of the call.
+pub unsafe extern "C" fn lt_mls_artifact_region_occupied(
+    handle: *const LtMlsArtifactHandle,
+    region: LtMlsRegion,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let artifact = &*handle;
+    if artifact.state.surface_source {
+        return -2;
+    }
+    if artifact.state.occupied().iter().any(|cell| {
+        cell.x >= region.min_x
+            && cell.x <= region.max_x
+            && cell.y >= region.min_y
+            && cell.y <= region.max_y
+            && cell.z >= region.min_z
+            && cell.z <= region.max_z
+    }) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+/// # Safety
+///
 /// `handle` and `result` must be valid pointers for the duration of the call.
 pub unsafe extern "C" fn lt_mls_artifact_height(
     handle: *const LtMlsArtifactHandle,
@@ -1330,10 +1748,132 @@ pub unsafe extern "C" fn lt_mls_artifact_query_limited(
         SurfaceCell::new(start.x, start.y, start.z),
         SurfaceCell::new(goal.x, goal.y, goal.z),
         Some(max_snap_cells),
+        None,
     ) else {
         return -2;
     };
     put_buffer(path, route).map_or(-3, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle`, `route` and input cells must be valid pointers. The route is owned
+/// by the caller and must be released with `lt_mls_free_buffer`.
+pub unsafe extern "C" fn lt_mls_artifact_query_budgeted(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsCell,
+    goal: LtMlsCell,
+    max_snap_cells: i32,
+    max_iterations: i32,
+    route: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null() || route.is_null() || max_iterations < 1 {
+        return -1;
+    }
+    let handle = &*handle;
+    let route = &mut *route;
+    lt_mls_free_buffer(route);
+    let Some(path) = graph_route_limited(
+        &handle.state.artifact().graph,
+        SurfaceCell::new(start.x, start.y, start.z),
+        SurfaceCell::new(goal.x, goal.y, goal.z),
+        Some(max_snap_cells),
+        Some(max_iterations as usize),
+    ) else {
+        return -2;
+    };
+    put_buffer(path, route).map_or(-3, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle`, `blocked_cells` and `route` must be valid for the duration of
+/// the call. The route is owned by the caller and must be released with
+/// `lt_mls_free_buffer`.
+pub unsafe extern "C" fn lt_mls_artifact_query_avoiding(
+    handle: *const LtMlsArtifactHandle,
+    start: LtMlsCell,
+    goal: LtMlsCell,
+    max_snap_cells: i32,
+    max_iterations: i32,
+    blocked_cells: *const LtMlsCell,
+    blocked_cells_len: u64,
+    route: *mut LtMlsBuffer,
+) -> i32 {
+    if handle.is_null()
+        || route.is_null()
+        || max_snap_cells < 0
+        || max_iterations < 1
+        || (blocked_cells_len > 0 && blocked_cells.is_null())
+    {
+        return -1;
+    }
+    let blocked_len = match usize::try_from(blocked_cells_len) {
+        Ok(value) => value,
+        Err(_) => return -1,
+    };
+    let blocked = if blocked_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(blocked_cells, blocked_len)
+    };
+    let blocked: Vec<SurfaceCell> = blocked
+        .iter()
+        .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
+        .collect();
+    let handle = &*handle;
+    let route = &mut *route;
+    lt_mls_free_buffer(route);
+    let Some(path) = graph_route_limited_avoiding(
+        &handle.state.artifact().graph,
+        SurfaceCell::new(start.x, start.y, start.z),
+        SurfaceCell::new(goal.x, goal.y, goal.z),
+        Some(max_snap_cells),
+        Some(max_iterations as usize),
+        &blocked,
+    ) else {
+        return -2;
+    };
+    put_buffer(path, route).map_or(-3, |_| 0)
+}
+
+#[no_mangle]
+/// # Safety
+///
+/// `handle`, `route`, `config`, and `result` must be valid for the duration
+/// of the call. The route is read-only and the result is written by Rust.
+pub unsafe extern "C" fn lt_mls_artifact_check_route(
+    handle: *const LtMlsArtifactHandle,
+    route: *const LtMlsCell,
+    route_len: u64,
+    config: *const LtMlsRouteCheckConfig,
+    result: *mut LtMlsRouteCheckResult,
+) -> i32 {
+    if handle.is_null()
+        || (route_len > 0 && route.is_null())
+        || config.is_null()
+        || result.is_null()
+    {
+        return -1;
+    }
+    let route_len = match usize::try_from(route_len) {
+        Ok(value) => value,
+        Err(_) => return -2,
+    };
+    let cells = if route_len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(route, route_len)
+    };
+    let cells: Vec<SurfaceCell> = cells
+        .iter()
+        .map(|cell| SurfaceCell::new(cell.x, cell.y, cell.z))
+        .collect();
+    let check = check_route(&(*handle).state, &cells, *config);
+    *result = check;
+    0
 }
 
 #[no_mangle]
@@ -1408,7 +1948,10 @@ pub unsafe extern "C" fn lt_mls_extract_surfaces(
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let config = *config;
-        if config.clearance_cells < 0 {
+        if config.clearance_cells < 0
+            || !config.closing_radius_cells.is_finite()
+            || config.closing_radius_cells < 0.0
+        {
             return Err(-2);
         }
         let len = usize::try_from(occupied_len).map_err(|_| -3)?;
@@ -1434,6 +1977,7 @@ pub unsafe extern "C" fn lt_mls_extract_surfaces(
             SurfaceConfig {
                 clearance_cells: config.clearance_cells,
                 closing_passes: config.closing_passes,
+                closing_radius_cells: config.closing_radius_cells,
                 max_hole_cells,
                 max_slope: config.max_slope,
             },
@@ -1694,6 +2238,108 @@ mod tests {
     }
 
     #[test]
+    fn geometry_blocked_corridor_uses_rust_detour() {
+        let graph = SurfaceGraph {
+            nodes: vec![
+                Node {
+                    id: 0,
+                    cell: SurfaceCell::new(0, 0, 0),
+                },
+                Node {
+                    id: 1,
+                    cell: SurfaceCell::new(2, 0, 0),
+                },
+                Node {
+                    id: 2,
+                    cell: SurfaceCell::new(1, 1, 0),
+                },
+            ],
+            edges: vec![
+                Edge {
+                    a: 0,
+                    b: 1,
+                    cost: 1.0,
+                    corridor: vec![SurfaceCell::new(1, 0, 0)],
+                },
+                Edge {
+                    a: 0,
+                    b: 2,
+                    cost: 2.0,
+                    corridor: vec![SurfaceCell::new(0, 1, 0), SurfaceCell::new(1, 1, 0)],
+                },
+                Edge {
+                    a: 2,
+                    b: 1,
+                    cost: 2.0,
+                    corridor: vec![SurfaceCell::new(2, 1, 0)],
+                },
+            ],
+        };
+        let route = graph_route_limited_avoiding(
+            &graph,
+            SurfaceCell::new(0, 0, 0),
+            SurfaceCell::new(2, 0, 0),
+            Some(0),
+            Some(20),
+            &[SurfaceCell::new(1, 0, 0)],
+        )
+        .expect("detour route");
+        assert!(route.contains(&SurfaceCell::new(1, 1, 0)));
+        assert_eq!(route.first(), Some(&SurfaceCell::new(0, 0, 0)));
+        assert_eq!(route.last(), Some(&SurfaceCell::new(2, 0, 0)));
+    }
+
+    #[test]
+    fn route_check_reports_first_failure() {
+        let mut occupied = (0..4)
+            .map(|x| SurfaceCell::new(x, 0, 0))
+            .collect::<Vec<_>>();
+        occupied.push(SurfaceCell::new(2, 1, 1));
+        let state = PlannerState::new(
+            occupied,
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 0,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig::default(),
+        );
+        let route = (0..4)
+            .map(|x| SurfaceCell::new(x, 0, 0))
+            .collect::<Vec<_>>();
+        let config = LtMlsRouteCheckConfig {
+            body_radius_cells: 1,
+            body_height_cells: 1,
+            max_step_cells: 1,
+            max_slope: 1.0,
+            ..LtMlsRouteCheckConfig::default()
+        };
+        let result = check_route(&state, &route, config);
+        assert_eq!(result.valid, 0);
+        assert_eq!(result.failure_kind, ROUTE_OCCUPIED);
+        assert_eq!(result.failed_segment, 1);
+
+        let result = check_route(
+            &state,
+            &route,
+            LtMlsRouteCheckConfig {
+                has_no_go: 1,
+                no_go: LtMlsRegion {
+                    min_x: 1,
+                    max_x: 1,
+                    min_y: 0,
+                    max_y: 0,
+                    min_z: 0,
+                    max_z: 0,
+                },
+                ..LtMlsRouteCheckConfig::default()
+            },
+        );
+        assert_eq!(result.failure_kind, ROUTE_NO_GO);
+        assert_eq!(result.failed_segment, 0);
+    }
+
+    #[test]
     fn graph_respects_slope_with_a_longer_hop() {
         let cells = [
             SurfaceCell::new(0, 0, 0),
@@ -1747,6 +2393,64 @@ mod tests {
             },
         );
         assert!(map.inferred.is_empty());
+    }
+
+    #[test]
+    fn closing_uses_surface_and_headroom_rules() {
+        let mut occupied = Vec::new();
+        for y in 0..3 {
+            for x in 0..3 {
+                if x != 1 || y != 1 {
+                    occupied.push(SurfaceCell::new(x, y, 0));
+                }
+            }
+        }
+        let known_free = [SurfaceCell::new(1, 1, 0)];
+        let map = extract_surfaces_with_free(
+            &occupied,
+            &known_free,
+            SurfaceConfig {
+                clearance_cells: 1,
+                closing_passes: 1,
+                max_hole_cells: 1,
+                ..SurfaceConfig::default()
+            },
+        );
+        assert_eq!(map.inferred, vec![SurfaceCell::new(1, 1, 0)]);
+
+        occupied.push(SurfaceCell::new(1, 1, 1));
+        let map = extract_surfaces(
+            &occupied,
+            SurfaceConfig {
+                clearance_cells: 1,
+                closing_passes: 1,
+                max_hole_cells: 1,
+                ..SurfaceConfig::default()
+            },
+        );
+        assert!(map.inferred.is_empty());
+    }
+
+    #[test]
+    fn respects_fractional_closing_radius() {
+        let mut occupied = Vec::new();
+        for y in 0..6 {
+            for x in 0..6 {
+                if x == 0 || x == 5 || y == 0 || y == 5 {
+                    occupied.push(SurfaceCell::new(x, y, 0));
+                }
+            }
+        }
+        let map = extract_surfaces(
+            &occupied,
+            SurfaceConfig {
+                clearance_cells: 1,
+                closing_radius_cells: 1.5,
+                max_hole_cells: 16,
+                ..SurfaceConfig::default()
+            },
+        );
+        assert!(map.inferred.contains(&SurfaceCell::new(1, 1, 0)));
     }
 
     #[test]
@@ -1834,6 +2538,69 @@ mod tests {
         assert!(graph.edges.values().all(|edge| edge.id
             == crate::stable_graph::edge_id(edge.from, edge.to)
             && !edge.corridor.is_empty()));
+    }
+
+    #[test]
+    fn incremental_graph_preserves_unchanged_node_cells() {
+        let cells = (0..24)
+            .flat_map(|x| (0..3).map(move |y| SurfaceCell::new(x, y, 0)))
+            .collect::<Vec<_>>();
+        let config = GraphConfig {
+            node_spacing_cells: 2,
+            max_link_cells: 1,
+            ..GraphConfig::default()
+        };
+        let mut graph = IncrementalGraph::from_cells(&cells, config);
+        let original_ids = graph
+            .nodes
+            .values()
+            .map(|node| (node.cell, node.id))
+            .collect::<HashMap<_, _>>();
+        let original_nodes = graph
+            .nodes
+            .iter()
+            .map(|(&id, node)| (id, node.cell))
+            .collect::<HashMap<_, _>>();
+        let outside_edges = graph
+            .edges
+            .iter()
+            .filter(|(_, edge)| {
+                let Some(&from) = original_nodes.get(&edge.from) else {
+                    return false;
+                };
+                let Some(&to) = original_nodes.get(&edge.to) else {
+                    return false;
+                };
+                from.x.max(to.x) <= 5 || from.x.min(to.x) >= 17
+            })
+            .map(|(&id, edge)| (id, edge.clone()))
+            .collect::<Vec<_>>();
+        let mut updated = cells.clone();
+        updated.retain(|cell| !(cell.x == 11 && cell.y == 1));
+        graph.update(&updated, RegionBounds::new(11, 11, 1, 1, 0, 0), config);
+        for node in graph.nodes.values() {
+            if let Some(&id) = original_ids.get(&node.cell) {
+                assert_eq!(node.id, id, "regional repair changed a stable node id");
+            }
+        }
+        for (id, edge) in outside_edges {
+            assert_eq!(
+                graph.edges.get(&id),
+                Some(&edge),
+                "regional repair changed an outside edge"
+            );
+        }
+        assert!(
+            graph_route_limited(
+                &graph.to_surface_graph(),
+                SurfaceCell::new(0, 1, 0),
+                SurfaceCell::new(23, 1, 0),
+                None,
+                None,
+            )
+            .is_some(),
+            "regional Voronoi repair dropped a valid boundary route"
+        );
     }
 
     #[test]

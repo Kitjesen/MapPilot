@@ -4,6 +4,7 @@
 #include "lingtu_mls_core.h"
 #include "lingtu/maps/io/binary.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -38,9 +39,12 @@ struct Edge {
   std::uint32_t to{0};
   double cost{0.0};
   std::vector<SurfaceCell> corridor;
+  // Stable for the lifetime of the endpoint node IDs. Legacy artifacts derive
+  // this value from from/to while they are read.
+  std::uint64_t id{0};
 
   bool operator==(const Edge& other) const {
-    return from == other.from && to == other.to && cost == other.cost &&
+    return id == other.id && from == other.from && to == other.to && cost == other.cost &&
            corridor == other.corridor;
   }
 };
@@ -58,6 +62,16 @@ struct Artifact {
   std::vector<Edge> edges;
 
   bool operator==(const Artifact& other) const {
+    const auto same_edge = [](const Edge& lhs, const Edge& rhs) {
+      const auto id = [](const Edge& edge) {
+        if (edge.id != 0) return edge.id;
+        const auto a = std::min(edge.from, edge.to);
+        const auto b = std::max(edge.from, edge.to);
+        return (std::uint64_t{a} << 32) | std::uint64_t{b};
+      };
+      return id(lhs) == id(rhs) && lhs.from == rhs.from && lhs.to == rhs.to &&
+             lhs.cost == rhs.cost && lhs.corridor == rhs.corridor;
+    };
     const auto split = [](const Artifact& value) {
       std::pair<std::vector<SurfaceCell>, std::vector<SurfaceCell>> result{
           value.observed, value.inferred};
@@ -67,7 +81,8 @@ struct Artifact {
     const auto left = split(*this);
     const auto right = split(other);
     return resolution_m == other.resolution_m && revision == other.revision &&
-           left == right && nodes == other.nodes && edges == other.edges;
+           left == right && nodes == other.nodes && edges.size() == other.edges.size() &&
+           std::equal(edges.begin(), edges.end(), other.edges.begin(), same_edge);
   }
 };
 
@@ -178,6 +193,10 @@ public:
   std::vector<SurfaceCell> query(SurfaceCell start, SurfaceCell goal,
                                  std::int32_t max_snap_cells,
                                  std::int32_t max_iterations) const;
+  std::vector<SurfaceCell> queryAvoiding(
+      SurfaceCell start, SurfaceCell goal, std::int32_t max_snap_cells,
+      std::int32_t max_iterations,
+      const std::vector<SurfaceCell>& blocked_cells) const;
   RustRouteCheckResult checkRoute(
       const std::vector<SurfaceCell>& route,
       const LtMlsRouteCheckConfig& config) const;
@@ -191,7 +210,7 @@ private:
   LtMlsArtifact* handle_{nullptr};
 };
 
-constexpr std::uint32_t kFormatVersion = 2;
+constexpr std::uint32_t kFormatVersion = 3;
 
 SurfaceMap extractSurfacesRust(const std::vector<SurfaceCell>& occupied,
                                const std::vector<SurfaceCell>& known_free,

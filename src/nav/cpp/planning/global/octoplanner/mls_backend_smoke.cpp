@@ -66,6 +66,8 @@ int main() try {
   require(artifact_graph.nodes.size() == artifact_summary.nodes &&
               artifact_graph.edges.size() == artifact_summary.edges,
           "Rust MLS artifact graph export changed");
+  require(!artifact_graph.edges.empty() && artifact_graph.edges.front().id != 0,
+          "Rust MLS graph did not export stable edge IDs");
   const auto artifact_route = handle.query({0, 0, 0}, {11, 0, 0});
   require(!artifact_route.empty() && artifact_route.front() == SurfaceCell{0, 0, 0} &&
               artifact_route.back() == SurfaceCell{11, 0, 0},
@@ -115,6 +117,7 @@ int main() try {
   Artifact decoded;
   { lingtu::maps::BinaryReader in(stream); decoded = global_planner::mls::read(in); }
   require(decoded == source, "MLS artifact round trip changed data");
+  require(decoded.edges.front().id != 0, "MLS artifact did not restore stable edge ID");
 
   Artifact invalid = source;
   invalid.edges[0].to = 99;

@@ -83,24 +83,33 @@ fn real_wall_adjacent(
     false
 }
 
-pub(crate) fn place_nodes(
+pub(crate) fn place_nodes_with_forced(
     cells: &[SurfaceCell],
     adjacency: &[Vec<(usize, f32)>],
     wall: &[f32],
     config: GraphConfig,
+    forced_cells: &[SurfaceCell],
 ) -> Vec<usize> {
     let spacing = config.node_spacing_cells.max(1) as i64;
     let clearance = config.wall_clearance_cells.max(0) as f32;
-    let mut candidates: Vec<usize> = (0..cells.len())
-        .filter(|&index| wall[index] + 1e-6 >= clearance)
-        .collect();
-    candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
-    let mut nodes = Vec::new();
-    for index in candidates {
-        if nodes
+    let mut nodes = forced_cells
+        .iter()
+        .filter_map(|cell| cells.binary_search(cell).ok())
+        .collect::<Vec<_>>();
+    nodes.sort_unstable();
+    nodes.dedup();
+
+    let far_from_nodes = |nodes: &[usize], index: usize| {
+        nodes
             .iter()
             .all(|&other| squared_distance(cells[index], cells[other]) >= spacing * spacing)
-        {
+    };
+    let mut candidates: Vec<usize> = (0..cells.len())
+        .filter(|&index| wall[index] + 1e-6 >= clearance && far_from_nodes(&nodes, index))
+        .collect();
+    candidates.sort_by(|&a, &b| wall[b].total_cmp(&wall[a]).then(cells[a].cmp(&cells[b])));
+    for index in candidates {
+        if far_from_nodes(&nodes, index) {
             nodes.push(index);
         }
     }

@@ -1,15 +1,17 @@
-use crate::edges::build_graph;
+use crate::edges::build_graph_with_forced_nodes;
 use crate::{GraphConfig, RegionBounds, SurfaceCell, SurfaceGraph};
 
 /// Build the ownership and predecessor graph for a repair window.
 ///
-/// The existing Rust graph builder already performs multi-source Dijkstra and
-/// corridor reconstruction. Keeping this helper separate gives the update
-/// path a single place to replace with a bounded repair window implementation.
+/// Existing boundary nodes are forced into the local graph so multi-source
+/// Dijkstra keeps the ownership that enters the repair window. The graph
+/// builder then recomputes predecessor corridors and boundary edges from the
+/// updated surface cells.
 pub(crate) fn rebuild_window(
     cells: &[SurfaceCell],
     _window: RegionBounds,
+    forced_nodes: &[SurfaceCell],
     config: GraphConfig,
 ) -> SurfaceGraph {
-    build_graph(cells, config)
+    build_graph_with_forced_nodes(cells, config, forced_nodes)
 }
