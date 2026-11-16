@@ -442,13 +442,16 @@ def test_follow_selection_reuses_the_host_api_loop_and_sends_numbered_crops(
         transport.reasoning = "Candidate 1 is not the requested person"
         transport.error = reply == "api_error"
         for _ in range(2):
-            servo._on_servo_target("stop")
-            servo._on_servo_target("follow:gray shirt and pink bag")
+            receipt = servo.start_follow(description="gray shirt and pink bag")
+            assert receipt["accepted"]
             servo._run_vlm_select_sync(
                 servo._target_label, crops, persons, servo._intent_generation,
             )
             selected = servo._person_tracker.status()
             assert (selected["id"] if selected else None) == expected_id
+            assert servo.cancel_follow_task(
+                receipt["follow_task_id"], receipt["product_session_id"],
+            )["accepted"]
         expected_requests = 1 + 2 * requests_per_selection
         assert len(transport.requests) == expected_requests
         assert loops == [module._loop] * expected_requests
@@ -517,7 +520,7 @@ def test_follow_reselection_requires_pair_match_against_original_crop(transport)
         verification_content = json.loads(
             transport.requests[request_start + 1].content
         )["messages"][0]["content"]
-        assert any(part.get("text") == "Original target crop:" for part in verification_content)
+        assert any(part.get("text") == "Original target crop (identity anchor):" for part in verification_content)
         assert len([part for part in verification_content if part["type"] == "image_url"]) == 2
     finally:
         servo.stop()
@@ -531,6 +534,7 @@ def test_kimi_checks_the_description_even_with_one_confirmed_person(transport):
     servo = VisualServoModule()
     servo.on_system_modules({"LLMModule": module})
     servo._latest_bgr = np.zeros((64, 64, 3), dtype=np.uint8)
+    servo._latest_bgr_ts = servo._latest_detection_ts = 100.0
     servo._on_servo_target("follow:purple jacket and yellow hat")
     done = threading.Event()
     select = servo._run_vlm_select_sync

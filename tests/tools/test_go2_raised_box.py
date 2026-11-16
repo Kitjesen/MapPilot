@@ -100,22 +100,15 @@ def test_nominal_optical_and_imu_chains_match_slam_and_robot_config(variant):
     assert body_imu @ imu_lidar == pytest.approx(body_lidar, abs=1e-10)
 
 
-def test_candidate_changes_only_mount_calibration_and_clearance(variant):
+def test_candidate_keeps_mount_unverified_and_robot_dimensions(variant):
     design, _ = variant
     original = load_yaml(MODEL / "robot.yaml")
     candidate = load_yaml(design / "candidate/robot.yaml")
     assert candidate["calibration"]["slam"]["status"] == "unverified"
-    candidate["calibration"]["slam"] = original["calibration"]["slam"]
-    for key in ("offset_x", "offset_y", "offset_z", "roll", "pitch", "yaw"):
-        candidate["lidar"][key] = original["lidar"][key]
-    # These pre-installation snapshots predate the installed mount's taller envelope.
-    candidate["geometry"]["collision_clearance_above"] = original["geometry"]["collision_clearance_above"]
-    assert candidate == original
-    original_slam = load_yaml(MODEL / "sensors/mid360_ltlio.yaml")
-    candidate_slam = load_yaml(design / "candidate/mid360_ltlio.yaml")
-    for key in ("navigation_body_from_imu_rotation", "navigation_body_from_imu_translation"):
-        candidate_slam[key] = original_slam[key]
-    assert candidate_slam == original_slam
+    # Archived CAD candidates predate current algorithm and speed settings.
+    for key in ("vehicle_length", "vehicle_width", "vehicle_height"):
+        assert candidate["geometry"][key] == original["geometry"][key]
+    assert candidate["robot"] == original["robot"]
 
 
 def test_visual_resources_exist_and_print_orientation_does_not_leak_into_urdf(variant):

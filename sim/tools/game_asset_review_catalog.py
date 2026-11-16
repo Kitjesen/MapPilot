@@ -131,8 +131,8 @@ DEFAULT_ASSET_REVIEW_SPEC: Mapping[str, Any] = {
                 _evidence(
                     "package_manifest",
                     "sim/packages/robots/doso/thunder_v4/robot.package.yaml",
-                    2510,
-                    "7a0d7b26f7a6c7a0e39a0e842edc2f7820add356eb43a212aca9eb18b40a69e0",
+                    2661,
+                    "75107cf7a867456ec44953e0fdf913a5d4c96bdcb555156e919448c2ebca9c5a",
                 ),
                 _evidence(
                     "visual_projection",

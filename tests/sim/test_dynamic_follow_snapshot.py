@@ -35,16 +35,16 @@ def test_tracking_run_plan_exposes_one_dynamic_mujoco_person(
     )
     config = _run_plan_runtime_config(_parser().parse_args([]), plan)
     runtime = ScenarioRuntime.from_plan(config.scenario_plan)
-    startup_budget_s = sum(
-        max(process.timeout_s for process in plan.processes if process.order == order)
-        for order in {process.order for process in plan.processes}
-    )
+    # Process startup time is an orchestration timeout and may exceed the
+    # short pedestrian fixture. Sample the scenario while its behavior is active.
+    initial_time_s = 10.0
+    moved_time_s = 40.0
     initial = runtime.snapshot(
         ScenarioClock(
             session_id=config.session_id,
             model_generation=0,
             reset_generation=0,
-            sim_time_ns=int(startup_budget_s * 1_000_000_000),
+            sim_time_ns=int(initial_time_s * 1_000_000_000),
         )
     )
     moved = runtime.snapshot(
@@ -52,7 +52,7 @@ def test_tracking_run_plan_exposes_one_dynamic_mujoco_person(
             session_id=config.session_id,
             model_generation=0,
             reset_generation=0,
-            sim_time_ns=int((startup_budget_s + 30.0) * 1_000_000_000),
+            sim_time_ns=int(moved_time_s * 1_000_000_000),
         )
     )
 
