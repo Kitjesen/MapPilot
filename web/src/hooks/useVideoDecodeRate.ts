@@ -11,7 +11,6 @@ export function useVideoDecodeRate(
   useEffect(() => {
     const video = videoRef.current
     if (!video || !stream || !enabled) {
-      setFps(null)
       return
     }
 
@@ -34,7 +33,6 @@ export function useVideoDecodeRate(
 
     video.srcObject = stream
     if (typeof video.requestVideoFrameCallback !== 'function') {
-      setFps(null)
       return () => {
         active = false
         if (video.srcObject === stream) video.srcObject = null
@@ -44,10 +42,11 @@ export function useVideoDecodeRate(
     callbackId = video.requestVideoFrameCallback(observe)
     return () => {
       active = false
+      setFps(null)
       if (callbackId !== null) video.cancelVideoFrameCallback(callbackId)
       if (video.srcObject === stream) video.srcObject = null
     }
   }, [enabled, stream, videoRef])
 
-  return fps
+  return enabled && stream ? fps : null
 }

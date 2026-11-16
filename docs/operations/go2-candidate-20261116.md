@@ -6,10 +6,38 @@ connection, Product switch or motion command is part of this local pass.
 
 ## Source and delivery scope
 
-The working branch was `codex/workspace-review-20261116`, based on `d02b427c`,
+The initial working branch was `codex/workspace-review-20261116`, based on `d02b427c`,
 with concurrent uncommitted navigation and application changes. This describes
-the test workspace, **not a fixed deployment candidate**. PR #37 still needs
-integration with main; do not package a moving checkout as an accepted release.
+the initial test workspace, **not a fixed deployment candidate**. The follow-up
+below records its integration into a separate fixed source branch.
+
+## Integration follow-up — 2026-11-17
+
+`codex/converge-20261117` captures the local refinements in `4998f694` and merges
+the main/PR30/PR33 lineage at `4dd657c0`. Merge commit `5e660ce6` and its follow-up
+fixes are reviewed together in [PR #39](https://github.com/Kitjesen/MapPilot/pull/39).
+The original shared worktree remains a separate, ongoing development workspace.
+
+The integration fixes prepared-cache read/write alignment, preserves terminal
+tolerances before the Rust query, and separates configured planning geometry
+from instantaneous observed posture. The snapshot had also removed the main
+Go2 driver's factory-acquisition and attitude admission checks; those existing
+checks were restored without changing configuration, zero-command or stop paths.
+
+Local integration evidence includes Rust 79 passed/1 ignored, global planning
+20/20, portable navigation 821/821, maps 5/5 and portable driver 15/15. Web's
+994-test run passed; subsequent React/lint fixes passed the affected 60-test
+group, final lint, both TypeScript projects and the production build. Linux
+installer/preparation checks passed 18 tests and the three Bash behaviors.
+The Linux visual replay fixture passed all three tests after fixing its
+synthetic frame timestamps; production freshness checks were retained.
+
+Logs are retained under `build/converge/`, `build/converge-app-20261117/`,
+`build/global-tests-final.log` and `build/nav-portable-tests-final.log` in the
+integration worktree. Remote CI belongs to the exact PR head; a local pass or an
+earlier PR head's result does not replace it. The slow 35-degree planning case
+was not optimized in this integration. No Go2 target package or field motion
+is qualified by these results.
 
 The Go2 delivery path remains the existing Linux/aarch64 native build and
 release packager. Windows and WSL/x86_64 test results cannot qualify its ELF

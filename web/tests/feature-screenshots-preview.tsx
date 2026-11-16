@@ -24,7 +24,7 @@ const codex = [
   message('tool-15', 'codex_event', { usage: { input_tokens: 1840, output_tokens: 612, total_tokens: 2452 } }, { status: 'completed', method: 'turn/usage/updated', codex: true }),
 ]
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+export function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return <section data-shot={id} style={{ background: '#fff', border: '1px solid #e7eaf0', borderRadius: 18, padding: 22, boxShadow: '0 12px 32px rgba(35,45,65,.06)' }}>
     <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 16 }}>
       <h2 style={{ margin: 0, fontSize: 17, fontWeight: 650 }}>{title}</h2><code style={{ color: '#8992a4', fontSize: 11 }}>{id}</code>
@@ -32,7 +32,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
   </section>
 }
 
-function ModelControls() {
+export function ModelControls() {
   return <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
     <button className="feature-chip"><span>GPT-6.1 Sol · Codex</span><span>⌄</span></button>
     <button className="feature-chip"><SlidersHorizontal size={14} /><span>高</span><span>⌄</span></button>
@@ -40,7 +40,7 @@ function ModelControls() {
   </div>
 }
 
-function AttachmentPanel() {
+export function AttachmentPanel() {
   return <div style={{ border: '1px solid #e5e8ef', borderRadius: 14, padding: 14, background: '#fbfcfe' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#4e5b72', fontSize: 13, marginBottom: 10 }}><Paperclip size={15} />本轮附件 · 2 个</div>
     <div style={{ display: 'grid', gap: 8 }}>
@@ -49,7 +49,7 @@ function AttachmentPanel() {
   </div>
 }
 
-function App() {
+export function App() {
   return <main style={{ maxWidth: 1040, margin: '0 auto', padding: '34px 24px 64px', color: '#1b2433' }}>
     <header style={{ marginBottom: 24 }}><p style={{ fontSize: 11, letterSpacing: '.14em', color: '#7f8a9d', margin: 0 }}>LINGTU / FEATURE EVIDENCE</p><h1 style={{ fontSize: 28, margin: '10px 0 8px' }}>工具过程、Codex 卡片与权限状态</h1><p style={{ color: '#6c7688', margin: 0, lineHeight: 1.7 }}>正式组件的固定回执展示页；这里的内容是可重复的 UI 验收数据，不代表机器人已经执行了这些动作。</p></header>
     <div style={{ display: 'grid', gap: 18 }}>

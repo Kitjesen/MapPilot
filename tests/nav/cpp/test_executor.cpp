@@ -3735,8 +3735,17 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
   input.observation = emptyScanObservation(input.timestampS, 2);
   input.observation.body_velocity_valid = true;
   input.stairProfile.stampS = input.timestampS;
-  output = awaitScanOutput([&] { return executor.tick(input); });
-  ASSERT_TRUE(output.path_found) << output.reason;
+  const auto replan_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  do {
+    output = awaitScanOutput([&] { return executor.tick(input); });
+    if (output.path_found || output.reason != "stair_route_wait") break;
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
+    EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  } while (std::chrono::steady_clock::now() < replan_deadline);
+  ASSERT_TRUE(output.path_found) << output.reason << " search="
+      << output.local_planner_debug.searchReason;
   ASSERT_TRUE(flight_gate.localPathAllowed(output.local_path_map, input.mapBody.yaw));
   ASSERT_NE(output.reason, "stair_route_wait");
   bool resumed = false;

@@ -152,8 +152,17 @@ class Go2 final : public Body {
   Result move(const Velocity &velocity) override {
     const bool zero = std::abs(velocity.vx_mps) <= 1e-9 && std::abs(velocity.vy_mps) <= 1e-9 &&
                       std::abs(velocity.yaw_rps) <= 1e-9;
-    // Configuration and attitude are reported by refresh/diagnostics; the
-    // SDK remains the owner of whether a velocity command is accepted.
+    if (!zero && !factory_avoidance_disabled_) {
+      return resultForCode(0, false, "factory_avoidance_not_configured", 0);
+    }
+    if (!zero) {
+      const char *attitude_fault;
+      {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        attitude_fault = attitudeFaultLocked();
+      }
+      if (attitude_fault) return resultForCode(0, false, attitude_fault, 0);
+    }
     const int result = zero ? client_->StopMove()
                             : client_->Move(static_cast<float>(velocity.vx_mps),
                                             static_cast<float>(velocity.vy_mps),

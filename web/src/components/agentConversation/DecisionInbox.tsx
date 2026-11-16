@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { AlertTriangle, CheckCircle2 } from 'lucide-react'
 import styles from './DecisionInbox.module.css'
 
@@ -17,12 +17,9 @@ export function DecisionInbox({ decisions, onDecide }: {
   const [state, setState] = useState<Record<string, { open: boolean; answered?: string; gone?: boolean }>>(
     () => Object.fromEntries(decisions.map(decision => [decision.id, { open: true }]))
   )
-  useEffect(() => {
-    setState(current => Object.fromEntries(decisions.map(decision => [decision.id, current[decision.id] ?? { open: true }])))
-  }, [decisions])
   const open = decisions.filter(decision => !state[decision.id]?.answered && !state[decision.id]?.gone).length
   const decide = (decision: DecisionInboxItem, answer: 'primary' | 'secondary') => {
-    setState(current => ({ ...current, [decision.id]: { ...current[decision.id], answered: answer === 'primary' ? decision.primary : decision.secondary } }))
+    setState(current => ({ ...current, [decision.id]: { ...(current[decision.id] ?? { open: true }), answered: answer === 'primary' ? decision.primary : decision.secondary } }))
     onDecide?.(decision, answer)
     window.setTimeout(() => setState(current => ({ ...current, [decision.id]: { ...current[decision.id], gone: true } })), 560)
   }
