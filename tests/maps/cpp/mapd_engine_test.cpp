@@ -7,6 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include "lingtu/maps/io/pcd.hpp"
 
 #include "lingtu/maps/mapd/engine.hpp"
@@ -123,6 +124,44 @@ Observation MakeObservation(
   observation.scan.point_count = points.size() / 3U;
   observation.scan.interleaved = points;
   return observation;
+}
+
+void TestLiveSnapshot() {
+  auto config = TestConfig();
+  config.build_extended_layers = false;
+  config.occupancy.hit_log_odds = .01;
+  LiveMapEngine engine(config);
+  engine.Start();
+  const auto bit = [](const auto& bits, std::size_t index) {
+    return (bits[index / 8U] >> (index % 8U)) & 1U;
+  };
+  const std::size_t old_cell = (4U * 16U + 8U) * 16U + 10U;
+  const std::size_t new_cell = (4U * 16U + 10U) * 16U + 10U;
+  assert(engine.Submit(MakeObservation(1, 1, 0, 0, 0, {1.25F, .25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(1, 1, std::chrono::seconds(2)));
+  const auto first = engine.GetSnapshot();
+  assert(bit(first.collision.measured_occupied_bits, old_cell));
+  assert(!bit(first.collision.known_free_bits, old_cell));
+  const auto invalid = std::numeric_limits<float>::quiet_NaN();
+  assert(engine.Submit(MakeObservation(1, 2, 0, 0, 0, {invalid, invalid, invalid})).accepted());
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (engine.GetState().last_error != "map_observation_has_no_valid_points") {
+    assert(std::chrono::steady_clock::now() < deadline);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(engine.GetState().invalid_observations == 1U);
+  const auto retained = engine.GetSnapshot();
+  assert(retained.sequence == first.sequence && retained.stamp_ns == first.stamp_ns);
+  assert(retained.collision.measured_occupied_bits == first.collision.measured_occupied_bits);
+  assert(retained.collision.known_free_bits == first.collision.known_free_bits);
+  assert(engine.Submit(MakeObservation(1, 3, 0, 0, 0, {1.25F, 1.25F, .25F})).accepted());
+  assert(engine.WaitUntilProcessed(1, 3, std::chrono::seconds(2)));
+  const auto next = engine.GetSnapshot();
+  assert(!bit(next.collision.measured_occupied_bits, old_cell));
+  assert(!bit(next.collision.known_free_bits, old_cell));
+  assert(bit(next.collision.measured_occupied_bits, new_cell));
+  assert(engine.GetState().last_error.empty());
+  engine.Stop();
 }
 
 void TestExactPoseTransformAndDerivedLayers() {
@@ -1164,6 +1203,7 @@ void TestRecentGeometrySuffixCoversExportDelayAndFailsOnEviction() {
 }
 
 int main() {
+  TestLiveSnapshot();
   lingtu::maps::mapd::Timing timing;
   timing.Observe(5.0, 12U, 8U);
   timing.Observe(2.0, 13U, 9U);

@@ -123,8 +123,9 @@ LingTu 多层三维地图默认行为。
 LingTu 保存 OctoMap 的 [rays.hpp](../../src/maps/include/lingtu/maps/octomap/rays.hpp)
 在一帧内先收集 free 与 occupied 集合，free 更新排除同帧 occupied，再更新占据。
 实时 [rolling_occupancy.cpp](../../src/maps/cpp/layers/rolling_occupancy.cpp) 的概率
-层则按 hit/miss 数量投票、平票选 hit；只要本帧有 hit，`unresolved_hit` 仍保留
-实时碰撞占据并阻止将该格发布为 known-free，直到后续无 hit 的穿越观测清除该状态。
+层则按 hit/miss 数量投票、平票选 hit。2026-11-17 候选用 `current_hit` 保留当前帧
+命中，历史占据仍按概率处理；`ray_free` 单独记录无端点的穿越观测。临时命中退出
+不会产生 known-free，也不授权清除表面体素。详见 [当前语义](../../src/maps/README.md#live-collision-evidence)。
 两者不是相同的概率更新规则。`PersistentBlockGrid` 的可选扩展层又有自己的逐射线
 更新方式，不能把上述任一规则泛化到所有地图。
 

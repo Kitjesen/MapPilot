@@ -359,6 +359,7 @@ void RollingOccupancyGrid::Reset(
   std::fill(cells_.begin(), cells_.end(),
             Cell{config_.min_log_odds - kUnknownLogOddsOffset});
   hit_bounds_.clear();
+  current_hits_.clear();
   std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
   std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
   std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -463,23 +464,21 @@ OccupancyState RollingOccupancyGrid::StateFor(const Cell& cell) const {
   if (!cell.observed) {
     return OccupancyState::kUnknown;
   }
-  if (cell.log_odds > occupied_log_odds_threshold_) {
+  if (cell.current_hit || cell.log_odds > occupied_log_odds_threshold_) {
     return OccupancyState::kOccupied;
   }
-  // Upstream treats every ray-observed, non-occupied voxel as known free.
-  // The separate unknown sentinel is only used before the first observation.
-  return OccupancyState::kFree;
+  // Low occupancy confidence alone is not an observation of free space.
+  return cell.ray_free ? OccupancyState::kFree : OccupancyState::kUnknown;
 }
 
 void RollingOccupancyGrid::RefreshMembership(std::size_t physical_index) {
   const Cell& cell = cells_[physical_index];
   const bool was_occupied = BitSet(occupied_bits_, physical_index);
-  const bool is_occupied =
-      cell.unresolved_hit || StateFor(cell) == OccupancyState::kOccupied;
-  SetBit(observed_bits_, physical_index, cell.observed);
   const auto state = StateFor(cell);
+  const bool is_occupied = state == OccupancyState::kOccupied;
+  SetBit(observed_bits_, physical_index, cell.observed);
   const bool measured_occupied = is_occupied;
-  const bool known_free = state == OccupancyState::kFree && !cell.unresolved_hit;
+  const bool known_free = state == OccupancyState::kFree;
   collision_dirty_ = collision_dirty_ ||
       BitSet(measured_occupied_bits_, physical_index) != measured_occupied ||
       BitSet(known_free_bits_, physical_index) != known_free;
@@ -620,6 +619,7 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
     std::fill(cells_.begin(), cells_.end(),
               Cell{config_.min_log_odds - kUnknownLogOddsOffset});
     hit_bounds_.clear();
+    current_hits_.clear();
     std::fill(ray_total_counts_.begin(), ray_total_counts_.end(), 0U);
     std::fill(ray_hit_counts_.begin(), ray_hit_counts_.end(), 0U);
     std::fill(observed_bits_.begin(), observed_bits_.end(), 0U);
@@ -1093,15 +1093,24 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
       map_min_z + config_.size_z - std::int64_t{1},
       global_cell(static_cast<double>(frame.sensor_origin_z_m) + local_range_z));
 
+  // Replace live hits without clearing accumulated occupancy or adding free votes.
+  // Defer touched cells until fusion so unchanged hits do not rebuild inflation.
+  if (stats.accepted_points > 0U) {
+    for (const std::size_t physical : current_hits_) {
+      cells_[physical].current_hit = false;
+      if (ray_total_counts_[physical] == 0U) RefreshMembership(physical);
+    }
+    current_hits_.clear();
+  }
   for (const std::size_t physical : touched_indices) {
     const std::uint32_t hits = ray_hit_counts_[physical];
     const std::uint32_t total = ray_total_counts_[physical];
     const bool hit = hits >= total - hits;
     Cell& cell = cells_[physical];
-    // Keep a new endpoint blocked even if its old free-space history dominates
-    // the probability. Only a later measured ray through this cell without an
-    // endpoint resolves the hit; unobserved or occluded cells retain protection.
-    cell.unresolved_hit = hits > 0U;
+    // A new endpoint blocks immediately, even before historical occupancy rises.
+    cell.current_hit = hits > 0U;
+    cell.ray_free = hits == 0U;
+    if (cell.current_hit) current_hits_.push_back(physical);
     cell.observed = true;
     const double update = hit ? config_.hit_log_odds : -config_.miss_log_odds;
     if (update >= 0.0 && cell.log_odds >= config_.max_log_odds) {
@@ -1203,7 +1212,7 @@ std::vector<std::uint8_t> RollingOccupancyGrid::ObservedFreeVoxels(
       for (auto iy = low.y; iy <= high.y && free; ++iy) {
         for (auto iz = low.z; iz <= high.z; ++iz) {
           const Cell& cell = cells_[PhysicalIndex({ix, iy, iz})];
-          if (cell.unresolved_hit || StateFor(cell) != OccupancyState::kFree) {
+          if (StateFor(cell) != OccupancyState::kFree) {
             free = false;
             break;
           }

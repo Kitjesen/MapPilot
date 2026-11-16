@@ -2,11 +2,13 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "lingtu/maps/layers/rolling_occupancy.hpp"
+#include "lingtu/maps/layers/exploration_projection.hpp"
 
 namespace {
 
@@ -107,8 +109,8 @@ void TestOfficialUnknownPriorRequiresRepeatedHits() {
 
   const std::vector<float> point{2.2F, 0.1F, 0.1F};
   grid.Update(Frame(point, 10));
-  assert(grid.StateAt(2.2F, 0.1F, 0.1F) != OccupancyState::kOccupied);
-  assert(!grid.Contains(2.2F, 0.1F, 0.1F));
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+  assert(grid.Contains(2.2F, 0.1F, 0.1F));
   assert(grid.OccupancyProbability(2.2F, 0.1F, 0.1F) < 0.8);
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
   const auto first_generation = grid.Generation();
@@ -137,10 +139,9 @@ void TestRayFusionMatchesOfficialEndpointAndTraversalVotes() {
   }, 10));
 
   assert(grid.StateAt(1.2F, 0.1F, 0.1F) == OccupancyState::kFree);
-  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kFree);
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
   assert(grid.StateAt(3.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
-  // A real endpoint still blocks live collision when traversal votes keep its
-  // historical probability free. Missing observations do not clear that hit.
+  // The current endpoint blocks even when traversal votes keep history free.
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
   grid.Update(Frame({}, 20));
   assert(grid.InflatedContains(2.2F, 0.1F, 0.1F));
@@ -186,7 +187,7 @@ void TestObliqueRayClearsOnlyMeasuredSegment() {
   assert(grid.InflatedContains(2.5F, 0.5F, 0.1F));
 }
 
-void TestNewObstacleInKnownFreeSpaceRequiresObservedClearing() {
+void TestHitInFreeSpace() {
   auto config = TestConfig();
   config.auto_roll = false;
   config.hit_log_odds = std::log(0.85 / 0.15);
@@ -199,16 +200,17 @@ void TestNewObstacleInKnownFreeSpaceRequiresObservedClearing() {
   assert(!grid.InflatedContains(2.2, 0.1, 0.1));
 
   grid.Update(Frame({2.2F, 0.1F, 0.1F}, 20));
-  assert(!grid.Contains(2.2, 0.1, 0.1));
+  assert(grid.Contains(2.2, 0.1, 0.1));
+  assert(grid.OccupancyProbability(2.2, 0.1, 0.1) < config.occupied_probability);
   assert(grid.InflatedContains(2.2, 0.1, 0.1));
   for (int scan = 0; scan < 3; ++scan) {
     grid.Update(Frame({0.1F, 2.2F, 0.1F}, 30 + scan));
-    assert(grid.InflatedContains(2.2, 0.1, 0.1));
+    assert(!grid.InflatedContains(2.2, 0.1, 0.1));
   }
   grid.Update(Frame({}, 40));
-  assert(grid.InflatedContains(2.2, 0.1, 0.1));
+  assert(!grid.InflatedContains(2.2, 0.1, 0.1));
 
-  // A measured ray through the old endpoint resolves the temporary hit.
+  // Later free observations continue updating the unchanged probability model.
   grid.Update(Frame({3.2F, 0.1F, 0.1F}, 50));
   assert(!grid.InflatedContains(2.2, 0.1, 0.1));
 }
@@ -235,6 +237,155 @@ void TestEndpointMajorityPreservesHistoryUntilObservedFree() {
   assert(!grid.Contains(2.5, 0.5, 0.1));
   assert(!grid.InflatedContains(2.5, 0.5, 0.1));
   assert(grid.InflatedContains(3.5, 0.8, 0.1));
+}
+
+void TestEvidenceStates() {
+  auto config = TestConfig();
+  config.auto_roll = false;
+  config.hit_log_odds = .01;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  const auto check = [&](OccupancyState expected) {
+    assert(grid.StateAt(2.2, .1, .1) == expected);
+    assert(grid.Contains(2.2, .1, .1) == (expected == OccupancyState::kOccupied));
+    const auto raw = grid.Snapshot();
+    const auto index = raw.Index(6, 4, 2);
+    assert(raw.state[index] == static_cast<std::uint8_t>(expected));
+    const auto packed = grid.InflatedSnapshot();
+    const auto bit = [index](const auto& bits) { return (bits[index / 8U] >> (index % 8U)) & 1U; };
+    assert(bit(packed.measured_occupied_bits) == (expected == OccupancyState::kOccupied));
+    assert(bit(packed.known_free_bits) == (expected == OccupancyState::kFree));
+    const auto observed = grid.ObservedCells();
+    bool found = false;
+    for (std::size_t i = 0; i < observed.Size(); ++i) {
+      if (observed.center_x_m[i] == 2.5F && observed.center_y_m[i] == .5F &&
+          observed.center_z_m[i] == .5F) {
+        assert(observed.state[i] == static_cast<std::uint8_t>(expected));
+        found = true;
+      }
+    }
+    assert(found);
+    lingtu::maps::layers::ExplorationProjectionConfig projection;
+    projection.inflation_radius_m = 0;
+    const auto exploration = lingtu::maps::layers::ProjectExplorationGrid(raw, projection);
+    const auto xy = exploration.grid.index(4, 6);
+    assert(exploration.observed[xy] == (expected != OccupancyState::kUnknown));
+    if (expected != OccupancyState::kUnknown)
+      assert(exploration.grid.data[xy] == (expected == OccupancyState::kOccupied ? 100 : 0));
+  };
+  grid.Update(Frame({2.2F, .1F, .1F}, 10));
+  check(OccupancyState::kOccupied);
+  const auto probability = grid.OccupancyProbability(2.2, .1, .1);
+  grid.Update(Frame({}, 20));
+  check(OccupancyState::kOccupied);
+  grid.Update(Frame({.1F, 2.2F, .1F}, 30));
+  check(OccupancyState::kUnknown);
+  assert(grid.OccupancyProbability(2.2, .1, .1) == probability);
+  grid.Update(Frame({3.2F, .1F, .1F}, 40));
+  check(OccupancyState::kFree);
+}
+
+void TestLiveFrame() {
+  RollingOccupancyConfig config;
+  config.auto_roll = false;
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  grid.Update(Frame({1.025F, .025F, .525F}, 100000000, .025F, .025F, .525F));
+  assert(grid.Contains(1.025, .025, .525));
+  assert(grid.InflatedContains(1.025, .025, .525));
+  const auto probability = grid.OccupancyProbability(1.025, .025, .525);
+  grid.Update(Frame({1.025F, 1.025F, .525F}, 200000000, .025F, .025F, .525F));
+  assert(!grid.InflatedContains(1.025, .025, .525));
+  assert(grid.OccupancyProbability(1.025, .025, .525) == probability);
+  const std::vector<float> old_position{1.025F, .025F, .525F};
+  assert(grid.ObservedFreeVoxels(Frame(old_position, 1).cloud, .05F).front() == 0U);
+  const auto snapshot = grid.InflatedSnapshot();
+  const auto x = static_cast<std::size_t>(std::floor((1.025 - snapshot.origin_x_m) / snapshot.resolution_m));
+  const auto y = static_cast<std::size_t>(std::floor((.025 - snapshot.origin_y_m) / snapshot.resolution_m));
+  const auto z = static_cast<std::size_t>(std::floor((.525 - snapshot.origin_z_m) / snapshot.resolution_m));
+  const auto index = (z * snapshot.size_y + y) * snapshot.size_x + x;
+  assert((snapshot.measured_occupied_bits[index / 8U] & (1U << (index % 8U))) == 0U);
+  assert((snapshot.known_free_bits[index / 8U] & (1U << (index % 8U))) == 0U);
+  assert(grid.InflatedContains(1.025, 1.025, .525));
+  assert(grid.StateAt(-1.025, -.025, .525) == OccupancyState::kUnknown);
+  grid.Update(Frame({1.025F, 1.025F, .525F}, 300000000, .025F, .025F, .525F));
+  assert(grid.Contains(1.025, 1.025, .525));
+  grid.Update(Frame({}, 400000000, .025F, .025F, .525F));
+  assert(grid.InflatedContains(1.025, 1.025, .525));
+}
+
+void TestMovingObstacleTrail() {
+  for (const bool observe_old_positions : {true, false}) {
+    RollingOccupancyConfig config;
+    config.auto_roll = false;
+    RollingOccupancyGrid grid(config);
+    grid.Reset("map", 0, 0, 0, 1);
+    std::int64_t stamp = 1;
+    const float lanes[]{-0.975F, 0.025F, 1.025F};
+    int longest_clear = 0;
+    for (int position = 0; position < 3; ++position) {
+      int cleared_after = 0;
+      for (int scan = 1; scan <= 6; ++scan) {
+        std::vector<float> points{
+            1.025F, lanes[position], 0.525F, 4.025F, 2.025F, 0.525F};
+        if (observe_old_positions) {
+          for (int old = 0; old < position; ++old) {
+            points.insert(points.end(),
+                {3.025F, 0.025F + 3.0F * (lanes[old] - 0.025F), 0.525F});
+          }
+        }
+        stamp += 100000000;
+        grid.Update(Frame(points, stamp, 0.025F, 0.025F, 0.525F));
+        assert(grid.InflatedContains(1.025, lanes[position], 0.525));
+        assert(grid.InflatedContains(4.025, 2.025, 0.525));
+        if (position > 0 && cleared_after == 0 &&
+            !grid.InflatedContains(1.025, lanes[position - 1], 0.525)) {
+          cleared_after = scan;
+        }
+      }
+      if (observe_old_positions && position > 0) {
+        assert(cleared_after > 0);
+        longest_clear = std::max(longest_clear, cleared_after);
+      }
+      for (int old = 0; old < position; ++old) {
+        assert(grid.Contains(1.025, lanes[old], 0.525) != observe_old_positions);
+        assert(grid.InflatedContains(1.025, lanes[old], 0.525) != observe_old_positions);
+        assert(grid.InflatedContains(1.125, lanes[old], 0.525) != observe_old_positions);
+      }
+    }
+
+    // Six seconds of unrelated observations cannot establish that old cells are free.
+    for (int scan = 0; scan < 60; ++scan) {
+      stamp += 100000000;
+      grid.Update(Frame({4.025F, 2.025F, 0.525F}, stamp, 0.025F, 0.025F, 0.525F));
+      grid.Decay(stamp);
+    }
+    for (int old = 0; old < 3; ++old) {
+      assert(grid.InflatedContains(1.025, lanes[old], 0.525) ==
+             (!observe_old_positions || old == 2));
+    }
+    for (int scan = 0; scan < 6; ++scan) {
+      std::vector<float> points{4.025F, 2.025F, 0.525F};
+      for (const auto lane : lanes) {
+        points.insert(points.end(), {3.025F, 0.025F + 3.0F * (lane - 0.025F), 0.525F});
+      }
+      stamp += 100000000;
+      grid.Update(Frame(points, stamp, 0.025F, 0.025F, 0.525F));
+    }
+    for (const auto lane : lanes) {
+      assert(grid.StateAt(1.025, lane, 0.525) == OccupancyState::kFree);
+      assert(!grid.InflatedContains(1.025, lane, 0.525));
+      assert(!grid.InflatedContains(1.125, lane, 0.525));
+    }
+    assert(grid.Contains(4.025, 2.025, 0.525));
+    assert(grid.InflatedContains(4.025, 2.025, 0.525));
+    if (observe_old_positions) {
+      std::printf("Moving obstacle: old occupancy/inflation cleared after %d scans at 10 Hz\n",
+                  longest_clear);
+    } else {
+      std::puts("Moving obstacle: 3 unobserved positions retained for 6 s, then ray-cleared; static control retained");
+    }
+  }
 }
 
 void TestClippedEndpointContributesOneFreeVote() {
@@ -298,7 +449,7 @@ void TestIntersectingRaysClearOnlyObservedHistory() {
   assert(forward.Snapshot().log_odds_q8 == reverse.Snapshot().log_odds_q8);
 }
 
-void TestSubthresholdObservationIsKnownFreeLikeOfficialGridMap() {
+void TestWeakHitIsOccupied() {
   auto config = TestConfig();
   config.auto_roll = false;
   config.hit_log_odds =
@@ -308,7 +459,8 @@ void TestSubthresholdObservationIsKnownFreeLikeOfficialGridMap() {
 
   grid.Update(Frame({2.2F, 0.1F, 0.1F}, 10));
 
-  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kFree);
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+  assert(grid.OccupancyProbability(2.2, .1, .1) < config.occupied_probability);
   assert(grid.InflatedSnapshot().occupied_cells == 1U);
 }
 
@@ -344,7 +496,7 @@ void TestRayCornerContactDoesNotClearNeighbor() {
   assert(grid.InflatedContains(0.5F, 1.5F, 0.1F));
 }
 
-void TestUnresolvedHitsRequireClearingWithoutChangingHistoricalOccupancy() {
+void TestLiveHitHistory() {
   auto config = TestConfig();
   config.auto_roll = false;
   config.hit_log_odds = 0.01;
@@ -353,19 +505,19 @@ void TestUnresolvedHitsRequireClearingWithoutChangingHistoricalOccupancy() {
   grid.Update(Frame({2.2F, 0.1F, 0.1F}, 10));
   const auto first = grid.Generation();
   assert(grid.InflatedContains(2.2, 0.1, 0.1));
-  assert(!grid.Contains(2.2, 0.1, 0.1));
+  assert(grid.Contains(2.2, 0.1, 0.1));
   const auto stored = grid.ObservedCells();
-  for (auto state : stored.state) {
-    assert(state != static_cast<std::uint8_t>(OccupancyState::kOccupied));
-  }
+  assert(std::count(stored.state.begin(), stored.state.end(),
+                   static_cast<std::uint8_t>(OccupancyState::kOccupied)) == 1);
+  assert(grid.OccupancyProbability(2.2, .1, .1) < config.occupied_probability);
   grid.Update(Frame({2.2F, 0.1F, 0.1F, 2.2F, 0.1F, 0.1F}, 20));
   assert(grid.Generation() == first);
   grid.Update(Frame({0.1F, 2.2F, 0.1F}, 30));
-  assert(grid.InflatedContains(2.2, 0.1, 0.1));
+  assert(!grid.InflatedContains(2.2, 0.1, 0.1));
   assert(grid.InflatedContains(0.1, 2.2, 0.1));
   assert(grid.Generation() == first + 1U);
   grid.Update(Frame({}, 40));
-  assert(grid.InflatedSnapshot().occupied_cells == 2U);
+  assert(grid.InflatedSnapshot().occupied_cells == 1U);
   assert(grid.Generation() == first + 1U);
   grid.Update(Frame({3.2F, 0.1F, 0.1F, 0.1F, 3.2F, 0.1F}, 50));
   assert(!grid.InflatedContains(2.2, 0.1, 0.1));
@@ -383,14 +535,13 @@ void TestCurrentHitRollResetAndSharedInflation() {
   assert(grid.InflatedContains(-0.2, 0.1, 0.1));
   const auto rolled = grid.RollToCenter(3.2, 0.0, 0.0, 20);
   assert(!rolled.Empty());
-  for (auto state : rolled.state) {
-    assert(state != static_cast<std::uint8_t>(OccupancyState::kOccupied));
-  }
+  assert(std::count(rolled.state.begin(), rolled.state.end(),
+                   static_cast<std::uint8_t>(OccupancyState::kOccupied)) == 1);
   assert(grid.InflatedContains(-0.2, 0.1, 0.1));
   assert(!grid.InflatedContains(6.2, 0.1, 0.1));
   grid.Update(Frame({}, 30, 3.2F));
   assert(grid.InflatedContains(-0.2, 0.1, 0.1));
-  // A return outside the rolled window clears the remaining old hit by ray.
+  // A clipped return cannot create a new hit outside the rolled window.
   grid.Update(Frame({-2.2F, 0.1F, 0.1F}, 35, 1.2F));
   assert(grid.InflatedSnapshot().occupied_cells == 0U);
   grid.Update(Frame({5.2F, 0.1F, 0.1F}, 40, 3.2F));
@@ -919,7 +1070,8 @@ void TestNewHitIsMeasuredEvenWithFreeSpaceHistory() {
   grid.Reset("map", 0, 0, 0, 1);
   for (int stamp = 2; stamp < 10; ++stamp) grid.Update(Frame({3.2F,.1F,.1F}, stamp));
   grid.Update(Frame({2.2F,.1F,.1F}, 10));
-  assert(grid.StateAt(2.2, .1, .1) == OccupancyState::kFree);
+  assert(grid.StateAt(2.2, .1, .1) == OccupancyState::kOccupied);
+  assert(grid.OccupancyProbability(2.2, .1, .1) < config.occupied_probability);
   const auto snapshot = grid.InflatedSnapshot();
   const auto found = std::find_if(snapshot.hit_bounds.begin(), snapshot.hit_bounds.end(),
       [](const auto &item) { return std::fabs(item.min_x - 2.2) < 1e-6; });
@@ -931,10 +1083,13 @@ void TestNewHitIsMeasuredEvenWithFreeSpaceHistory() {
 }  // namespace
 
 int main() {
+  TestEvidenceStates();
+  TestLiveFrame();
   TestHitBoundsFollowTheRollingOccupancy();
   TestNewHitIsMeasuredEvenWithFreeSpaceHistory();
-  TestNewObstacleInKnownFreeSpaceRequiresObservedClearing();
+  TestHitInFreeSpace();
   TestEndpointMajorityPreservesHistoryUntilObservedFree();
+  TestMovingObstacleTrail();
   TestClippedEndpointContributesOneFreeVote();
   TestSharedEndpointRaysRetainDistinctFreeSegments();
   TestIntersectingRaysClearOnlyObservedHistory();
@@ -946,8 +1101,8 @@ int main() {
   TestObliqueRayClearsOnlyMeasuredSegment();
   TestRayStopsAtSensorBoundary();
   TestRayCornerContactDoesNotClearNeighbor();
-  TestSubthresholdObservationIsKnownFreeLikeOfficialGridMap();
-  TestUnresolvedHitsRequireClearingWithoutChangingHistoricalOccupancy();
+  TestWeakHitIsOccupied();
+  TestLiveHitHistory();
   TestCurrentHitRollResetAndSharedInflation();
   TestRangeClippingDoesNotCreateCurrentCollisionHit();
   TestInflationExcludesExactRadiusBoundary();
