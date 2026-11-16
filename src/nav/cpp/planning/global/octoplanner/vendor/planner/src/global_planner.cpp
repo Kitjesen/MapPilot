@@ -477,8 +477,8 @@ namespace global_planner
         if (ground_support_) {
             const auto start_cell = worldToGrid(
                 start_point_.x, start_point_.y, start_point_.z);
-            if (!artifact_ || !artifact_->surface || !artifact_->surface->below(
-                    start_cell.x, start_cell.y, start_cell.z)) {
+            if (!artifact_ || !artifact_->surface ||
+                artifact_->surface->observedSurfaces() == 0U) {
                 endpoint_resolution_.failure =
                     EndpointResolutionInfo::Failure::StartSnapExhausted;
                 endpoint_resolution_.start_failure = TraversabilityFailure::GroundSupport;
