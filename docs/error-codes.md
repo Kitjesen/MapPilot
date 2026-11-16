@@ -1,8 +1,8 @@
 # LingTu numeric error codes
 
-**Status:** Current runtime error reference
-**Audience:** Operators and integration developers
-**Runs on:** Host Gateway with native navigation in real and sim
+**Status:** Current navigation health code registry
+**Audience:** Operators, Gateway clients, and runtime maintainers
+**Runs on:** Real and simulation Products
 
 This is the lookup table for numeric navigation health codes returned by
 `GET /api/v1/health`, `GET /api/v1/metrics`, and the Gateway Faults RPC. The

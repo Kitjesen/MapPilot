@@ -76,7 +76,10 @@ readiness or issue motion commands. Doso currently exposes no joint samples.
 Go2 body feedback comes from `rt/sportmodestate`. Every callback updates the
 receive timestamp, including stationary samples. A sample older than 500 ms
 is reported as `sport_state_stale`; it does not block velocity submission or
-change SDK acceptance. Invalid or excessive measured tilt still blocks motion. The
+change SDK acceptance. Factory-avoidance configuration and measured tilt update
+readiness and health diagnostics. The SDK response decides velocity acceptance,
+including when the IMU is invalid or the measured tilt exceeds the configured
+limit. Configuration RPC failures retain their errors and zero-output handling. The
 driver keeps the triggering error when its subsequent stop also fails, and logs
 the operation, vendor-call duration and body-feedback age before attempting that
 stop. The Go2 adapter counts actual vendor calls; a cached-state refresh counts

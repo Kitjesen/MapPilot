@@ -519,8 +519,6 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
-        if (cancel_check_ && cancel_check_()) throw Cancelled{};
-        if (!resolveGoal()) return false;
         EdgeCost clearance_cost;
         if(obstacle_clearance_weight_>0 && obstacle_clearance_radius_cells_>0) {
             clearance_cost=[&](const PointPose &from,const PointPose &to) {
@@ -542,6 +540,7 @@ namespace global_planner
                 return length*(1+obstacle_clearance_weight_*total/count);
             };
         }
+        if (cancel_check_ && cancel_check_()) throw Cancelled{};
         if (artifact_ && artifact_->rust_graph) {
             const auto graph_started = std::chrono::steady_clock::now();
             const char *rust_failure_kind = "query";
@@ -569,6 +568,9 @@ namespace global_planner
                 metric.start={ {start_point_.x,start_point_.y,start_point_.z},
                     start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
                 metric.start_exemption=static_cast<bool>(start_exemption_);
+                metric.goal_tolerance=terminal_goal_tolerance_m_;
+                metric.goal_xy_tolerance=terminal_goal_xy_tolerance_m_;
+                metric.goal_z_tolerance=terminal_goal_z_tolerance_m_;
                 if(no_go_regions_)for(const auto &region:*no_go_regions_)
                     geometry.regions.push_back({{region.min[0],region.min[1],region.min[2]},
                         {region.max[0],region.max[1],region.max[2]}});
@@ -656,6 +658,7 @@ namespace global_planner
                 return false;
             }
         }
+        if (!resolveGoal()) return false;
         if (searchGrid(max_iterations_)) return true;
         const double map_resolution = octree_->getResolution();
         if (search_info_.outcome != SearchInfo::Outcome::Exhausted ||

@@ -392,6 +392,7 @@ def test_tracking_product_builds_person_following_and_conversation(
         "VisualServoModule",
         "AgentPlannerModule",
         "GatewayModule",
+        "AgentPlannerModule",
         "host.bus",
         "nav.commands",
         "nav.goals",

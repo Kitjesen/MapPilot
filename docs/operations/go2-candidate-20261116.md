@@ -22,9 +22,10 @@ The original shared worktree remains a separate, ongoing development workspace.
 
 The integration fixes prepared-cache read/write alignment, preserves terminal
 tolerances before the Rust query, and separates configured planning geometry
-from instantaneous observed posture. The snapshot had also removed the main
-Go2 driver's factory-acquisition and attitude admission checks; those existing
-checks were restored without changing configuration, zero-command or stop paths.
+from instantaneous observed posture. On 2026-11-17 the operator selected SDK-owned
+Go2 velocity acceptance. Factory-avoidance setup and measured attitude remain
+readiness/health diagnostics. Velocity submissions follow the SDK return value;
+SDK failures, zero output and confirmed-stop handling keep their existing semantics.
 
 Local integration evidence includes Rust 79 passed/1 ignored, global planning
 20/20, portable navigation 821/821, maps 5/5 and portable driver 15/15. Web's

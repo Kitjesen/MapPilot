@@ -319,7 +319,7 @@ class CodexAppServer:
                         except Exception as exc:
                             response = {"success": False, "contentItems": [{"type": "inputText", "text": str(exc)}]}
                         self._respond(message["id"], response)
-                    elif method == "item/agentMessage/delta":
+                    elif method == "item/agentMessage/delta" and params.get("threadId", thread_id) == thread_id:
                         delta = params.get("delta")
                         if isinstance(delta, str):
                             chunks.append(delta)
@@ -339,7 +339,7 @@ class CodexAppServer:
                         return "".join(chunks)
                     elif method == "account/updated" and not started:
                         continue
-                    elif on_event and method in {
+                    elif on_event and params.get("threadId", thread_id) == thread_id and method in {
                         "item/started", "item/completed", "turn/started", "turn/plan/updated",
                         "thread/status/changed", "mcpServer/startupStatus/updated",
                     }:

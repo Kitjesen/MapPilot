@@ -13,6 +13,7 @@ from decision.tasks.sdk_agent import TurnResult
 from nav.services.goals import GoalService
 from runtime.msgs.nav import NavigationCommandKind, NavigationCommandReceipt, NavigationGoalState, NavigationGoalStatus
 from runtime.msgs.numpy_compat import np
+from runtime.msgs.semantic import Detection3D
 
 
 class Commands:
@@ -143,7 +144,6 @@ def test_conversation_follow_survives_reply_queries_and_stops_after_native_feedb
 
     assert not servo._publish_goal_from_3d(np.array([3., 0., 0.]))
     from runtime.msgs.geometry import Vector3
-    from runtime.msgs.semantic import Detection3D
 
     # Supply a reviewed observation at the vision boundary before explicit confirmation.
     servo._latest_bgr = np.zeros((32, 32, 3), dtype=np.uint8)

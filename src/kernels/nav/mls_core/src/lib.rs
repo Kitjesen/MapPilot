@@ -715,7 +715,7 @@ pub struct LtMlsPoseBuffer {
     pub cap: u64,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 8;
+pub const LT_MLS_ABI_VERSION: u32 = 10;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {
@@ -2093,6 +2093,17 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
         Err(_) => return -2,
     };
     let config = geometry.config;
+    let output = &mut *route;
+    lt_mls_free_pose_buffer(output);
+    let mut budget = query::Budget {
+        remaining: max_iterations as usize,
+    };
+    let goal = match checker.resolve_goal(start, goal, max_snap_cells, &mut budget) {
+        Ok(goal) => goal,
+        Err(query::QueryError::Exhausted) => return 1,
+        Err(query::QueryError::Budget) => return 2,
+        Err(query::QueryError::Cancelled) => return 3,
+    };
     let cell = |pose: LtMlsPose| {
         SurfaceCell::new(
             (pose.point.x / config.resolution).floor() as i32,
@@ -2122,11 +2133,6 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     };
     let virtual_goal =
         |cell: SurfaceCell| goal_attachment == Some(cell) && same_xy(goal.point, pose(cell).point);
-    let output = &mut *route;
-    lt_mls_free_pose_buffer(output);
-    let mut budget = query::Budget {
-        remaining: max_iterations as usize,
-    };
     let mut rejected = HashSet::<(SurfaceCell, SurfaceCell, u32)>::new();
     loop {
         let path = match query::plan_budgeted(
@@ -2538,6 +2544,105 @@ pub unsafe extern "C" fn lt_mls_free_pose_buffer(buffer: *mut LtMlsPoseBuffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_boundary() {
+        let occupied = (0..26)
+            .flat_map(|x| (-8..=8).map(move |y| SurfaceCell::new(x, y, -1)))
+            .collect();
+        let handle = LtMlsArtifactHandle {
+            state: PlannerState::new(
+                occupied,
+                Vec::new(),
+                SurfaceConfig {
+                    clearance_cells: 11,
+                    closing_passes: 4,
+                    closing_radius_cells: 4.0,
+                },
+                GraphConfig {
+                    node_spacing_cells: 2,
+                    max_link_cells: 9,
+                    max_step_cells: 9,
+                    horizontal_hop_cells: 2,
+                    wall_buffer_cells: 8,
+                    wall_buffer_weight: 2.0,
+                    ..GraphConfig::default()
+                },
+            ),
+            revision: 1,
+        };
+        let start = LtMlsPose {
+            point: LtMlsPoint {
+                x: -0.02,
+                y: 0.025,
+                z: 0.35,
+            },
+            ..LtMlsPose::default()
+        };
+        let goal = LtMlsPose {
+            point: LtMlsPoint {
+                x: 0.975,
+                ..start.point
+            },
+            ..LtMlsPose::default()
+        };
+        let geometry = LtMlsGeometry {
+            config: LtMlsMetricConfig {
+                resolution: 0.05,
+                robot_radius: 0.1,
+                below: 0.1,
+                above: 0.2,
+                support_height: 0.35,
+                support_tolerance: 0.05,
+                max_step: 0.45,
+                ground_support: 1,
+                actual_start: 1,
+                start,
+                min: LtMlsPoint {
+                    x: -0.5,
+                    y: -0.5,
+                    z: -0.1,
+                },
+                max: LtMlsPoint {
+                    x: 1.55,
+                    y: 0.55,
+                    z: 0.85,
+                },
+                ..LtMlsMetricConfig::default()
+            },
+            regions: std::ptr::null(),
+            regions_len: 0,
+            preblocked: std::ptr::null(),
+            preblocked_len: 0,
+            cancel: None,
+            context: std::ptr::null_mut(),
+        };
+        let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+        assert_eq!(
+            checker
+                .check_connection(
+                    start,
+                    LtMlsPose {
+                        point: LtMlsPoint {
+                            x: 0.025,
+                            ..start.point
+                        },
+                        ..start
+                    },
+                    true
+                )
+                .valid,
+            1
+        );
+        let mut route = LtMlsPoseBuffer::default();
+        assert_eq!(
+            unsafe {
+                lt_mls_artifact_query_metric(&handle, start, goal, 24, 10000, &geometry, &mut route)
+            },
+            0
+        );
+        unsafe { lt_mls_free_pose_buffer(&mut route) };
+    }
 
     #[test]
     fn standing_band_endpoints() {
@@ -2980,6 +3085,9 @@ mod tests {
             state: PlannerState::from_surface(observed.clone(), inferred, GraphConfig::default()),
             revision: 1,
         };
+        handle
+            .state
+            .set_geometry(observed, Vec::new(), SurfaceConfig::default());
         for pass in 0..2 {
             for x in -1..=2 {
                 for z in -1..=52 {
@@ -3000,7 +3108,6 @@ mod tests {
                 }
             }
             if pass == 0 {
-                handle.state.set_geometry(observed.clone(), Vec::new(), SurfaceConfig::default());
                 handle.state.update_region(
                     RegionBounds::new(0, 0, 0, 0, 8, 14),
                     &[SurfaceCell::new(0, 0, 12)],

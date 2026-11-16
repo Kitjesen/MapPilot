@@ -11,7 +11,7 @@ from reportlab.platypus import Flowable, PageBreak, Paragraph, SimpleDocTemplate
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "build/reports/global-planner-mls-roadmap-20261115.pdf"
+OUT = ROOT / "docs/assets/planning/global-planner-mls-roadmap-20261115.pdf"
 pdfmetrics.registerFont(TTFont("SimHei", "C:/Windows/Fonts/simhei.ttf"))
 INK = colors.HexColor("#17212B")
 MUTED = colors.HexColor("#53606D")

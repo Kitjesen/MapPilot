@@ -53,7 +53,7 @@ export function App() {
   return <main style={{ maxWidth: 1040, margin: '0 auto', padding: '34px 24px 64px', color: '#1b2433' }}>
     <header style={{ marginBottom: 24 }}><p style={{ fontSize: 11, letterSpacing: '.14em', color: '#7f8a9d', margin: 0 }}>LINGTU / FEATURE EVIDENCE</p><h1 style={{ fontSize: 28, margin: '10px 0 8px' }}>工具过程、Codex 卡片与权限状态</h1><p style={{ color: '#6c7688', margin: 0, lineHeight: 1.7 }}>正式组件的固定回执展示页；这里的内容是可重复的 UI 验收数据，不代表机器人已经执行了这些动作。</p></header>
     <div style={{ display: 'grid', gap: 18 }}>
-      <Section id="timeline" title="工具过程时间线"><ToolActivityGroup messages={timeline} active runningId="tool-2" awaiting={[]} now={now} /></Section>
+      <Section id="timeline" title="工具过程时间线"><ToolActivityGroup messages={timeline} active awaiting={[]} now={now} /></Section>
       <Section id="collapsed-summary" title="工具过程折叠摘要"><ToolActivityGroup messages={timeline.map((item, i) => ({ ...item, id: `summary-${i}`, metadata: { status: 'completed', display_name: item.metadata?.display_name } }))} active={false} awaiting={[]} now={now} /></Section>
       <Section id="status-detail" title="工具状态、耗时、失败原因与展开详情"><ToolActivityGroup messages={[timeline[2]]} active awaiting={[]} now={now} /></Section>
       <Section id="codex-cards" title="Codex reasoning / plan / file change / terminal / token usage"><ToolActivityGroup messages={codex} active awaiting={[]} now={now} /></Section>

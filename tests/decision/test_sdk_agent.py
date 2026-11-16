@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -467,6 +467,36 @@ async def test_codex_native_duplicate_call_preserves_single_owned_execution(code
     assert responses[0]["success"] is True
     assert json.loads(responses[0]["contentItems"][0]["text"]) == {"ok": True}
     assert codex_server.server._reader.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_keeps_history_without_claiming_owned_tool_execution(monkeypatch):
+    from decision.llm.codex_app_server import app_server
+
+    chat = Mock(return_value="已收到地图问题")
+    monkeypatch.setattr(app_server, "chat", chat)
+    invoke = AsyncMock(return_value={"ok": True})
+    history = [{"role": "user", "content": "上一次"}, {"role": "assistant", "content": "已记录"}]
+    result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke,
+                        history=history, permission_mode="read_only")
+    assert chat.call_args.args[0][:len(history)] == history
+    assert chat.call_args.kwargs["model"] == "gpt-6.1-sol"
+    assert chat.call_args.kwargs["permission_mode"] == "read_only"
+    invoke.assert_not_awaited()
+    assert result.kind == "reply" and result.text == "已收到地图问题"
+    assert result.model_items[:len(history)] == history
+
+
+@pytest.mark.asyncio
+async def test_codex_app_server_failure_does_not_claim_tool_success(monkeypatch):
+    from decision.llm.client import LLMError
+    from decision.llm.codex_app_server import app_server
+
+    monkeypatch.setattr(app_server, "chat", Mock(side_effect=LLMError("app_server_unavailable")))
+    invoke = AsyncMock(return_value={"ok": True})
+    result = await turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=invoke)
+    assert result.kind == "failed" and "app_server_unavailable" in result.text
+    invoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio

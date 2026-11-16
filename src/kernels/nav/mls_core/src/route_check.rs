@@ -79,6 +79,9 @@ pub struct LtMlsMetricConfig {
     pub body_offset: f64,
     pub start: LtMlsPose,
     pub start_exemption: u8,
+    pub goal_tolerance: f64,
+    pub goal_xy_tolerance: f64,
+    pub goal_z_tolerance: f64,
 }
 
 pub(crate) struct Index {
@@ -133,6 +136,87 @@ pub(crate) struct Checker<'a> {
 }
 
 impl Checker<'_> {
+    pub(crate) fn resolve_goal(
+        &self,
+        start: LtMlsPose,
+        goal: LtMlsPose,
+        snap: i32,
+        budget: &mut crate::query::Budget,
+    ) -> Result<LtMlsPose, crate::query::QueryError> {
+        use crate::query::QueryError;
+        let c = self.config;
+        let allowed = |pose: LtMlsPose| {
+            // Without a requested heading, the connector decides body orientation.
+            if c.body_offset > 0.0 && pose.has_yaw == 0 {
+                self.base_query(pose.point.native(), c.ground_support != 0) == ROUTE_OK
+            } else {
+                self.oriented_query(pose.point.native(), pose.yaw, c.ground_support != 0, true)
+                    == ROUTE_OK
+            }
+        };
+        if self.cancelled() {
+            return Err(QueryError::Cancelled);
+        }
+        if allowed(goal) {
+            return Ok(goal);
+        }
+        // Keep the existing map-spaced, actual-start-anchored terminal lattice.
+        let r = c.resolution;
+        let rz = if c.support_height > 0.0 && c.max_slope > 0.0 {
+            r / (1.0 / c.max_slope).ceil().max(1.0)
+        } else {
+            r
+        };
+        let seed = LtMlsPoint {
+            x: start.point.x + ((goal.point.x - start.point.x) / r).round() * r,
+            y: start.point.y + ((goal.point.y - start.point.y) / r).round() * r,
+            z: start.point.z + ((goal.point.z - start.point.z) / rz).round() * rz,
+        };
+        let radius = snap.min(((c.goal_tolerance / r).ceil() as i32).saturating_add(1));
+        let vertical = ((radius as f64 * r / rz).ceil() as i32)
+            .min(((c.goal_z_tolerance / rz).ceil() as i32).saturating_add(1));
+        let mut candidates = Vec::new();
+        for x in -radius..=radius {
+            if self.cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            for y in -radius..=radius {
+                for z in -vertical..=vertical {
+                    let point = LtMlsPoint {
+                        x: seed.x + x as f64 * r,
+                        y: seed.y + y as f64 * r,
+                        z: seed.z + z as f64 * rz,
+                    }
+                    .native();
+                    let xy = (point.x - goal.point.x).hypot(point.y - goal.point.y);
+                    let dz = (point.z - goal.point.z).abs();
+                    let distance = xy.hypot(dz);
+                    if distance <= c.goal_tolerance + EPSILON
+                        && xy <= c.goal_xy_tolerance + EPSILON
+                        && dz <= c.goal_z_tolerance + EPSILON
+                    {
+                        candidates.push((distance, xy, z, x, y, LtMlsPose { point, ..goal }));
+                    }
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            a.0.total_cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then((a.2, a.3, a.4).cmp(&(b.2, b.3, b.4)))
+        });
+        for (_, _, _, _, _, candidate) in candidates {
+            if self.cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            budget.spend()?;
+            if allowed(candidate) {
+                return Ok(candidate);
+            }
+        }
+        Err(QueryError::Exhausted)
+    }
+
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
         let Some(levels) = self.occupied_columns.get(&(x, y)) else {
             return &[];
@@ -957,6 +1041,13 @@ pub(crate) fn prepare<'a>(
         && config.support_patch_radius_cells >= 0
         && config.support_patch_min_samples >= 0
         && config.start.point.finite()
+        && [
+            config.goal_tolerance,
+            config.goal_xy_tolerance,
+            config.goal_z_tolerance,
+        ]
+        .iter()
+        .all(|v| !v.is_nan() && *v >= 0.0)
         && (config.start.has_yaw == 0 || config.start.yaw.is_finite())
         && regions.iter().all(|r| {
             r.min.finite()
@@ -1163,6 +1254,59 @@ mod tests {
         let state = state((0..6).map(|x| SurfaceCell::new(x, 0, 0)).collect());
         let route = [point(0.1, 0.1, 0.45), point(0.9, 0.1, 0.45)];
         assert_eq!(check(&state, &route, config(), &[]).valid, 1);
+    }
+
+    #[test]
+    fn goal_region() {
+        use crate::query::{Budget, QueryError};
+        let mut cells: Vec<_> = (0..6).map(|x| SurfaceCell::new(x, 0, 0)).collect();
+        cells.push(SurfaceCell::new(2, 0, 2));
+        let state = state(cells);
+        let start = pose(point(0.1, 0.1, 0.45), None);
+        let goal = pose(point(0.5, 0.1, 0.45), None);
+        let c = LtMlsMetricConfig {
+            goal_tolerance: 0.21,
+            goal_xy_tolerance: 0.21,
+            goal_z_tolerance: 0.01,
+            ..config()
+        };
+        let checker = prepare(&state, c, &[], &[], None, std::ptr::null_mut()).unwrap();
+        let resolve = |checker: &Checker<'_>, target| {
+            checker.resolve_goal(start, target, 4, &mut Budget { remaining: 100 })
+        };
+        assert_eq!(resolve(&checker, start).unwrap().point, start.point);
+        let terminal = resolve(&checker, goal).unwrap();
+        assert!((terminal.point.x - goal.point.x).abs() <= 0.21);
+        assert_eq!(checker.check_connection(start, terminal, true).valid, 1);
+        for limits in [
+            LtMlsMetricConfig {
+                goal_tolerance: 0.19,
+                ..c
+            },
+            LtMlsMetricConfig {
+                goal_xy_tolerance: 0.19,
+                ..c
+            },
+        ] {
+            let checker = prepare(&state, limits, &[], &[], None, std::ptr::null_mut()).unwrap();
+            assert!(matches!(
+                resolve(&checker, goal),
+                Err(QueryError::Exhausted)
+            ));
+        }
+        let region = [LtMlsMetricRegion {
+            min: point(0.0, 0.0, 0.2),
+            max: point(1.2, 0.2, 1.0),
+        }];
+        let checker = prepare(&state, c, &region, &[], None, std::ptr::null_mut()).unwrap();
+        assert!(matches!(
+            resolve(&checker, goal),
+            Err(QueryError::Exhausted)
+        ));
+        assert!(matches!(
+            checker.resolve_goal(start, goal, 4, &mut Budget { remaining: 0 }),
+            Err(QueryError::Budget)
+        ));
     }
 
     #[test]
@@ -1450,7 +1594,9 @@ mod tests {
         );
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).failure_kind, ROUTE_OCCUPIED);
-        state.update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[]).unwrap();
+        state
+            .update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[])
+            .unwrap();
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).valid, 1);
     }

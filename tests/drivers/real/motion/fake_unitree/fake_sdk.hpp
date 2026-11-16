@@ -11,6 +11,7 @@ inline std::vector<std::string> calls;
 inline bool enabled = true;
 inline bool apply_setting = true;
 inline int stop_code = 0;
+inline int move_code = 0;
 inline int set_code = 0;
 inline int failed_query = 0;
 inline int queries = 0;
@@ -19,7 +20,7 @@ inline std::function<void(const void *)> low_state_callback;
 inline void reset() {
   calls.clear();
   enabled = apply_setting = true;
-  stop_code = set_code = failed_query = queries = 0;
+  stop_code = move_code = set_code = failed_query = queries = 0;
   state_callback = {};
   low_state_callback = {};
 }
@@ -99,7 +100,7 @@ class SportClient {
   void SetTimeout(float) {}
   void Init() {}
   int StopMove() { fake_unitree::calls.push_back("stop"); return fake_unitree::stop_code; }
-  int Move(float, float, float) { fake_unitree::calls.push_back("move"); return 0; }
+  int Move(float, float, float) { fake_unitree::calls.push_back("move"); return fake_unitree::move_code; }
   int StandUp() { return 0; }
   int Sit() { return 0; }
   int RecoveryStand() { return 0; }

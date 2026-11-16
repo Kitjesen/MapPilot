@@ -4,6 +4,7 @@ import * as THREE from 'three'
 
 import {
   MAPPING_OBSERVATION_COLORS,
+  MAPPING_OBSERVATION_LABELS,
   mappingObservationPointAt,
   resolveMappingObservation,
 } from '../src/services/mappingObservation.ts'
@@ -198,4 +199,5 @@ test('production raw height-band occupancy remains visible with exact occupancy 
     id: 'maps.surface_projection', value_semantics: 'ground_relative_surface_not_traversability',
   })
   assert.equal(resolveMappingObservation(surface, { nowS: 101 }).status, 'unavailable')
+  assert.doesNotMatch(Object.values(MAPPING_OBSERVATION_LABELS).join(' '), /支撑候选|附近地面|地面依据/)
 })

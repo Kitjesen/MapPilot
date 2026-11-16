@@ -1256,6 +1256,7 @@ test('composer menus show the selected model and reasoning without changing the 
   assert.match(html, /<summary[^>]*aria-label="模型"[^>]*aria-haspopup="menu"/)
   assert.match(html, /role="menuitemradio" aria-checked="true"[^>]*><span>Model A<\/span>/)
   assert.match(html, /思考深度/)
+  assert.doesNotMatch(html, /aria-label="思考深度"/)
   assert.match(html, /<span>深入<\/span>/)
   assert.doesNotMatch(html, /<select/)
   const pending = render({ message_id: 'original', text: '去门口' })

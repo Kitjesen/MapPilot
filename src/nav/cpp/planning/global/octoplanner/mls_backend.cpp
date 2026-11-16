@@ -733,6 +733,8 @@ void write(lingtu::maps::BinaryWriter& out, const Artifact& artifact) {
 }
 
 Artifact read(lingtu::maps::BinaryReader& in, bool require_complete) {
+  static_assert(sizeof(SurfaceCell) == 12 && offsetof(SurfaceCell, z) == 8);
+  static_assert(sizeof(Node) == 16 && offsetof(Node, cell) == 4);
   if (in.text() != kMagic) {
     throw std::runtime_error("unsupported MLS artifact format");
   }

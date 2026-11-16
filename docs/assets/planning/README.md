@@ -16,6 +16,9 @@ Matplotlib source are `pipeline.png` and `pipeline.py`. It describes this
 offline PCD benchmark, including modeled free layers, native A* edge checks
 and the separate path diagnostics.
 
+The [MLS design note from 2026-11-15](global-planner-mls-roadmap-20261115.pdf)
+is retained as a separate design artifact, not a current acceptance report.
+
 ## Figures and results
 
 | Case | 3D | X–Z elevation | Route length | Route Z range | Segments passing body sweep |

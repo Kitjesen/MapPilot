@@ -236,6 +236,9 @@ struct OctoPlannerGridQueryTest {
     planner.artifact_->rust_graph = std::move(prepared);
     require(!grid_path.empty(), "resolved terminal could not attach to grid search");
     const auto &a = rust_path.back(), &b = grid_path.back();
+    if (std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) >= 1e-6)
+      std::cerr << "Terminal Rust=" << a.x << ',' << a.y << ',' << a.z
+                << " grid=" << b.x << ',' << b.y << ',' << b.z << '\n';
     require(std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-6,
             "Rust and grid search selected different terminal positions");
     require(planner.queryWorld({float(b.x), float(b.y), float(b.z)},
@@ -325,9 +328,7 @@ int main() try {
 
   planner.setOctomap(fixture(true));
   OctoPlannerGridQueryTest::checkPreparedArtifact(planner);
-  planner.makePlan(start, goal);
-  planner.getPlannerResults(route);
-  require(route.empty(), "closed wall was crossed by the global route");
+  require(run(goal).empty(), "closed wall was crossed by the global route");
   require(!planner.searchInfo().rust_fallback && planner.searchInfo().outcome ==
               OctoPlanner3D::SearchInfo::Outcome::Exhausted,
           "Rust exhaustion triggered a second planning backend");

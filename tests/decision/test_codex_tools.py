@@ -109,6 +109,27 @@ async def test_codex_camera_tool_returns_native_image_and_replays_history(codex_
 
 
 @pytest.mark.asyncio
+async def test_codex_new_turn_ignores_late_cancelled_thread_events(codex_server):
+    codex_server.scenario.update(wait_for_interrupt_first=True, late_previous_events=True)
+    started = asyncio.Event()
+
+    async def pending(*args):
+        started.set()
+        await asyncio.Future()
+
+    running = asyncio.create_task(turn(None, selected_model="codex:gpt-6.1-sol", invoke_tool=pending))
+    await asyncio.wait_for(started.wait(), timeout=10)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(running, timeout=10)
+    events = []
+    result = await turn(None, selected_model="codex:gpt-6.1-sol", on_event=events.append)
+    assert result.kind == "reply" and result.text == "地图已检查"
+    assert not any(event.get("delta") == "OLD CANCELLED REPLY"
+                   or event.get("params", {}).get("threadId") == "thread-1" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_codex_cancel_interrupts_motion_and_settles_owned_tool(codex_server):
     codex_server.scenario.update(tool="navigate", arguments={"target": "entry"},
                                  duplicate_pending=True, wait_for_interrupt=True)

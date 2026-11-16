@@ -166,6 +166,9 @@ typedef struct LtMlsMetricConfig {
   double body_offset;
   LtMlsPose start;
   uint8_t start_exemption;
+  double goal_tolerance;
+  double goal_xy_tolerance;
+  double goal_z_tolerance;
 } LtMlsMetricConfig;
 
 typedef int32_t (*LtMlsCancelCheck)(void* context);

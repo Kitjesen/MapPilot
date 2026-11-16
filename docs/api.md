@@ -583,6 +583,18 @@ if result.ok and result.task_id:
     status = robot.tasks.inspection_task(result.task_id)
 ```
 
+## Navigation health issues
+
+`GET /api/v1/health` includes an `issues` array for motion-affecting navigation
+facts and an `advisories` array for diagnostic-only observations. Each item has
+a numeric `code`, a stable `name`, `source`, `reason`, `impact`, `severity`,
+`message`, and `operator_action`. The complete numeric registry is in
+[docs/error-codes.md](error-codes.md). `motion_blocking` and `motion_hold`
+describe a command-path effect, `motion_degrading` describes a degraded timing
+condition, and `diagnostic_only` is observable without changing motion
+permission. Code `21001` is returned in `advisories` and does not by itself
+hold or block the robot.
+
 ## MCP tools
 
 This inventory is generated from `@skill` decorators. The Host exposes

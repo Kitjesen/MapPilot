@@ -76,9 +76,9 @@ export function conversationDependency(name: string) {
     runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('.css') ? {} : require(dependency) })
     return exports
   }
-  if (name.endsWith('/agentConversation/PlanCard.tsx')) {
+  if (name.endsWith('/agentConversation/PlanCard.tsx') || name.endsWith('/agentConversation/DecisionInbox.tsx')) {
     const exports: Record<string, unknown> = {}
-    const code = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/PlanCard.tsx', import.meta.url), 'utf8'), {
+    const code = ts.transpileModule(readFileSync(new URL(`../src/components/agentConversation/${name.split('/').at(-1)}`, import.meta.url), 'utf8'), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
     runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('.css')
@@ -151,6 +151,7 @@ export function conversationDependency(name: string) {
   if (name.endsWith('/agentConversation/ToolActivity.tsx')) {
     const exports: Record<string, unknown> = {}
     runInNewContext(source, { exports, require: (dependency: string) => {
+      if (dependency.endsWith('/FollowSelectionCard')) return { FollowSelectionCard: () => null }
       if (dependency.endsWith('/ObservationCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/LiveCameraCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/FollowSelectionCard')) return conversationDependency(dependency)
