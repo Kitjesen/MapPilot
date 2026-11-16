@@ -361,6 +361,7 @@ test('step states follow tool events and a failed call never appears completed',
   assert.doesNotMatch(running, /data-state="completed"/)
   assert.match(render(tool, true, [{ approval_id: 'approval', turn_id: 'one', tool_name: 'inspect_saved_map', arguments: {}, state: 'pending' }]), /data-state="waiting"/)
   assert.match(render(tool, false), /data-state="pending"/)
+  assert.doesNotMatch(render(tool, false), /data-icon="success"/)
   assert.match(render({ ...tool, text: '{"success":true}', metadata: { status: 'completed' } }), /data-state="completed"/)
   const rejected = render({ ...tool, text: '{"success":false,"reason":"地图不存在"}', metadata: { status: 'completed' } })
   assert.match(rejected, /data-state="failed"/)

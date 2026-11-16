@@ -195,7 +195,7 @@ export function ToolActivity({ message, active = true, awaiting = [], now, onSel
     }}>
     <button ref={toggle} type="button" className={styles.toolToggle} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
       <span className={styles.stepMark} aria-hidden="true">
-        <IconGlyph name={failed ? 'warning' : state === 'running' ? 'pending' : 'success'} size={16} className={state === 'running' ? styles.toolSpinner : undefined} />
+        <IconGlyph name={failed ? 'warning' : state === 'completed' ? 'success' : 'pending'} size={16} className={state === 'running' ? styles.toolSpinner : undefined} />
       </span>
       <strong>{displayName}</strong><Roll align="start">{status}</Roll>{exitCode != null && <small className={styles.toolDuration}>退出 {exitCode}</small>}{elapsed != null && <small className={styles.toolDuration} title="单次工具调用时间，不含模型生成；包含等待确认">{elapsed < 1000 ? `${Math.round(elapsed)} ms` : `${(elapsed / 1000).toFixed(1)} 秒`}</small>}<ChevronDown size={12} className={styles.toolChevron} />
     </button>
