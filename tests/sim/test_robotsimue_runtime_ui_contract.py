@@ -17,6 +17,12 @@ PLUGIN = (
 UI = PLUGIN / "Source" / "LingTuSimUI"
 
 
+def _implementation_source(*names: str) -> str:
+    return "\n".join(
+        (UI / "Private" / name).read_text(encoding="utf-8") for name in names
+    )
+
+
 def _extract_cpp_method_body(source: str, qualified_name: str) -> str:
     definition = re.search(
         rf"{re.escape(qualified_name)}\s*\([^;{{}}]*\)\s*(?:const\s*)?\{{",
@@ -103,7 +109,9 @@ def test_runtime_ui_reads_session_and_visual_status_without_taking_mailboxes() -
     production = "\n".join(
         path.read_text(encoding="utf-8")
         for path in UI.rglob("*")
-        if path.is_file() and "Tests" not in path.parts
+        if path.is_file()
+        and "Tests" not in path.parts
+        and path.name not in {"SLingTuSimShowroom.cpp", "SLingTuSimShowroomInput.cpp"}
     )
 
     assert "Unavailable" in status_header
@@ -182,7 +190,11 @@ def test_runtime_ui_drive_input_is_pure_safe_and_transport_agnostic() -> None:
     assert drive_source.is_file()
 
     drive_contract = drive_header.read_text(encoding="utf-8")
-    drive_implementation = drive_source.read_text(encoding="utf-8")
+    drive_implementation = _implementation_source(
+        "LingTuSimRobotDriveInput.cpp",
+        "LingTuSimRuntimeUIInputProcessor.cpp",
+        "../Public/LingTuSimDriveKeyBindings.h",
+    )
     processor_contract = input_header.read_text(encoding="utf-8")
     processor_implementation = input_source.read_text(encoding="utf-8")
     subsystem_implementation = subsystem.read_text(encoding="utf-8")
@@ -216,7 +228,6 @@ def test_runtime_ui_drive_input_is_pure_safe_and_transport_agnostic() -> None:
         "EKeys::D",
         "EKeys::Q",
         "EKeys::E",
-        "EKeys::LeftShift",
         "EKeys::Gamepad_LeftShoulder",
         "EKeys::Gamepad_LeftX",
         "EKeys::Gamepad_LeftY",

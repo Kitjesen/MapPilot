@@ -214,6 +214,7 @@ class SLingTuSimRuntimeHUD final : public SCompoundWidget {
   EVisibility GetTacticalVisibility() const;
   EVisibility GetPauseVisibility() const;
   EVisibility GetLoginVisibility() const;
+  EVisibility GetFrontEndStaticBackdropVisibility() const;
   EVisibility GetWorkspaceVisibility() const;
   EVisibility GetLogoutVisibility() const;
   EVisibility GetRuntimeHudChromeVisibility() const;

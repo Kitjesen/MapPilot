@@ -14,8 +14,11 @@ from tools.bench.body_physics import capture_bad_substep, contacts, part_snapsho
 from tools.bench.body_scenarios import DynamicBox, prepare_world, read_dynamic_boxes, read_scene_boxes, write_fixtures
 
 
+@pytest.mark.usefixtures("allow_unbuilt_process_artifacts")
 @pytest.mark.parametrize("navigation_body", ["parts", "obb"])
-def test_native_models_share_resolved_sim_geometry_and_control(monkeypatch, tmp_path, navigation_body):
+def test_native_models_share_resolved_sim_geometry_and_control(
+    monkeypatch, tmp_path, navigation_body
+):
     from tools.bench import body_physics
 
     from lingtu.assembly import compile_plan as compiler
@@ -72,10 +75,13 @@ def test_native_models_share_resolved_sim_geometry_and_control(monkeypatch, tmp_
     assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]) == pytest.approx(.05)
     assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]) == pytest.approx(.35)
     assert environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
-    assert Path(environment["LINGTU_NAV_BODY_FILE"]).is_file()
-    expected_body_file = environment["LINGTU_NAV_BODY_FILE"] if navigation_body == "parts" else None
+    # Ambient BODY_FILE is deliberately discarded; the compiled plan owns geometry.
+    assert environment.get("LINGTU_NAV_BODY_FILE") is None
+    expected_body_file = None
     assert native_inputs["env"].get("LINGTU_NAV_BODY_FILE") == expected_body_file
-    assert native_inputs["env"]["LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS"] == "2"
+    assert native_inputs["env"]["LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS"] == environment[
+        "LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS"
+    ]
     assert {key: native_inputs["env"][key] for key in environment if key != "LINGTU_NAV_BODY_FILE"} == {
         key: value for key, value in environment.items() if key != "LINGTU_NAV_BODY_FILE"}
     assert ("--obb" in native_inputs["command"]) == (navigation_body == "obb")
@@ -86,7 +92,7 @@ def test_native_models_share_resolved_sim_geometry_and_control(monkeypatch, tmp_
     assert recorded["environment"] == environment
     assert recorded["navigation_body"] == navigation_body
     assert recorded["effective_body_file"] == expected_body_file
-    assert recorded["native_control_overrides"]["LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS"] == "2"
+    assert "LINGTU_NAV_OCTO_SUPPORT_PATCH_RADIUS_CELLS" not in recorded["native_control_overrides"]
     invocation = json.loads((tmp_path / "invocation.json").read_text(encoding="utf-8"))
     assert invocation["native_control_overrides"] == recorded["native_control_overrides"]
 

@@ -2,11 +2,12 @@ import json
 
 import pytest
 import yaml
-from tools.bench.tora_garage_navigation import PROFILE, SCENE_DIR, native_environment, write_scene_map_input
+from tools.bench.tora_garage_navigation import PROFILE, native_environment, write_scene_map_input
+from tools.bench.tora_garage_scene import build_scene
 
 
 def test_map_fixture_preserves_floor_and_scene_obstacles(tmp_path):
-    scene = json.loads((SCENE_DIR / "scene.json").read_text(encoding="utf-8"))
+    scene = build_scene(tmp_path / "tora-garage", include_robot=False)
     path = tmp_path / "scene.txt"
     write_scene_map_input(scene, path)
     rows = [list(map(float, line.split())) for line in path.read_text().splitlines()]
