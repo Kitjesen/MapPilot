@@ -189,8 +189,8 @@ _PLANNER_HANDLER_TOOLS.extend([
             "returns a person-selection card after Follow admission. The Web operator must confirm the boxed person before movement; do not claim following has begun. Later control messages can stop it. The standalone Agent loop "
             "will wait for its real terminal result. Success requires verified domain feedback, not only task submission. "
             "The result includes accepted, state, terminal, reason, and task references when available. "
-            "Use visible clothing or appearance from the user's description; me or him alone does not "
-            "identify a person. Request clarification instead of guessing the speaker's appearance."
+            "Use the supplied description without inventing appearance. In Web conversation, me or him "
+            "requires the operator to choose the corresponding box; never automatically bind the speaker."
         ),
         "parameters": {"type": "object", "properties": {"description": {"type": "string"}},
                        "required": ["description"]}}},

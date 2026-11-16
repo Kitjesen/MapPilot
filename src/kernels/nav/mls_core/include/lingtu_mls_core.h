@@ -123,7 +123,7 @@ typedef struct LtMlsRouteCheckResult {
   LtMlsCell failed_cell;
 } LtMlsRouteCheckResult;
 
-enum { LT_MLS_ROUTE_CANCELLED = 11 };
+enum { LT_MLS_ROUTE_OCCUPIED = 3, LT_MLS_ROUTE_NO_GO = 6, LT_MLS_ROUTE_CANCELLED = 11 };
 
 typedef struct LtMlsPoint {
   double x;
@@ -141,6 +141,12 @@ typedef struct LtMlsPose {
   double yaw;
   uint8_t has_yaw;
 } LtMlsPose;
+
+typedef struct LtMlsPoseBuffer {
+  LtMlsPose* ptr;
+  uint64_t len;
+  uint64_t cap;
+} LtMlsPoseBuffer;
 
 typedef struct LtMlsMetricConfig {
   double resolution;
@@ -377,7 +383,9 @@ int32_t lt_mls_artifact_check_metric_poses(
 int32_t lt_mls_artifact_query_metric(
     const LtMlsArtifact* handle, LtMlsPose start, LtMlsPose goal,
     int32_t max_snap_cells, int32_t max_iterations,
-    const LtMlsGeometry* geometry, LtMlsBuffer* route);
+    const LtMlsGeometry* geometry, LtMlsPoseBuffer* route);
+
+void lt_mls_free_pose_buffer(LtMlsPoseBuffer* route);
 
 int32_t lt_mls_artifact_update(
     LtMlsArtifact* handle,

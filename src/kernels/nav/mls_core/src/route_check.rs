@@ -262,6 +262,20 @@ impl Checker<'_> {
             .find(|&z| self.observed_support(SurfaceCell::new(cell.x, cell.y, z)))
     }
 
+    pub(crate) fn attachment(&self, point: LtMlsPoint) -> Option<SurfaceCell> {
+        let cell = self.cell(point);
+        if let Some(z) = self.floor(point) {
+            return Some(SurfaceCell::new(cell.x, cell.y, z));
+        }
+        if self.config.direct_support_only != 0 {
+            return None;
+        }
+        let (low, high) = self.support_range(point);
+        (low..=high)
+            .map(|depth| SurfaceCell::new(cell.x, cell.y, cell.z - depth))
+            .find(|surface| self.inferred.contains(surface))
+    }
+
     fn supported(&self, point: LtMlsPoint) -> bool {
         let cell = self.cell(point);
         if self.config.direct_support_only == 0 {
@@ -1439,6 +1453,20 @@ mod tests {
         state.update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[]);
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).valid, 1);
+    }
+
+    #[test]
+    fn attachment_uses_standing_band() {
+        let state = state(vec![SurfaceCell::new(0, 0, 0), SurfaceCell::new(0, 0, 10)]);
+        let checker = prepare(&state, config(), &[], &[], None, std::ptr::null_mut()).unwrap();
+        for z in [0.45, 0.53] {
+            assert_eq!(
+                checker.attachment(point(0.1, 0.1, z)),
+                Some(SurfaceCell::new(0, 0, 0))
+            );
+        }
+        assert_eq!(checker.attachment(point(0.1, 0.1, 0.7)), None);
+        assert_eq!(checker.attachment(point(0.3, 0.1, 0.45)), None);
     }
 
     fn column_fixture() -> PlannerState {

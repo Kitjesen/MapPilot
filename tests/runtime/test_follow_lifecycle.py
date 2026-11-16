@@ -127,6 +127,7 @@ def test_conversation_follow_survives_reply_queries_and_stops_after_native_feedb
     assert turn["state"] == "completed"
     ref = receipts[-1]
     assert ref["accepted"] and ref["phase"] == "selecting"
+    assert ref["confirmation_required"] is True
     assert not ref["execution_confirmed"]
     assert turn["run_id"] == ref["run_id"]
     assert agent.get_conversation(cid)["turns"][-1]["run_id"] == ref["run_id"]
@@ -140,6 +141,18 @@ def test_conversation_follow_survives_reply_queries_and_stops_after_native_feedb
     assert status["navigation"]["follow_task_id"] == ref["follow_task_id"]
     assert status["navigation"]["product_session_id"] == ref["product_session_id"]
 
+    assert not servo._publish_goal_from_3d(np.array([3., 0., 0.]))
+    from runtime.msgs.geometry import Vector3
+    from runtime.msgs.semantic import Detection3D
+
+    # Supply a reviewed observation at the vision boundary before explicit confirmation.
+    servo._latest_bgr = np.zeros((32, 32, 3), dtype=np.uint8)
+    servo._latest_bgr_ts = servo._latest_detection_ts = time.time()
+    servo._last_perception_time = time.monotonic()
+    servo._latest_detections = [Detection3D(id="person-a", label="person", position=Vector3(4, 0, 0), bbox_2d=[0, 0, 24, 32])]
+    servo._follow_selection = {"generation": servo._intent_generation, "observation_sequence": 1,
+                               "review_state": "ready", "candidates": [{"target_id": "person-a", "kind": "person"}]}
+    assert servo.confirm_follow_target(**agent._active_run.follow_ref, target_id="person-a", observation_sequence=1)["accepted"]
     publish(servo)
     child = commands.goals[-1]
     cancelled = chat_turn(chat, "停止跟随", permission_mode="read_only")
@@ -187,8 +200,9 @@ def test_conversation_model_tools_keep_permissions_and_exact_follow_owner(chat, 
     denied = chat_turn(chat, "start", permission_mode="read_only")
     assert denied["state"] == "failed" and results[-1]["reason"] == "permission_read_only"
     assert len(servo._follow_tasks) == 0
-    chat_turn(chat, "start", permission_mode="full_access")
+    chat_turn(chat, "start", permission_mode="default")
     ref = results[-1]
+    assert ref["confirmation_required"] is True and not servo._navigation_tasks
     chat_turn(chat, "让刚才的跟随结束吧", permission_mode=mode)
     if mode == "read_only":
         assert results[-1]["reason"] == "permission_read_only"

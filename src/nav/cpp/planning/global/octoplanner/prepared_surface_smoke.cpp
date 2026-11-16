@@ -233,6 +233,9 @@ int main() try {
   planner.makePlan(start, goal);
   planner.getPlannerResults(route);
   require(route.empty(), "closed wall was crossed by the global route");
+  require(!planner.searchInfo().rust_fallback && planner.searchInfo().outcome ==
+              OctoPlanner3D::SearchInfo::Outcome::Exhausted,
+          "Rust exhaustion triggered a second planning backend");
 
   std::cout << "Prepared Rust surface integration passed\n";
   return 0;

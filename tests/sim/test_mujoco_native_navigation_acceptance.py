@@ -64,6 +64,29 @@ def test_stair_evidence_requires_floor_and_real_model_restore():
     assert "stair_model_did_not_change" in evaluate()["blockers"]
 
 
+def test_stair_manifest_uses_unified_policy():
+    import yaml
+
+    manifest = acceptance._load_manifest(ROOT / "config/acceptance/mujoco/stairs.json")
+    controller = yaml.safe_load((ROOT / "sim/packages/controllers/doso/thunder_v4/cts_moe/controller.package.yaml")
+                                .read_text(encoding="utf-8"))
+    policy = controller["policy"]
+    assert all(profile["artifact"] == policy["artifact"]
+               and profile["manifest"] == policy["manifest"]
+               for profile in policy["profiles"].values())
+    assert all(not leg.get("profile_sequence") for leg in manifest["goals"])
+
+
+def test_stair_height_without_profile_sequence():
+    leg = {"goal": [5.9, 0.0, 1.155]}
+    limits = {"max_goal_height_error_m": 0.15}
+    samples = [{"live": {"position_m": [5.9, 0.0, 0.465]}}]
+    result = acceptance._stair_leg_evidence(leg, samples, {}, "t", "v39.onnx", limits)
+    assert result["blockers"] == ["goal_height_error"]
+    samples[0]["live"]["position_m"][2] = 1.155
+    assert not acceptance._stair_leg_evidence(leg, samples, {}, "t", "v39.onnx", limits)["blockers"]
+
+
 def test_dynamic_pedestrian_is_physical_visible_and_moves_in_sim_time(tmp_path):
     import mujoco
     from sim.scripts.mujoco.formal_feeder import _PhysicalMotionEvidence
@@ -386,6 +409,30 @@ def test_product_goal_requires_physical_arrival_and_stop():
     assert "entity_collision_or_missing_evidence" in acceptance._product_goal_blockers(*args)[0]
     motion["net_displacement_xy_m"] = 2
     assert "insufficient_displacement" in acceptance._product_goal_blockers(*args)[0]
+
+
+def test_round_trip_requires_each_leg_progress():
+    manifest = acceptance._load_manifest(ROOT / "config/acceptance/mujoco/stairs.json")
+    manifest["goal_world"] = manifest["goals"][-1]["goal_world"]
+    motion = {"end_position_m": [-1.0, 0.0, 0.465], "path_length_xy_m": 13.8,
+              "net_displacement_xy_m": 0.0}
+    contacts = {"complete": True, "entity_contact_steps": 0}
+    stop = {"terminal_ack": True, "outcome": "zero_applied"}
+    legs = [{"evidence": {"physical_goal_error_m": [6.9, 0.1]}},
+            {"evidence": {"physical_goal_error_m": [6.8, 0.1]}}]
+    args = (manifest, motion, contacts, {"state": 4}, stop, 1.0)
+    assert not acceptance._product_goal_blockers(*args, legs)[0]
+    legs[1]["evidence"]["physical_goal_error_m"] = [0.2, 0.1]
+    assert "leg_1_insufficient_displacement" in acceptance._product_goal_blockers(*args, legs)[0]
+    assert "leg_motion_evidence_missing" in acceptance._product_goal_blockers(*args, [])[0]
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("NOT_REQUESTED", True), ("CONFIRMED", True), ("PENDING", False),
+    ("FAILED", False), (None, False),
+])
+def test_leg_stop_ack_follows_request(state, expected):
+    assert acceptance._stop_request_satisfied({"state": state}) is expected
 
 
 def test_product_goal_reads_native_task_state():

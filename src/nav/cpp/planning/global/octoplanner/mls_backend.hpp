@@ -152,6 +152,10 @@ public:
     QueryStatus status;
     std::vector<SurfaceCell> cells;
   };
+  struct MetricQueryResult {
+    QueryStatus status;
+    std::vector<PointPose> poses;
+  };
   using SegmentCheck = std::function<int(SurfaceCell, SurfaceCell, std::uint32_t)>;
   PreparedArtifactHandle() = default;
   ~PreparedArtifactHandle();
@@ -216,7 +220,7 @@ public:
                            std::int32_t max_snap_cells,
                            std::int32_t max_iterations,
                            const SegmentCheck& check) const;
-  QueryResult metricQuery(const PointPose& start, const PointPose& goal,
+  MetricQueryResult metricQuery(const PointPose& start, const PointPose& goal,
                           std::int32_t max_snap_cells, std::int32_t max_iterations,
                           const MetricGeometry& geometry) const;
   RustRouteCheckResult checkMetricRoute(const std::vector<PointPose>& route,

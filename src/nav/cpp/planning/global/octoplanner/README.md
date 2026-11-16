@@ -54,8 +54,9 @@ turn excludes its directed incoming connection for that request, then search
 continues. This conservative exclusion can also remove the edge for a different
 arrival heading; the graph does not store a full heading state. Endpoints,
 detours and retries share the request budget,
-and cancellation returns without publishing a route. Exhausted searches can
-fall back to the 3-D grid. The C++ `SurfaceGraph` remains only for explicit legacy
+and cancellation returns without publishing a route. Exhaustion and errors
+return from that same backend; a second C++ search no longer hides its result.
+The old grid and C++ `SurfaceGraph` remain only for explicit legacy
 callers. New `.8` prepared artifacts restore the Rust graph directly and attach
 raw occupied/free evidence from the same OctoMap without rebuilding the graph.
 The map-bound geometry index is reused by edge checks and invalidated by updates.
