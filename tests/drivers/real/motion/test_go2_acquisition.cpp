@@ -38,8 +38,9 @@ int main() {
     }
     {
       auto body = makeBody();
-      require(!body->move({0.5, 0, 0}).accepted, "unconfigured movement accepted");
-      expectCalls({});
+      require(body->move({0.5, 0, 0}).accepted, "configuration state overrode SDK acceptance");
+      expectCalls({"move"});
+      fake_unitree::calls.clear();
       const auto acquired = body->refresh();
       require(acquired.state.ready && acquired.calls == 4, "acquisition call count incorrect");
       expectCalls({"stop", "get", "disable", "get"});
@@ -54,7 +55,9 @@ int main() {
       require(body->stop().confirmsStop(), "stop/release failed");
       fake_unitree::enabled = true;
       fake_unitree::calls.clear();
-      require(!body->move({0, 0, 0.25}).accepted, "movement accepted after release");
+      require(body->move({0, 0, 0.25}).accepted, "release state overrode SDK acceptance");
+      expectCalls({"move"});
+      fake_unitree::calls.clear();
       require(body->refresh().ok, "reacquisition failed");
       expectCalls({"stop", "get", "disable", "get"});
     }
@@ -74,10 +77,10 @@ int main() {
       const auto result = body->refresh();
       require(result.calls == fake_unitree::calls.size(), "failed acquisition call count incorrect");
       require(!result.ok && !result.state.ready && !result.error.empty(), "failure not reported");
-      const auto previous_calls = fake_unitree::calls;
-      require(!body->move({0.5, 0, 0}).accepted, "motion allowed after failed acquisition");
-      require(fake_unitree::calls == previous_calls, "failed acquisition forwarded motion");
       if (failure == 0) expectCalls({"stop"});
+      fake_unitree::calls.clear();
+      require(body->move({0.5, 0, 0}).accepted, "acquisition diagnostics overrode SDK acceptance");
+      expectCalls({"move"});
       fake_unitree::stop_code = fake_unitree::set_code = fake_unitree::failed_query = 0;
       fake_unitree::apply_setting = true;
       require(body->stop().confirmsStop(), "failure stop unconfirmed");
@@ -116,8 +119,9 @@ int main() {
               "combined tilt not reported");
       require(!body->refresh().state.ready, "tilted robot ready");
       fake_unitree::calls.clear();
-      require(!body->move({0.1, 0, 0}).accepted, "tilted robot forwarded movement");
-      expectCalls({});
+      require(body->move({0.1, 0, 0}).accepted, "attitude diagnostics overrode SDK acceptance");
+      expectCalls({"move"});
+      fake_unitree::calls.clear();
       require(body->move({}).accepted, "tilt blocked zero command");
       expectCalls({"stop"});
       require(body->act(lingtu::driver::BodyAction::Recover).accepted, "tilt blocked recovery");
