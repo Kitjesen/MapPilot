@@ -892,6 +892,8 @@ void LiveMapEngine::Run() {
 void LiveMapEngine::Process(Observation observation) {
   const std::int64_t started_ns = SteadyTimeNs();
   TransformedObservation transformed = TransformObservation(observation);
+  if (transformed.cloud.point_count == 0U)
+    throw std::invalid_argument("map_observation_has_no_valid_points");
   std::lock_guard<std::mutex> lock(data_mutex_);
   if (observation.reset_epoch < processed_epoch_ ||
       (observation.reset_epoch == processed_epoch_ && observation.sequence <= fresh_scan_cutoff_)) return;

@@ -48,6 +48,45 @@ support and unknown-space evidence in the saved map; the display surface
 projection does not authorize motion. See the [local collision contract](../nav/cpp/planning/local/scan/README.md).
 Rebuild/deploy mapd and navd together when changing this DDS type.
 
+### Live collision evidence
+
+`RollingOccupancyGrid` combines the current scan's endpoints with historical
+probabilistic occupancy before inflation. `current_hit` lasts until the next
+scan containing usable rays; repeated endpoints stay blocked even when older free-space
+probability dominates. Historical occupied cells still require clearing rays
+or the configured decay/window policy. Missing a scan does not update probability.
+The previous endpoint list limits expiry work to that scan's hits, not the whole grid.
+An empty or fully filtered scan does not replace those hits. Mapd reports a
+fully filtered observation through its existing input-error path and retains
+the last successfully processed snapshot and observation time.
+
+`ray_free` records a ray observation with no endpoint in the cell. Only this
+evidence, together with non-occupied probability, can publish known-free or
+remove a surface voxel. Expiring a current hit alone leaves the collision
+evidence unknown; it must not authorize surface cleanup.
+`StateAt`, `Contains`, dense snapshots, observed-cell chunks and the packed
+collision bits share `StateFor`: current or historical occupied, ray-confirmed
+free, otherwise unknown. Exploration and mapd projections consume that same
+state. `OccupancyProbability` and snapshot log odds retain the numerical history;
+a low probability alone does not make the published evidence free.
+
+This separation follows the current-frame hit set in DimOS
+[`emit_points` and `Mapper::integrate`](https://github.com/dimensionalOS/dimos/tree/83d807bb91bf6436a1a0e9c2a3260d96478636aa/dimos/mapping/ray_tracing/rust/src).
+LingTu retains its SCAN-derived probability fusion and inflation, rather than
+copying DimOS health counters, normal-based clearing, or neighbor filtering.
+DimOS's production ingest skips empty extracted clouds. Its live-point union
+only bypasses neighbor filtering for not-yet-healthy points; LingTu deliberately
+keeps every current endpoint instead of copying that isolated-point policy.
+Mapd owns evidence lifetime; SCAN consumes the published collision map. No live
+region feed to the global planner is introduced here.
+
+The component regressions cover current-hit replacement, unchanged probability,
+unknown versus observed-free, retained confirmed obstacles, rolling/reset,
+shared inflation and actual mapd snapshots. A weak obstacle seen only once can
+leave the current-hit set on the next scan, including a missed thin obstacle.
+This candidate still needs recorded/simulated sparse-return navigation evidence
+before field deployment; it does not solve persistently occluded historical hits.
+
 Saving a map:
 
 ```text
