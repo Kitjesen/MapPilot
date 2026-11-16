@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import struct
 import time
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -10,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from gateway.gateway_module import GatewayModule
 from gateway.video_probe import create_app
-from runtime.transport.camera_shm import ShmFrameWriter, StreamKind
+from runtime.transport.camera_shm import ShmFrameWriter, StreamKind, posix_shm_path
 
 
 @pytest.fixture
@@ -25,6 +27,21 @@ def video_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("LINGTU_MEDIA_REQUIRE_TOKEN", raising=False)
     monkeypatch.delenv("LINGTU_MEDIA_VIEWER_TOKEN", raising=False)
     return tmp_path / "video.json"
+
+
+@pytest.fixture
+def depth_shm(monkeypatch, tmp_path):
+    if os.name == "nt":
+        path = tmp_path / "depth.shm"
+        name = str(path)
+    else:
+        name = f"/lingtu_test_depth_{uuid4().hex}"
+        path = posix_shm_path(name)
+    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", name)
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_unstarted_gateway_has_no_control_routes_or_advertised_control(video_environment, monkeypatch):
@@ -129,19 +146,16 @@ def test_optional_camera_mcp_exposes_only_read_tools(video_environment, monkeypa
     assert client.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "set_mode", "arguments": {}}}).json()["error"]["code"] == -32602
 
 
-def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environment, tmp_path, monkeypatch):
-    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", str(tmp_path / "missing-depth"))
+def test_depth_snapshot_reports_unavailable_when_shm_is_missing(video_environment, depth_shm):
     response = TestClient(create_app()).get("/api/v1/camera/depth/snapshot")
     assert response.status_code == 503
     assert response.json()["sensor"] == "depth"
 
 
 @pytest.mark.parametrize("age_s", [0, 5])
-def test_depth_snapshot_reads_fresh_shm_and_rejects_stale_frames(video_environment, tmp_path, monkeypatch, age_s):
-    path = tmp_path / "depth.shm"
-    monkeypatch.setenv("LINGTU_CAMERA_DEPTH_SHM", str(path))
+def test_depth_snapshot_reads_fresh_shm_and_rejects_stale_frames(video_environment, depth_shm, age_s):
     timestamp_ns = time.time_ns() - age_s * 1_000_000_000
-    with ShmFrameWriter(path, stream_kind=StreamKind.DEPTH, slot_capacity=12) as writer:
+    with ShmFrameWriter(depth_shm, stream_kind=StreamKind.DEPTH, slot_capacity=12) as writer:
         writer.publish(
             timestamp_ns=timestamp_ns,
             width=2,
