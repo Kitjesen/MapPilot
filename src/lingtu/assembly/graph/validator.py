@@ -40,7 +40,7 @@ PRODUCT_MODE_REQUIRED_FIELDS = (
 PRODUCT_SWITCH_POLICIES = frozenset({"cold_restart", "hot_switch"})
 PRODUCT_SESSION_MODES = frozenset({"none", "mapping", "navigating", "exploring"})
 PRODUCT_SLAM_MODES = frozenset({"none", "mapping", "localization"})
-LOCAL_PLANNER_BACKENDS = frozenset({"cmu", "scan"})
+LOCAL_PLANNER_BACKENDS = frozenset({"scan"})
 PRODUCT_CONTROL_MODES = frozenset({"teleop", "teleop_avoid", "autonomy"})
 OPERATOR_MOTION_TOPICS = frozenset(
     {
@@ -691,7 +691,8 @@ def _validate_product_semantics(
     expected_processes = {"nav", "driver", "host"}
     if slam_mode != "none":
         expected_processes.update(("lidar", "imu", "slam"))
-    if "local_planner_collision_and_traversability_scoring" in capabilities:
+    if name == "explore" or "local_planner_collision_and_traversability_scoring" in capabilities:
+        # Explore segment execution consumes the traversability terrain grid.
         expected_processes.add("traversability")
     if "inspection_evidence_capture_and_result_ack" in capabilities:
         expected_processes.add("camera")

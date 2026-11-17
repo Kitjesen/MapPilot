@@ -14,23 +14,13 @@ source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
 : "${LINGTU_NAV_LOCAL_PLANNER_BACKEND:?Product session is missing LINGTU_NAV_LOCAL_PLANNER_BACKEND}"
 : "${LINGTU_NAV_CONTROL_MODE:?Product session is missing LINGTU_NAV_CONTROL_MODE}"
 : "${LINGTU_TELEOP_LOCAL_PLANNER:?Product session is missing LINGTU_TELEOP_LOCAL_PLANNER}"
-# Match navd's planner configuration gate; plain teleop/map do not use CMU assets.
-if [ "${LINGTU_NAV_LOCAL_PLANNER_BACKEND}" = cmu ] &&
-   { [ "${LINGTU_NAV_CONTROL_MODE}" = autonomy ] || [ "${LINGTU_TELEOP_LOCAL_PLANNER}" = 1 ]; }; then
-    : "${LINGTU_LOCAL_PLANNER_PATHS:?CMU Product session is missing LINGTU_LOCAL_PLANNER_PATHS}"
-    case "$(basename -- "${LINGTU_LOCAL_PLANNER_PATHS}")" in
-        go2|thunder) ;;
-        *)
-            echo "ERROR: CMU Product session selected an unknown robot path profile: ${LINGTU_LOCAL_PLANNER_PATHS}" >&2
-            exit 2
-            ;;
-    esac
-    for asset in startPaths.ply pathList.ply paths.ply correspondences.txt search_radius.txt; do
-        if [ ! -s "${LINGTU_LOCAL_PLANNER_PATHS}/${asset}" ]; then
-            echo "ERROR: CMU path library is missing ${asset}: ${LINGTU_LOCAL_PLANNER_PATHS}" >&2
-            exit 2
-        fi
-    done
+if [ "${LINGTU_NAV_LOCAL_PLANNER_BACKEND}" != scan ]; then
+    echo "ERROR: local planner must be scan, got ${LINGTU_NAV_LOCAL_PLANNER_BACKEND}" >&2
+    exit 2
+fi
+if [ -n "${LINGTU_LOCAL_PLANNER_PATHS:-}" ]; then
+    echo "ERROR: LINGTU_LOCAL_PLANNER_PATHS is removed; SCAN does not use a path library" >&2
+    exit 2
 fi
 
 prepend_cyclonedds_libs

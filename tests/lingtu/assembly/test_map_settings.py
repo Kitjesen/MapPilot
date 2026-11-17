@@ -51,7 +51,7 @@ def test_scan_uses_selected_robot_inflation(radius, below, above):
     }
 
     environment = mapd_environment(settings, native)
-    generic = mapd_environment(settings, {"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu"})
+    generic = mapd_environment(settings, {})
 
     assert environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == str(radius)
     assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == str(below)

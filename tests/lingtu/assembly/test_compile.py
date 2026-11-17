@@ -241,7 +241,7 @@ def test_scan_parameters_survive_run_plan_round_trip(env, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("env", ["real", "sim"])
-@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
+@pytest.mark.parametrize("local_planner", ["scan"])
 def test_nav_product_owns_arrival_height_across_envs_and_local_planners(
     env: str,
     local_planner: str,
@@ -503,7 +503,7 @@ def test_assisted_total_speed_override_does_not_raise_body_axis_limits() -> None
     assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == 1.2
 
 
-def test_tracking_supports_scan_at_required_control_cadence_without_changing_default() -> None:
+def test_tracking_uses_scan_at_required_control_cadence() -> None:
     default = compile_run_plan("tracking", "real")
     scan = compile_run_plan("tracking", "real", local_planner="scan")
 
@@ -515,8 +515,8 @@ def test_tracking_supports_scan_at_required_control_cadence_without_changing_def
         "VisualServoModule",
         "GatewayModule",
     )
-    assert default.native_nav["local_planner"] == "cmu"
-    assert default.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "20"
+    assert default.native_nav["local_planner"] == "scan"
+    assert default.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert scan.native_nav["local_planner"] == "scan"
     assert scan.native_process_environment["LINGTU_NAV_DDS_TICK_HZ"] == "100"
     assert default.lifecycle["requires_map"] is True
@@ -525,8 +525,8 @@ def test_tracking_supports_scan_at_required_control_cadence_without_changing_def
     assert scan.critical_modules == expected_critical_modules
 
 
-def test_cmu_assisted_motion_uses_shared_acceleration_limit() -> None:
-    plan = compile_run_plan("teleop_avoid", "real", local_planner="cmu")
+def test_assisted_motion_uses_shared_acceleration_limit() -> None:
+    plan = compile_run_plan("teleop_avoid", "real", local_planner="scan")
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2"] == "0.5"
 
 
@@ -582,19 +582,17 @@ def test_direct_teleop_does_not_require_robot_local_planner_assets() -> None:
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
 
 
-def test_assisted_teleop_cmu_receives_robot_path_library() -> None:
+def test_assisted_teleop_scan_does_not_stage_a_path_library() -> None:
     plan = compile_run_plan(
         "teleop_avoid",
         "sim",
         robot="doso/thunder_v4",
-        local_planner="cmu",
+        local_planner="scan",
         env_config={"backend": "mujoco"},
     )
 
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-        "src/nav/cpp/planning/local/cmu/paths/thunder"
-    )
-    assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
 
 
 def test_sim_host_readiness_budget_exceeds_internal_startup_barrier() -> None:
@@ -846,20 +844,11 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_YAW_RATE"] == "1"
 
 
-def test_real_cmu_override_selects_go2_path_library() -> None:
-    plan = compile_run_plan("teleop_avoid", "real", local_planner="cmu")
-
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-        "share/lingtu/cmu_paths/go2"
-    )
-    assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
-
-
-def test_navigation_prepares_selectable_planner_assets_without_changing_default() -> None:
+def test_navigation_exposes_scan_only_without_path_library_assets() -> None:
     plan = _compile_real("nav")
     assert plan.native_nav["local_planner"] == "scan"
-    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "cmu,scan"
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == "share/lingtu/cmu_paths/go2"
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     inspection = _compile_real("inspection")
     assert inspection.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in inspection.native_process_environment
@@ -2106,7 +2095,6 @@ def test_sim_mujoco_explore_map_compiles_saved_map_route_into_run_plan(
 @pytest.mark.parametrize(
     ("product", "local_planner"),
     (
-        ("nav", "cmu"),
         ("nav", "scan"),
         ("tracking", None),
         ("inspection", None),
@@ -2145,50 +2133,36 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == selected_local_planner
     nav_argv = plan.process("nav").command.argv
     assert "--path-library" not in nav_argv
-    if selected_local_planner == "scan":
-        if product == "nav":
-            assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-                "src/nav/cpp/planning/local/cmu/paths/thunder"
-            )
-        else:
-            assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
-        assert "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M" not in plan.native_process_environment
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "200"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SLIDE_M"] == "0.2"
-        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"]) == 5.0
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_HIT"] == "0.85"
-        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MISS"]) == 0.30
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
-        assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"]) == 0.80
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0"
-        assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
-            float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
-        )
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
-        assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
-            .32
-        )
-        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.23"
-        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
-        assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.35"
-        assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.435"
-        assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.1"
-    else:
-        assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == (
-            "src/nav/cpp/planning/local/cmu/paths/thunder"
-        )
-        assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.25"
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
-        assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.1"
+    assert selected_local_planner == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
+    assert "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M" not in plan.native_process_environment
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_X"] == "200"
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Y"] == "200"
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SIZE_Z"] == "100"
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_SLIDE_M"] == "0.2"
+    assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_RAY_M"]) == 5.0
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_HIT"] == "0.85"
+    assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MISS"]) == 0.30
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
+    assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"]) == 0.80
+    assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0"
+    assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
+        float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
+    )
+    assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.05"
+    assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
+    assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
+        .32
+    )
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.23"
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.05"
+    assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
+    assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.05"
+    assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.35"
+    assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.435"
+    assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.1"
     expected_processes = [
         *(["camera_publisher"] if product in {"inspection", "tracking"} else []),
         "driver_bridge",
@@ -2198,7 +2172,6 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         "mujoco_feeder",
         "nav_runtime",
         "slam_runtime",
-        *(["traversability_runtime"] if product == "tracking" else []),
         "host_runtime",
     ]
     assert [process.name for process in plan.processes] == expected_processes
@@ -2208,7 +2181,7 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     else:
         assert plan.native_process_environment["LINGTU_EXPLORE_ROUTE"] == "map"
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
-    assert plan.has_process("traversability") is (product == "tracking")
+    assert plan.has_process("traversability") is False
     assert plan.host_config["enable_camera"] is (
         product in {"inspection", "tracking"}
     )

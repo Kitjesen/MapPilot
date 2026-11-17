@@ -86,7 +86,6 @@ layers:
       - src/native/
       - src/explore/cpp/
       - src/nav/cpp/
-      - src/nav/cpp/planning/local/cmu/paths/
 
   - id: L6_cli_deploy
     title: Product Control And Deploy

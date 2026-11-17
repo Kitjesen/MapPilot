@@ -16,7 +16,7 @@ supported_products:
 backends:
   mujoco:
     summary: Persistent MuJoCo runtime around the native C++ typed-DDS control chain.
-    local_planners: [cmu, scan]
+    local_planners: [scan]
     supported_products:
       - teleop
       - teleop_avoid

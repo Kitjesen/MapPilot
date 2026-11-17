@@ -13,7 +13,7 @@ struct PreparedPlanner {
   navigation::Executor executor;
 };
 
-// Loading CMU's path library must not block the control/stop heartbeat.
+// Preparing a planner must not block the control/stop heartbeat.
 class PlannerSelection {
  public:
   std::string start(const CliConfig &config, const std::string &name);

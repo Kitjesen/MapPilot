@@ -32,7 +32,7 @@ struct TraversabilityGrid;
 struct StatusWriterConfig {
   std::string control_mode{"autonomy"};
   std::string global_planner{"octoplanner3d"};
-  std::string local_planner{"cmu"};
+  std::string local_planner{"scan"};
   std::string product;
   std::string product_session_id;
   int domain_id{0};

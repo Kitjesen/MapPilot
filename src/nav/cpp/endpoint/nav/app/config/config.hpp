@@ -43,13 +43,10 @@ struct CliConfig {
       std::string_view(::lingtu::settings::global::native_nav::global::planner) == "far"
           ? GlobalPlannerBackend::Far
           : GlobalPlannerBackend::OctoPlanner3D};
-  nav_kernel::LocalPlannerBackend local_planner_backend{
-      std::string_view(::lingtu::settings::control::standalone::native_nav::local_planner) == "scan"
-          ? nav_kernel::LocalPlannerBackend::Scan
-          : nav_kernel::LocalPlannerBackend::Cmu};
+  nav_kernel::LocalPlannerBackend local_planner_backend{nav_kernel::LocalPlannerBackend::Scan};
   int domain_id{0};
   std::vector<nav_kernel::LocalPlannerBackend> local_planners{
-      nav_kernel::LocalPlannerBackend::Cmu, nav_kernel::LocalPlannerBackend::Scan};
+      nav_kernel::LocalPlannerBackend::Scan};
   bool use_simulation_clock{false};
   double tick_hz{::lingtu::settings::control::native_nav::tick_hz};
   double control_loop_deadline_miss_ratio_limit{::lingtu::settings::control::native_nav::control_loop_deadline_miss_ratio_limit};
@@ -76,8 +73,6 @@ struct CliConfig {
   double path_follower_heading_align_exit_rad{::lingtu::settings::follower::native_nav::follower::align_exit_rad};
   nav_kernel::SplineFollowerParams scan_follower{};
   nav_kernel::ScanPlannerParams scan_planner{};
-  nav_kernel::LocalPlannerParams cmu_planner{};
-  nav_kernel::CmuFollowerProfile cmu_follower{};
   double local_collision_max_age_s{::lingtu::settings::local::parameters::local_collision_max_age_s};
   std::vector<nav_kernel::RecoveryAction> recovery_order = navigation::defaultRecoveryOrder();
   double recovery_blocked_interval_s{::lingtu::settings::recovery::native_nav::recovery::blocked_interval_s};

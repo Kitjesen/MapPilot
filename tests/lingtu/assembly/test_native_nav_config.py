@@ -39,8 +39,6 @@ def test_component_settings_reach_exploration_launch(tmp_path):
         ("local", ("native_nav",), "local_planner_obstacle_height_max_m", 0.8),
         ("local", ("native_nav",), "scan_motion_voxel_size_m", 0.09),
         ("maps", ("maps", "occupancy"), "resolution_m", 0.10),
-        ("local", ("native_nav", "cmu"), "path_scale", 0.9),
-        ("follower", ("native_nav", "cmu"), "follower_lookahead_m", 0.7),
         ("teleop", ("native_nav", "teleop"), "cmd_max_age_s", 0.5),
     ):
         path = settings / f"{name}.yaml"
@@ -61,13 +59,12 @@ def test_component_settings_reach_exploration_launch(tmp_path):
     assert float(environment["LINGTU_NAV_SMOOTHER_FEEDBACK_TIMEOUT_S"]) == 0.4
     assert float(environment["LINGTU_TELEOP_CMD_MAX_AGE_S"]) == 0.5
     assert float(environment["LINGTU_NAV_INPUT_FUTURE_TOLERANCE_S"]) == 0.07
-    assert float(environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"]) == 0.06
+    assert "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M" not in environment
+    assert environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] == "0.09"
     assert environment["LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M"] == "0.1"
     assert environment["LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M"] == "0.8"
     assert "LINGTU_TELEOP_OBSTACLE_HEIGHT_MIN_M" not in environment
     assert "LINGTU_TELEOP_OBSTACLE_HEIGHT_MAX_M" not in environment
-    assert float(environment["LINGTU_NAV_CMU_PATH_SCALE"]) == 0.9
-    assert float(environment["LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M"]) == 0.7
     assert "LINGTU_NAV_LIVE_OBSTACLE_INFLATION_RADIUS_M" not in environment
     scan = compile_run_plan("nav", "real", robot="unitree/go2", graph=graph)
     assert scan.native_process_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] == "0.09"
@@ -254,7 +251,7 @@ def test_snapped_global_goal_does_not_change_execution_arrival_tolerance() -> No
 
 
 @pytest.mark.parametrize("env", ["real", "sim"])
-@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
+@pytest.mark.parametrize("local_planner", ["scan"])
 def test_nav_product_height_arrival_is_independent_of_env_and_local_planner(
     env: str,
     local_planner: str,
@@ -417,12 +414,13 @@ def test_scan_does_not_compile_an_unused_2d_terrain_dependency(mode: str) -> Non
     assert compiled.native_nav["check_obstacle"] is True
 
 
-def test_octoplanner_explicit_override_reaches_environment() -> None:
+def test_scan_octoplanner_radius_follows_collision_cylinder_not_a_separate_override() -> None:
     compiled = compile_native_nav_config(
         "nav",
         {
             "native_control_mode": "autonomy",
-            "octoplanner3d_robot_radius": 0.4,
+            "octoplanner3d_robot_radius": 0.2,
+            "collision_cylinder_radius_m": 0.4,
         },
     )
 
@@ -456,7 +454,7 @@ def test_octoplanner_support_patch_settings_reach_environment(settings, expected
         (0.25, 0.18),
     ],
 )
-def test_cmu_octoplanner_default_radius_keeps_the_width_contract(
+def test_scan_octoplanner_radius_follows_the_collision_cylinder(
     radius: float, offset: float
 ) -> None:
     compiled = compile_native_nav_config(
@@ -470,7 +468,7 @@ def test_cmu_octoplanner_default_radius_keeps_the_width_contract(
     )
 
     assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
-        0.155
+        radius
     )
     assert compiled.parameters["collision_cylinder_radius_m"] == radius
     assert compiled.parameters["collision_cylinder_offset_m"] == offset
@@ -539,7 +537,8 @@ def test_bare_native_config_uses_shared_motion_defaults(mode, path_speed) -> Non
     assert compiled.parameters["path_follower_max_speed_mps"] == pytest.approx(path_speed)
     assert float(compiled.environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == 1.0
     assert float(compiled.environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(path_speed)
-    assert compiled.environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
+    assert compiled.environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] == "0.08"
+    assert "LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M" not in compiled.environment
 
 
 def test_velocity_smoother_is_left_to_the_native_endpoint() -> None:

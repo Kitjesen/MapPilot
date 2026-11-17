@@ -1249,28 +1249,15 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
         / "mujoco"
         / "local_scan.json"
     )
-    cmu = acceptance._load_manifest(
-        ROOT
-        / "config"
-        / "acceptance"
-        / "mujoco"
-        / "local_cmu.json"
-    )
-
     assert scan["product_contract"]["product"] == "nav"
     assert scan["navigation_runtime"]["local_planner"] == "scan"
-    assert cmu["navigation_runtime"]["local_planner"] == "cmu"
     assert scan["windows_cpu_isolation"] is True
     assert scan["windows_navigation_physical_cores"] == 3
-    for field in ("world", "start", "goal", "map_dir", "asset_builder", "slam_runtime"):
-        assert scan[field] == cmu[field]
     assert scan["start"] == [3.0, 4.0, 0.6, 0.0]
     assert scan["navigation_runtime"]["path_follower_max_speed_mps"] >= 0.5
     assert scan["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
-    assert scan["driver_runtime"] == cmu["driver_runtime"]
     assert scan["driver_runtime"]["heartbeat_timeout_ms"] == 10000
     assert scan["driver_runtime"]["apply_timeout_ms"] == 30000
-    assert scan["paths"]["slam_config"] == cmu["paths"]["slam_config"]
     assert scan["paths"]["slam_config"] == (
         "src/localization/ltlio/config/sim_mid360.yaml"
     )
@@ -1284,7 +1271,7 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
         "physics_integrator",
         "publisher_write_mode",
     ):
-        assert scan["sensor_runtime"][field] == cmu["sensor_runtime"][field]
+        assert field in scan["sensor_runtime"]
     assert scan["sensor_runtime"]["publish_odom_prior"] is True
     assert scan["sensor_runtime"]["scan_time_profile"] == "instantaneous"
     assert scan["sensor_runtime"]["mid360_samples_per_frame"] == 4000
@@ -1306,9 +1293,6 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
         "map_source": "synthetic_hits",
     }
     assert scan["paths"]["path_library"] is None
-    assert cmu["paths"]["path_library"] == (
-        "src/nav/cpp/planning/local/cmu/paths/thunder"
-    )
     assert "rt/maps/local_collision" in scan["contracts"]["navigation_inputs"]
     assert "rt/nav/traversability" not in scan["contracts"]["navigation_inputs"]
     assert scan["contracts"]["terrain_output"] is None
@@ -1483,7 +1467,7 @@ def test_run_plan_binding_replaces_component_candidates_and_env_override(
     }
 
 
-def test_run_plan_scan_backend_replaces_implicit_cmu_default() -> None:
+def test_run_plan_scan_backend_is_the_local_planner() -> None:
     plan = SimpleNamespace(native_nav={"local_planner": "scan"}, processes=())
     manifest = {"binaries": {}}
 
@@ -1523,7 +1507,7 @@ def test_scan_mapd_launch_uses_run_plan_collision_profile(tmp_path: Path) -> Non
     assert process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"] == "0.4"
     assert process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.25"
     assert process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
-    assert mapd_environment(default_map_settings(), {"LINGTU_NAV_LOCAL_PLANNER_BACKEND": "cmu"})[
+    assert mapd_environment(default_map_settings(), {})[
         "LINGTU_MAPD_INFLATION_RADIUS_M"
     ] == "0.25"
 
@@ -3839,7 +3823,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     sensor_args = acceptance._sensor_runtime_args(manifest)
     assert "--stop-on-nav-goal-reached" in sensor_args
     assert "--publish-odom-prior" not in sensor_args
-    assert manifest["navigation_runtime"]["local_planner"] == "cmu"
+    assert manifest["navigation_runtime"]["local_planner"] == "scan"
     assert manifest["thresholds"]["require_goal_reached"] is True
     assert "--odom-prior-velocity-window-s" not in sensor_args
     assert sensor_args[sensor_args.index("--scan-time-profile") + 1] == "physical_rolling"
@@ -3856,7 +3840,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
         ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav" / "app" / "config" / "build.cpp"
     ).read_text(encoding="utf-8")
     assert "buildExecutorConfig(cfg)" in endpoint_source
-    assert "out.footprintPadding = planner_obstacle_margin_m;" in config_source
+    assert "out.footprintPadding = 0.0;" in config_source
     assert endpoint_source.count("auto safety_config = commandSafetyConfig(cfg);") == 1
 
 

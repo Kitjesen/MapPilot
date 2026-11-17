@@ -634,7 +634,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--sim-session", help="Repository-relative simulation session YAML")
     parser.add_argument(
         "--local-planner",
-        choices=("cmu", "scan"),
+        choices=("scan",),
         help="Select the local-planner backend without changing the Product",
     )
     parser.add_argument("--map", dest="map_name")

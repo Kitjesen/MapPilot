@@ -25,7 +25,7 @@ _LEGACY_NAV_PARAMETER_KEYS = frozenset(
     }
 )
 _GLOBAL_PLANNERS = frozenset({"octoplanner3d", "far"})
-_LOCAL_PLANNERS = frozenset({"cmu", "scan"})
+_LOCAL_PLANNERS = frozenset({"scan"})
 _RECOVERY_ACTIONS = frozenset({"translate", "rotate"})
 NATIVE_NAV_ENVIRONMENT = {
     "control_mode": "LINGTU_NAV_CONTROL_MODE",
@@ -78,38 +78,6 @@ _TUNING_ENVIRONMENT = {
     "teleop_traversability_hard_cost": "LINGTU_TELEOP_TRAVERSABILITY_HARD_COST",
     "teleop_traversability_soft_cost": "LINGTU_TELEOP_TRAVERSABILITY_SOFT_COST",
 }
-_CMU_ENVIRONMENT = {
-    field: f"LINGTU_NAV_{field.upper()}"
-    for field in (
-        "cmu_ground_height_m",
-        "cmu_cost_height_high_m",
-        "cmu_cost_height_low_m",
-        "cmu_points_per_path",
-        "cmu_direction_weight",
-        "cmu_direction_threshold_deg",
-        "cmu_direction_to_vehicle",
-        "cmu_path_scale",
-        "cmu_min_path_scale",
-        "cmu_path_scale_step",
-        "cmu_scale_by_speed",
-        "cmu_min_path_range_m",
-        "cmu_path_range_step_m",
-        "cmu_range_by_speed",
-        "cmu_crop_by_goal",
-        "cmu_goal_clear_range_m",
-        "cmu_slow_path_count",
-        "cmu_slow_group_count",
-        "cmu_follower_lookahead_m",
-        "cmu_follower_yaw_gain",
-        "cmu_follower_nominal_dt_s",
-        "cmu_follower_switch_time_s",
-        "cmu_follower_heading_align_rad",
-        "cmu_follower_omni_goal_m",
-        "cmu_follower_omni_heading_rad",
-        "cmu_follower_stop_distance_m",
-        "cmu_follower_slowdown_distance_m",
-    )
-}
 _FAR_ENVIRONMENT = {
     field: f"LINGTU_NAV_{field.upper()}"
     for field in (
@@ -121,9 +89,6 @@ _FAR_ENVIRONMENT = {
     )
 }
 _TUNING_INTEGER_FIELDS = frozenset({
-    "cmu_points_per_path",
-    "cmu_slow_path_count",
-    "cmu_slow_group_count",
     "max_obstacle_points", "local_planner_threads",
     "local_planner_debug_candidates", "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
@@ -131,10 +96,6 @@ _TUNING_INTEGER_FIELDS = frozenset({
     "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",
 })
 _TUNING_BOOLEAN_FIELDS = frozenset({
-    "cmu_direction_to_vehicle",
-    "cmu_scale_by_speed",
-    "cmu_range_by_speed",
-    "cmu_crop_by_goal",
     "smoother_scale_velocities", "live_obstacle_ray_clearing", "far_simplify_path",
 })
 _OCTOPLANNER_ENVIRONMENT = {
@@ -172,7 +133,7 @@ def local_planner_name(value: Any) -> str:
 
     name = str(value or "").strip().lower()
     if name not in _LOCAL_PLANNERS:
-        raise ValueError("local_planner must be cmu or scan")
+        raise ValueError("local_planner must be scan")
     return name
 
 
@@ -502,7 +463,7 @@ def compile_native_nav_config(
     try:
         local_planner = local_planner_name(native_nav_config.get("local_planner") or defaults["local_planner"])
     except ValueError as exc:
-        raise ValueError("native_nav.local_planner must be cmu or scan") from exc
+        raise ValueError("native_nav.local_planner must be scan") from exc
     native_nav = {
         "control_mode": raw_control_mode,
         "global_planner": global_planner,
@@ -540,9 +501,8 @@ def compile_native_nav_config(
         raise ValueError(
             "native_nav teleop_avoid must enable obstacle checks and teleop local planner"
         )
-    # SCAN consumes Mapd's 3D collision volume, not the CMU terrain-cost grid.
-    if local_planner == "scan":
-        native_nav["use_traversability_cost"] = False
+    # SCAN consumes Mapd's 3D collision volume.
+    native_nav["use_traversability_cost"] = False
     vehicle_length_m = _finite_number(config, "vehicle_length_m", 1.0)
     vehicle_width_m = _finite_number(config, "vehicle_width_m", 0.6)
     vehicle_height_m = _finite_number(config, "vehicle_height_m", 0.5)
@@ -626,19 +586,12 @@ def compile_native_nav_config(
         "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M": _env_number(obstacle_height_min),
         "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M": _env_number(obstacle_height_max),
     }
-    if local_planner == "cmu":
-        tuning_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] = _env_number(
-            _finite_number(native_nav_config, "obstacle_voxel_size_m")
-        )
-    else:
-        tuning_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] = _env_number(
-            _finite_number(native_nav_config, "scan_motion_voxel_size_m")
-        )
+    tuning_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] = _env_number(
+        _finite_number(native_nav_config, "scan_motion_voxel_size_m")
+    )
     tuning_fields = dict(_TUNING_ENVIRONMENT)
     if global_planner == "far":
         tuning_fields.update(_FAR_ENVIRONMENT)
-    if local_planner == "cmu":
-        tuning_fields.update(_CMU_ENVIRONMENT)
     for key, env_key in tuning_fields.items():
         if key in _TUNING_BOOLEAN_FIELDS:
             value = native_nav_config[key]

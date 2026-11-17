@@ -25,7 +25,6 @@ FollowerOutput followPath(Follower &follower, const std::vector<Vec3> &path,
   state.safetyStop = safety_stop;
   state.params = params;
   state.goalDistance = goal_distance;
-  state.standardPathProfile = false;
   return follower.follow(LocalPlan::path(path), state);
 }
 
@@ -227,42 +226,6 @@ TEST(FollowerPath, DirectionThresholdControlsLinearAcceleration) {
   EXPECT_NE(output.cmd.wz, 0.0);
 }
 
-TEST(FollowerPath, CmuProfileMatchesUpstreamAndKeepsDriveMode) {
-  FollowerParams base;
-  base.maxSpeed = 0.5;
-  base.maxAccel = 2.0;
-  base.maxYawRateRadS = 0.55;
-  base.headingAlignEnterRad = 0.8;
-  base.headingAlignExitRad = 0.3;
-  base.twoWayDrive = true;
-  const FollowerParams params = cmuFollowerParams(base);
-
-  EXPECT_DOUBLE_EQ(params.maxSpeed, 0.5);
-  EXPECT_DOUBLE_EQ(params.baseLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.minLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.maxLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.yawRateGain, 1.5);
-  EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 0.55);
-  EXPECT_DOUBLE_EQ(params.maxAccel, 2.0);
-  EXPECT_DOUBLE_EQ(params.linearStopThreshold, 0.02);
-  EXPECT_DOUBLE_EQ(params.headingAlignEnterRad, 0.4);
-  EXPECT_DOUBLE_EQ(params.headingAlignExitRad, 0.4);
-  EXPECT_DOUBLE_EQ(params.omniDirGoalThre, 0.4);
-  EXPECT_DOUBLE_EQ(params.omniDirDiffThre, 1.5);
-  EXPECT_DOUBLE_EQ(params.stopDisThre, 0.3);
-  EXPECT_DOUBLE_EQ(params.slowDwnDisThre, 0.75);
-  EXPECT_TRUE(params.twoWayDrive);
-  EXPECT_TRUE(params.noRotAtGoal);
-
-  base.twoWayDrive = false;
-  EXPECT_FALSE(cmuFollowerParams(base).twoWayDrive);
-
-  base.maxAccel = 0.4;
-  const auto limited = cmuFollowerParams(base);
-  EXPECT_DOUBLE_EQ(limited.maxAccel, 0.4);
-  EXPECT_DOUBLE_EQ(limited.linearStopThreshold, 0.004);
-}
-
 TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
   Follower follower;
   FollowerState state;
@@ -273,15 +236,14 @@ TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
   state.params.maxYawRateRadS = 10.0;
   state.params.maxYawAccelRadS2 = 0.0;
   state.params.nominalDt = 0.05;
-  state.params.cmu.yaw_gain = 2.5;
+  state.params.yawRateGain = 2.5;
   state.params.spline.yawGain = 3.0;
   state.params.spline.headingErrorThreshold = 1.0;
 
   const auto path = follower.follow(LocalPlan::path(straightPath()), state);
   EXPECT_NEAR(path.cmd.wz, -0.5, 1e-12);
-  EXPECT_DOUBLE_EQ(state.params.yawRateGain, 7.5);
+  EXPECT_DOUBLE_EQ(state.params.yawRateGain, 2.5);
   EXPECT_DOUBLE_EQ(state.params.nominalDt, 0.05);
-  EXPECT_TRUE(state.standardPathProfile);
 
   const auto spline = follower.follow(
       LocalPlan::spline(scanSpline({{0, 0, 0}, {3, 0, 0}}, 1, 3.0)), state);

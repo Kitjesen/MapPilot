@@ -1,4 +1,4 @@
-# CMU / assisted-teleop recovery. Autonomous SCAN uses its own retry FSM.
+# Assisted-teleop geometric recovery. Autonomous SCAN uses its own retry FSM.
 native_nav:
   recovery:
     behavior_order: [translate, rotate]

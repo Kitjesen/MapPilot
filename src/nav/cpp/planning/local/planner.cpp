@@ -5,7 +5,6 @@
 #include <limits>
 #include <utility>
 
-#include "planning/local/cmu/backend.hpp"
 #include "planning/local/grid_axis.hpp"
 #include "planning/local/scan/backend.hpp"
 #include "planning/local/scan/grid.hpp"
@@ -322,21 +321,12 @@ const ControlHints &LocalPlan::hints() const noexcept {
 class LocalPlanner::Impl {
  public:
   explicit Impl(LocalPlannerParams params) : params_(std::move(params)) {
-    if (params_.backend == LocalPlannerBackend::Scan) {
-      task_ = std::make_unique<local::scan::Task>(params_);
-    } else {
-      cmu_ = std::make_unique<local::cmu::Backend>(params_);
-    }
+    params_.backend = LocalPlannerBackend::Scan;
+    task_ = std::make_unique<local::scan::Task>(params_);
   }
 
-  bool configure(const std::string &path_library_dir) {
-    if (params_.backend == LocalPlannerBackend::Scan) {
-      const bool loaded = task_ != nullptr && task_->configure();
-      configured_ = configured_ || loaded;
-      return loaded;
-    }
-    const bool loaded = cmu_ != nullptr && !path_library_dir.empty() &&
-                        cmu_->loadPaths(path_library_dir);
+  bool configure(const std::string &) {
+    const bool loaded = task_ != nullptr && task_->configure();
     configured_ = configured_ || loaded;
     return loaded;
   }
@@ -348,13 +338,10 @@ class LocalPlanner::Impl {
   }
 
   LocalPlannerDebugSnapshot debugSnapshot() const {
-    LocalPlannerDebugSnapshot snapshot =
-        params_.backend == LocalPlannerBackend::Scan
-            ? last_debug_
-            : (cmu_ != nullptr ? cmu_->debugSnapshot() : LocalPlannerDebugSnapshot{});
+    LocalPlannerDebugSnapshot snapshot = last_debug_;
     if (task_)
       snapshot.lastScanFailure = task_->lastScanFailure();
-    snapshot.backend = params_.backend;
+    snapshot.backend = LocalPlannerBackend::Scan;
     return snapshot;
   }
 
@@ -366,12 +353,9 @@ class LocalPlanner::Impl {
       return LocalPlan::stopped(LocalPlanStatus::InvalidInput);
     if (cancel && cancel())
       return LocalPlan::stopped(LocalPlanStatus::Cancelled);
-    if (params_.backend == LocalPlannerBackend::Scan) {
-      local::scan::Update update = task_->update(request);
-      last_debug_ = std::move(update.debug);
-      return update.plan;
-    }
-    return cmu_->plan(request);
+    local::scan::Update update = task_->update(request);
+    last_debug_ = std::move(update.debug);
+    return update.plan;
   }
 
   void pause() {
@@ -380,42 +364,31 @@ class LocalPlanner::Impl {
   }
 
   void reset() {
-    if (params_.backend == LocalPlannerBackend::Scan)
-      task_->reset();
-    else
-      cmu_->reset();
+    task_->reset();
   }
 
   const LocalPlannerParams &params() const { return params_; }
 
  private:
   LocalPlannerParams params_;
-  std::unique_ptr<local::cmu::Backend> cmu_;
   std::unique_ptr<local::scan::Task> task_;
   LocalPlannerDebugSnapshot last_debug_{};
   bool configured_{false};
 };
 
 LocalPlannerCapabilities plannerCapabilities(
-    const LocalPlannerParams &params) noexcept {
-  const bool scan = params.backend == LocalPlannerBackend::Scan;
+    const LocalPlannerParams &) noexcept {
   return {
-      scan,                              // ownsReferencePath
-      !scan && params.useTraversabilityCost,  // consumesTraversability
-      scan,                              // consumesPredictions
-      scan,                              // supportsBoundaryDeparture
-      scan,                              // consumesCollisionMap
+      true,   // ownsReferencePath
+      false,  // consumesTraversability
+      true,   // consumesPredictions
+      true,   // supportsBoundaryDeparture
+      true,   // consumesCollisionMap
   };
 }
 
-const char *localPlannerBackendName(LocalPlannerBackend backend) {
-  switch (backend) {
-    case LocalPlannerBackend::Cmu:
-      return "cmu";
-    case LocalPlannerBackend::Scan:
-      return "scan";
-  }
-  return "cmu";
+const char *localPlannerBackendName(LocalPlannerBackend) {
+  return "scan";
 }
 
 const char *localPlanStatusName(LocalPlanStatus status) {

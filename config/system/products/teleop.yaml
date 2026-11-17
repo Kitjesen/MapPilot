@@ -20,6 +20,9 @@ host:
   run_startup_checks: false
 includes: [control, limits, follower, teleop]
 native_nav:
+  local_planner: scan
+  # SCAN is the only local planner and requires its 100 Hz control cadence.
+  tick_hz: 100.0
   smoothing: true
 processes:
   - nav

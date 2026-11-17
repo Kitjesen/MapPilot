@@ -766,7 +766,7 @@ def generate_api_md(skills: list[dict], routes: list[dict]) -> str:
         "## Navigation status",
         "",
         "Local planner selection uses `POST /api/v1/navigation/planner` with",
-        '`{"name":"cmu","request_id":"planner-1","client_id":"sdk"}`.',
+        '`{"name":"scan","request_id":"planner-1","client_id":"sdk"}`.',
         "The synchronous and asynchronous SDKs expose `robot.navigation.select_planner(name)`.",
         "End the current task and release operator control first. The native endpoint",
         "prepares the selected backend off the control thread, confirms stop, and",

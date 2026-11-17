@@ -160,7 +160,7 @@ def test_product_control_help_names_the_field_product_selector(capsys) -> None:
     assert "[product]" in help_text
     assert "product               Field Product name" in help_text
     assert "[profile]" not in help_text
-    assert "--local-planner {cmu,scan}" in help_text
+    assert "--local-planner {scan}" in help_text
     assert "--backend" in help_text
     assert "--viewer" in help_text
     assert "stop-session" not in help_text
@@ -301,10 +301,10 @@ def test_product_control_selects_scan_in_sim_without_changing_product_identity()
     assert plan.native_nav["local_planner"] == "scan"
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
     assert teleop.product == "teleop"
-    assert teleop.native_nav["local_planner"] == "cmu"
+    assert teleop.native_nav["local_planner"] == "scan"
 
 
-def test_product_control_defaults_teleop_avoid_to_scan_and_keeps_cmu_available() -> None:
+def test_product_control_defaults_teleop_avoid_to_scan_and_rejects_cmu() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="doso/thunder_v4",
@@ -314,13 +314,13 @@ def test_product_control_defaults_teleop_avoid_to_scan_and_keeps_cmu_available()
     )
 
     default = control._resolve("teleop_avoid")
-    cmu = control._resolve("teleop_avoid", local_planner="cmu")
 
     assert default.native_nav["local_planner"] == "scan"
-    assert cmu.native_nav["local_planner"] == "cmu"
+    with pytest.raises(ValueError, match="local_planner must be scan"):
+        control._resolve("teleop_avoid", local_planner="cmu")
 
 
-def test_product_control_defaults_real_nav_to_scan_and_keeps_cmu_available() -> None:
+def test_product_control_defaults_real_nav_to_scan_and_rejects_cmu() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="unitree/go2",
@@ -329,10 +329,10 @@ def test_product_control_defaults_real_nav_to_scan_and_keeps_cmu_available() -> 
     )
 
     default = control._resolve("nav")
-    cmu = control._resolve("nav", local_planner="cmu")
 
     assert default.native_nav["local_planner"] == "scan"
-    assert cmu.native_nav["local_planner"] == "cmu"
+    with pytest.raises(ValueError, match="local_planner must be scan"):
+        control._resolve("nav", local_planner="cmu")
 
 
 def test_product_control_resolves_explore_variants_separately() -> None:
@@ -464,7 +464,7 @@ def test_product_control_public_switch_hides_the_internal_plan(tmp_path: Path) -
         "env": "sim",
         "product": "teleop",
         "product_variant": None,
-        "local_planner": "cmu",
+        "local_planner": "scan",
         "product_session_id": None,
         "phases": ["preflight"],
         "cleanup": [],
@@ -749,7 +749,7 @@ def test_product_control_cli_plans_switch_without_field_side_effects(capsys, tmp
         "env": "real",
         "product": "teleop",
         "product_variant": None,
-        "local_planner": "cmu",
+        "local_planner": "scan",
         "product_session_id": None,
         "phases": ["preflight"],
         "cleanup": [],
@@ -897,7 +897,7 @@ def test_product_control_status_reads_current_without_writing(tmp_path: Path) ->
         "robot": "unitree/go2",
         "env": "real",
         "product": "teleop",
-        "local_planner": "cmu",
+        "local_planner": "scan",
         "processes": {},
         "degraded": {},
         "error": None,

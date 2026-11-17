@@ -35,6 +35,9 @@ default_for_session_mode: true
 native_control_mode: teleop
 includes: [control, lidar, slam, maps, limits, follower, teleop]
 native_nav:
+  local_planner: scan
+  # SCAN is the only local planner and requires its 100 Hz control cadence.
+  tick_hz: 100.0
   smoothing: true
 slam_mode: mapping
 requires_map: false

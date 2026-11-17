@@ -410,13 +410,12 @@ resolution.
 `operator_switchable` controls whether a Product appears in the normal
 operator/Gateway mode catalog; it does not decide whether the compiler can
 produce a RunPlan. Local-planner algorithms are not Products: `nav` remains the
-single saved-map navigation Product and defaults to SCAN; CMU is selected with
-`local_planner="cmu"` when required.
+single saved-map navigation Product and selects SCAN.
 
 Each Env implementation declares the algorithms it has qualified in
 `local_planners`. Resolution fails before launch when a Product selects an
 unqualified backend. The physical `real` Env and MuJoCo simulation both expose
-CMU and SCAN.
+SCAN.
 
 ## SCAN runtime parameters
 

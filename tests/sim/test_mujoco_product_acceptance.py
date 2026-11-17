@@ -881,20 +881,20 @@ def test_scan_is_a_nav_local_planner_selection(
     assert plan.product_variant == "standard"
     assert plan.native_nav["local_planner"] == "scan"
     assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNER_BACKEND"] == "scan"
-    assert "cmu" in plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"].split(",")
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"].endswith("/thunder")
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     assert target.product == "nav"
     assert target.manifest.name == "local_scan.json"
     assert restored == plan
     assert restored.native_nav["local_planner"] == "scan"
 
 
-def test_cmu_and_scan_share_actual_ltlio_localization(
+def test_scan_uses_actual_ltlio_localization(
     linux_sim_plan: Callable[..., RunPlan],
 ) -> None:
     plans = tuple(
         linux_sim_plan("nav", local_planner=backend)
-        for backend in ("cmu", "scan")
+        for backend in ("scan",)
     )
 
     assert {

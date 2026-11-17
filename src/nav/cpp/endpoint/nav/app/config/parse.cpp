@@ -66,9 +66,8 @@ nav_kernel::LocalPlannerBackend parseLocalPlannerBackend(
   std::string value = raw;
   std::transform(value.begin(), value.end(), value.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (value == "cmu") return nav_kernel::LocalPlannerBackend::Cmu;
   if (value == "scan") return nav_kernel::LocalPlannerBackend::Scan;
-  throw std::runtime_error(std::string(name) + " expects cmu or scan");
+  throw std::runtime_error(std::string(name) + " expects scan");
 }
 
 std::string trim(const std::string &raw);
@@ -368,7 +367,9 @@ CliConfig parseArgs(int argc, char **argv) {
   if (!global_planner.empty()) {
     cfg.global_planner = parseGlobalPlannerBackend(global_planner, "NAV_GLOBAL_PLANNER");
   }
-  cfg.path_library_dir = envOrEmpty("LINGTU_LOCAL_PLANNER_PATHS");
+  if (!envOrEmpty("LINGTU_LOCAL_PLANNER_PATHS").empty()) {
+    throw std::runtime_error("LINGTU_LOCAL_PLANNER_PATHS is removed; SCAN does not use a path library");
+  }
   cfg.inspection_dir = envOrEmpty("LINGTU_INSPECTION_DIR");
   cfg.status_file = envOrEmpty("LINGTU_NAV_STATUS_FILE");
   cfg.estop_latch_file = envOrEmpty("LINGTU_NAV_ESTOP_LATCH_FILE");
@@ -567,33 +568,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.dynamic_min_speed_mps, "LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS");
   applyEnvSize(cfg.dynamic_confirm_frames, "LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES");
   applyEnvBool(cfg.live_obstacle_ray_clearing, "LINGTU_NAV_LIVE_OBSTACLE_RAY_CLEARING");
-  applyEnvDouble(cfg.cmu_planner.groundHeightThre, "LINGTU_NAV_CMU_GROUND_HEIGHT_M");
-  applyEnvDouble(cfg.cmu_planner.costHeightThre1, "LINGTU_NAV_CMU_COST_HEIGHT_HIGH_M");
-  applyEnvDouble(cfg.cmu_planner.costHeightThre2, "LINGTU_NAV_CMU_COST_HEIGHT_LOW_M");
-  applyEnvInt(cfg.cmu_planner.pointPerPathThre, "LINGTU_NAV_CMU_POINTS_PER_PATH");
-  applyEnvDouble(cfg.cmu_planner.dirWeight, "LINGTU_NAV_CMU_DIRECTION_WEIGHT");
-  applyEnvDouble(cfg.cmu_planner.dirThre, "LINGTU_NAV_CMU_DIRECTION_THRESHOLD_DEG");
-  applyEnvBool(cfg.cmu_planner.dirToVehicle, "LINGTU_NAV_CMU_DIRECTION_TO_VEHICLE");
-  applyEnvDouble(cfg.cmu_planner.pathScale, "LINGTU_NAV_CMU_PATH_SCALE");
-  applyEnvDouble(cfg.cmu_planner.minPathScale, "LINGTU_NAV_CMU_MIN_PATH_SCALE");
-  applyEnvDouble(cfg.cmu_planner.pathScaleStep, "LINGTU_NAV_CMU_PATH_SCALE_STEP");
-  applyEnvBool(cfg.cmu_planner.pathScaleBySpeed, "LINGTU_NAV_CMU_SCALE_BY_SPEED");
-  applyEnvDouble(cfg.cmu_planner.minPathRange, "LINGTU_NAV_CMU_MIN_PATH_RANGE_M");
-  applyEnvDouble(cfg.cmu_planner.pathRangeStep, "LINGTU_NAV_CMU_PATH_RANGE_STEP_M");
-  applyEnvBool(cfg.cmu_planner.pathRangeBySpeed, "LINGTU_NAV_CMU_RANGE_BY_SPEED");
-  applyEnvBool(cfg.cmu_planner.pathCropByGoal, "LINGTU_NAV_CMU_CROP_BY_GOAL");
-  applyEnvDouble(cfg.cmu_planner.goalClearRange, "LINGTU_NAV_CMU_GOAL_CLEAR_RANGE_M");
-  applyEnvInt(cfg.cmu_planner.slowPathNumThre, "LINGTU_NAV_CMU_SLOW_PATH_COUNT");
-  applyEnvInt(cfg.cmu_planner.slowGroupNumThre, "LINGTU_NAV_CMU_SLOW_GROUP_COUNT");
-  applyEnvDouble(cfg.cmu_follower.lookahead_m, "LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M");
-  applyEnvDouble(cfg.cmu_follower.yaw_gain, "LINGTU_NAV_CMU_FOLLOWER_YAW_GAIN");
-  applyEnvDouble(cfg.cmu_follower.nominal_dt_s, "LINGTU_NAV_CMU_FOLLOWER_NOMINAL_DT_S");
-  applyEnvDouble(cfg.cmu_follower.switch_time_s, "LINGTU_NAV_CMU_FOLLOWER_SWITCH_TIME_S");
-  applyEnvDouble(cfg.cmu_follower.heading_align_rad, "LINGTU_NAV_CMU_FOLLOWER_HEADING_ALIGN_RAD");
-  applyEnvDouble(cfg.cmu_follower.omni_goal_m, "LINGTU_NAV_CMU_FOLLOWER_OMNI_GOAL_M");
-  applyEnvDouble(cfg.cmu_follower.omni_heading_rad, "LINGTU_NAV_CMU_FOLLOWER_OMNI_HEADING_RAD");
-  applyEnvDouble(cfg.cmu_follower.stop_distance_m, "LINGTU_NAV_CMU_FOLLOWER_STOP_DISTANCE_M");
-  applyEnvDouble(cfg.cmu_follower.slowdown_distance_m, "LINGTU_NAV_CMU_FOLLOWER_SLOWDOWN_DISTANCE_M");
   applyEnvBool(cfg.allow_teleop_takeover, "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER");
   applyEnvBool(cfg.teleop_local_planner, "LINGTU_TELEOP_LOCAL_PLANNER");
   applyEnvDouble(cfg.teleop_cmd_max_age_s, "LINGTU_TELEOP_CMD_MAX_AGE_S");
@@ -781,7 +755,7 @@ CliConfig parseArgs(int argc, char **argv) {
     } else if (arg == "--live-obstacle-ray-clearing") {
       cfg.live_obstacle_ray_clearing = parseBool(next(), "--live-obstacle-ray-clearing");
     } else if (arg == "--path-library") {
-      cfg.path_library_dir = next();
+      throw std::runtime_error("--path-library is removed; SCAN does not use a path library");
     } else if (arg == "--map") {
       cfg.map_path = next();
     } else if (arg == "--publish-cmd-vel") {
@@ -925,10 +899,10 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.geofence_file = next();
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
-          "usage: navd --path-library DIR "
+          "usage: navd "
           "[--control-mode autonomy|teleop|teleop_avoid] "
           "[--product PRODUCT] "
-          "[--global-planner octoplanner3d|far] [--local-planner cmu|scan] "
+          "[--global-planner octoplanner3d|far] [--local-planner scan] "
           "[--allow-teleop-takeover true|false] "
           "[--teleop-local-planner true|false] "
           "[--map PLANNER_ARTIFACT] [--domain-id N] [--tick-hz HZ] "
@@ -1013,25 +987,9 @@ CliConfig parseArgs(int argc, char **argv) {
     }
   }
 
-  if ((cfg.control_mode == ControlMode::Autonomy || cfg.teleop_local_planner) &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu &&
-      cfg.path_library_dir.empty()) {
-    throw std::runtime_error(
-        "path library is required; pass --path-library or set LINGTU_LOCAL_PLANNER_PATHS");
-  }
-  if (!explicit_obstacle_voxel_size &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
+  if (!explicit_obstacle_voxel_size) {
     cfg.obstacle_voxel_size_m = ::lingtu::settings::local::native_nav::scan_motion_voxel_size_m;
     applyEnvDouble(cfg.obstacle_voxel_size_m, "LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M");
-  }
-  {
-    const auto &cmu = cfg.cmu_planner;
-    for (const double value : {cmu.pathScale, cmu.minPathScale, cmu.pathScaleStep,
-                               cmu.minPathRange, cmu.pathRangeStep}) {
-      if (!std::isfinite(value) || value <= 0.0) {
-        throw std::runtime_error("CMU path scales, ranges, and steps must be finite and positive");
-      }
-    }
   }
   validateVelocitySmootherConfig(cfg);
   if (!std::isfinite(cfg.tick_hz) ||
@@ -1258,9 +1216,7 @@ CliConfig parseArgs(int argc, char **argv) {
   } else if (cfg.control_mode == ControlMode::TeleopAvoid) {
     cfg.check_obstacle = true;
   }
-  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan) {
-    cfg.use_traversability_cost = false;
-  }
+  cfg.use_traversability_cost = false;
   applyPlannerGeometry(cfg);
   return cfg;
 }

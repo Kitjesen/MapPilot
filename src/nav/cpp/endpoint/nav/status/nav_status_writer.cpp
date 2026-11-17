@@ -376,7 +376,7 @@ void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
   const std::size_t point_limit = cfg.local_map_debug_point_limit;
   const bool enabled = point_limit > 0;
   const std::size_t source_points = obstacle_xyzh.size() / 4;
-  const bool cmu_height_filter = cfg.local_planner == "cmu";
+  const bool cmu_height_filter = false;
   std::vector<std::size_t> obstacle_indices;
   obstacle_indices.reserve(source_points);
   for (std::size_t index = 0; index < source_points; ++index) {
@@ -1025,11 +1025,7 @@ void writeStatusSnapshot(
         << "  \"live_obstacle_max_clearing_rays\": " << cfg.live_obstacle_max_clearing_rays << ",\n"
         << "  \"live_obstacle_min_hits\": " << cfg.live_obstacle_min_hits << ",\n"
         << "  \"cloud_pose_max_gap_s\": " << cfg.cloud_pose_max_gap_s << ",\n"
-        << "  \"planner_obstacle_source\": \""
-        << (cfg.local_planner == "cmu"
-                ? "fresh_terrain_map_else_registered_scan"
-                : "registered_scan")
-        << "\",\n"
+        << "  \"planner_obstacle_source\": \"registered_scan\",\n"
         << "  \"terrain_map_ext_role\": \"diagnostics\",\n"
         << "  \"sensor_origin_model\": \"body_pose_plus_configured_lidar_extrinsics\",\n"
         << "  \"sensor_offset_m\": [" << cfg.sensor_offset_x_m << ", " << cfg.sensor_offset_y_m

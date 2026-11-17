@@ -300,7 +300,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       recovery_state.currentTime = timestamp_s;
       recovery_state.params = recovery_params;
       recovery_state.goalDistance = departure_distance_m;
-      recovery_state.standardPathProfile = false;
       const nav_kernel::FollowerOutput recovery_control = recovery_follower_.follow(
           nav_kernel::LocalPlan::path(output.local_path_body), recovery_state);
       output.cmd_vel = recovery_control.cmd;

@@ -6,7 +6,7 @@ topics:
   - /nav/state
   - /nav/cmd_vel
 native_nav:
-  tick_hz: 20.0  # SCAN Products override this with their required 100 Hz cadence.
+  tick_hz: 100.0  # SCAN's closed-loop controller cadence.
   publish_cmd_vel: true
   status_s: 0.2  # Keep native snapshots fresh within Gateway's 1 s status window.
   stop_confirmation_timeout_s: 4.0
@@ -35,4 +35,4 @@ native_nav:
 
 standalone:
   native_nav:
-    local_planner: cmu
+    local_planner: scan

@@ -49,8 +49,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     "${_ENDPOINT_DIR}/nav/app/config/build.cpp")
   target_include_directories(test_planner_selection PRIVATE ${_EP_DIRS} "${_NAV_CORE_DIR}")
   target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation lingtu_nav_far)
-  target_compile_definitions(test_planner_selection PRIVATE
-    LINGTU_TEST_PATH_LIBRARY="${LINGTU_NAV_CPP_ROOT}/planning/local/cmu/paths/go2")
   lingtu_endpoint_enable_warnings(test_planner_selection)
   add_test(NAME test_planner_selection COMMAND test_planner_selection)
 endif()
@@ -1942,8 +1940,6 @@ if(TARGET GTest::gtest_main AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_assisted
     "${_NAV_CORE_DIR}"
     ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
-  target_compile_definitions(test_assisted_teleop PRIVATE
-    LINGTU_TEST_PATH_LIBRARY="${_NAV_CPP_DIR}/planning/local/cmu/paths/go2")
   target_link_libraries(test_assisted_teleop PRIVATE
     lingtu_nav_navigation
     GTest::gtest_main)

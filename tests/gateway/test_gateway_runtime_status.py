@@ -1103,7 +1103,7 @@ def test_gateway_navigation_state_pushes_navigation_status_update():
 
 
 
-@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
+@pytest.mark.parametrize("local_planner", ["scan"])
 def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_publish(
     monkeypatch,
     tmp_path,
@@ -1145,9 +1145,6 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
                 parameter: float(environment[environment_name])
                 for parameter, environment_name in parameter_environment
             }
-            if local_planner == "cmu":
-                parameters["path_follower_lookahead_m"] = float(environment["LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M"])
-                parameters["path_follower_goal_tolerance_m"] = float(environment["LINGTU_NAV_CMU_FOLLOWER_STOP_DISTANCE_M"])
             native_status = {
                 "native_product": {
                     "product": product,

@@ -45,7 +45,8 @@ lingtu::nav::navigation::Executor makeLoop(bool use_traversability = false,
   config.follower.nominalDt = 0.05;
   config.follower.baseLookAheadDis = 0.25;
   config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+  return makeConfiguredExecutor(std::move(config), planner, "");
 }
 
 lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
@@ -71,7 +72,8 @@ lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
   config.follower.nominalDt = 0.05;
   config.follower.baseLookAheadDis = 0.25;
   config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+  return makeConfiguredExecutor(std::move(config), planner, "");
 }
 
 lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
@@ -123,7 +125,8 @@ lingtu::nav::navigation::Executor makeRecoveryDisabledLoop() {
   config.follower.nominalDt = 0.05;
   config.follower.baseLookAheadDis = 0.25;
   config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+  return makeConfiguredExecutor(std::move(config), planner, "");
 }
 lingtu::nav::navigation::Executor makeRecoverySafetyLoop(double no_progress_timeout_s = 2.0,
                                                           int max_attempts = 3,
@@ -137,7 +140,6 @@ lingtu::nav::navigation::Executor makeRecoverySafetyLoop(double no_progress_time
   planner.useTraversabilityCost = true;
   planner.traversabilityNearFieldStop = false;
   planner.traversabilityHardCost = 90.0;
-  planner.dirThre = 20.0;
   config.recovery.blocked_interval_s = 0.0;
   config.recovery.rotation_timeout_s = 0.1;
   config.recovery.translation_timeout_s = no_progress_timeout_s;
@@ -153,7 +155,8 @@ lingtu::nav::navigation::Executor makeRecoverySafetyLoop(double no_progress_time
   config.follower.nominalDt = 0.05;
   config.follower.baseLookAheadDis = 0.25;
   config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+  return makeConfiguredExecutor(std::move(config), planner, "");
 }
 
 std::vector<float> makeRotationOnlyObservedGrid(int rows, int cols, double resolution,
@@ -3780,10 +3783,11 @@ lingtu::nav::navigation::Executor makeProgressLoop(bool recovery_enabled = false
   config.follower.linearStopThreshold = 0.0;
   config.follower.slowDwnDisThre = 0.0;
   nav_kernel::LocalPlannerParams planner;
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
   planner.checkObstacle = check_obstacle;
   planner.useTerrainAnalysis = false;
   planner.useTraversabilityCost = false;
-  return makeConfiguredExecutor(config, planner, LINGTU_TEST_PATH_LIBRARY);
+  return makeConfiguredExecutor(config, planner, "");
 }
 }  // namespace
 

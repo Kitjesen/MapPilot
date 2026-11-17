@@ -131,19 +131,10 @@ void testOrdinarySpeedDefaultsAgreeAcrossTheNativeBoundary() {
 }
 
 void testBackendSettingsReachPlannerAndFollower() {
-  ScopedEnvironment scale("LINGTU_NAV_CMU_PATH_SCALE", "0.9");
-  ScopedEnvironment lookahead("LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M", "0.7");
-  ScopedEnvironment cmu_voxel("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M", "");
   ScopedEnvironment scan_voxel("LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M", "0.09");
   ScopedEnvironment scan_resolution("LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M", "0.10");
   ScopedEnvironment operator_age("LINGTU_TELEOP_CMD_MAX_AGE_S", "0.5");
   ScopedEnvironment input_future("LINGTU_NAV_INPUT_FUTURE_TOLERANCE_S", "0.07");
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
-  require(buildLocalPlannerParams(cfg).pathScale == 0.9, "CMU path scale must reach the planner");
-  require(cfg.obstacle_voxel_size_m == 0.05, "SCAN voxel tuning must not change CMU defaults");
-  const auto follower = buildExecutorConfig(cfg).follower;
-  require(nav_kernel::cmuFollowerParams(follower).baseLookAheadDis == 0.7,
-          "CMU lookahead must survive follower profile selection");
   const auto scan = parse({"navd", "--local-planner", "scan"});
   require(scan.obstacle_voxel_size_m == 0.09, "SCAN voxel tuning must reach the motion layer");
   require(buildLocalPlannerParams(scan).scan.voxelResolution == 0.10,
@@ -164,8 +155,8 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
               nav_kernel::VelocitySmootherConfig{}.x.acceleration == 0.5 &&
               nav_kernel::VelocitySmootherConfig{}.y.acceleration == 0.5,
           "native library ordinary acceleration defaults must agree");
-  for (const char *backend : {"cmu", "scan"}) {
-    const auto cfg = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend});
+  for (const char *backend : {"scan"}) {
+    const auto cfg = parse({"navd", "--local-planner", backend});
     require(cfg.path_follower_max_accel_mps2 == 0.5 &&
                 cfg.scan_planner.maxAcceleration == 0.5 &&
                 cfg.velocity_smoother.x.acceleration == 0.5 &&
@@ -1108,10 +1099,8 @@ void testGoalHeightToleranceIsIndependentOfLocalPlanner() {
   ScopedEnvironment scan_tuning("LINGTU_NAV_SCAN_COLLISION_WEIGHT", "4.2");
 
   const auto scan = parse({"navd", "--local-planner", "scan"});
-  const auto cmu = parse({"navd", "--local-planner", "cmu", "--path-library", "fixture-paths"});
-  require(std::abs(buildExecutorConfig(scan).goal_height_tolerance_m - 0.27) < 1e-12 &&
-              std::abs(buildExecutorConfig(cmu).goal_height_tolerance_m - 0.27) < 1e-12,
-          "Product arrival height must be independent of local planner and SCAN tuning");
+  require(std::abs(buildExecutorConfig(scan).goal_height_tolerance_m - 0.27) < 1e-12,
+          "Product arrival height must survive SCAN tuning");
   require(std::abs(buildStatusWriterConfig(scan, inputGateConfig(scan))
                        .goal_height_tolerance_m -
                    0.27) < 1e-12,
@@ -1189,37 +1178,37 @@ void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
   }
 }
 
-void testScanIsAnExplicitSecondLocalBackend() {
-  const auto defaults = parse({
-      "navd", "--path-library", "fixture-paths"});
+void testScanIsTheOnlyLocalBackend() {
+  const auto defaults = parse({"navd"});
   require(
-      defaults.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu,
-      "CMU must remain the default local backend");
-  const auto scan = parse({"navd", "--local-planner", "scan"});
+      defaults.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan,
+      "SCAN must be the default local backend");
   require(buildExecutorConfig(defaults).planning_frame ==
-              lingtu::nav::navigation::PlanningFrame::Odom,
-          "CMU must retain odom-frame planning");
-  require(buildExecutorConfig(scan).planning_frame ==
               lingtu::nav::navigation::PlanningFrame::Map,
           "SCAN references and tracking must share the collision map frame");
+  require(defaults.path_library_dir.empty(),
+          "SCAN startup must not require a path library");
   require(
-      scan.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan,
-      "SCAN backend must parse explicitly");
-  require(scan.path_library_dir.empty(),
-          "SCAN startup must not require or synthesize a CMU path library");
-  require(
-      buildLocalPlannerParams(scan).backend ==
+      buildLocalPlannerParams(defaults).backend ==
           nav_kernel::LocalPlannerBackend::Scan,
-      "endpoint config must forward the selected local backend");
+      "endpoint config must forward SCAN");
 
-  bool rejected = false;
-  try {
-    (void)parse({
-        "navd", "--path-library", "fixture-paths", "--local-planner", "unknown"});
-  } catch (const std::runtime_error&) {
-    rejected = true;
+  for (const char *rejected_name : {"unknown", "cmu"}) {
+    bool rejected = false;
+    try {
+      (void)parse({"navd", "--local-planner", rejected_name});
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    require(rejected, "a non-SCAN local planner must fail startup");
   }
-  require(rejected, "unknown local planner backend must fail startup");
+  bool path_library_rejected = false;
+  try {
+    (void)parse({"navd", "--path-library", "fixture-paths"});
+  } catch (const std::runtime_error&) {
+    path_library_rejected = true;
+  }
+  require(path_library_rejected, "a path library argument must fail startup");
 }
 
 void testScanHasSingleCollisionEnvelope() {
@@ -1230,11 +1219,6 @@ void testScanHasSingleCollisionEnvelope() {
   const auto scan = buildLocalPlannerParams(cfg);
   require(std::abs(scan.footprintPadding) < 1e-12,
           "SCAN cylinder geometry already owns the complete hard envelope");
-
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
-  const auto cmu = buildLocalPlannerParams(cfg);
-  require(std::abs(cmu.footprintPadding - 0.15) < 1e-12,
-          "CMU must use exactly one configured hard margin");
 }
 
 void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
@@ -1247,11 +1231,6 @@ void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
   CliConfig cfg;
   cfg.use_traversability_cost = true;
 
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
-  const auto cmu = buildLocalPlannerParams(cfg);
-  require(cmu.useTraversabilityCost,
-          "CMU must consume the configured planner traversability policy");
-
   cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
   const auto scan = buildLocalPlannerParams(cfg);
   require(!scan.useTraversabilityCost,
@@ -1261,10 +1240,6 @@ void testLocalPlannerUsesConfiguredTraversabilityPolicy() {
               scan_gate.require_odom && scan_gate.require_local_collision &&
               scan_gate.require_localization_health,
           "SCAN must require authoritative collision and retain pose, localization and driver gates");
-
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
-  require(inputGateConfig(cfg).require_traversability && inputGateConfig(cfg).require_cloud,
-          "CMU must retain its consumed cloud and configured terrain input requirements");
 
   cfg.use_traversability_cost = false;
   const auto disabled = buildLocalPlannerParams(cfg);
@@ -1280,12 +1255,14 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
   cfg.teleop_max_yaw_rate = 1.0;
 
   cfg.control_mode = ControlMode::Autonomy;
-  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Cmu;
+  cfg.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
+  cfg.scan_follower.maxVx = 0.4;
+  cfg.scan_follower.maxVy = 0.4;
   auto safety = commandSafetyConfig(cfg);
   require(std::abs(safety.max_speed_mps - 0.6) < 1e-12,
           "autonomy command boundary must preserve the configured follower speed limit");
   require(safety.max_vx_mps == 0.4 && safety.max_vy_mps == 0.4,
-          "autonomy command boundary must preserve the shared body-axis speed budget");
+          "autonomy command boundary must preserve the configured SCAN body-axis budget");
   require(std::abs(safety.max_yaw_rate - 0.8) < 1e-12,
           "autonomy command boundary must preserve the configured follower yaw limit");
 
@@ -1384,12 +1361,6 @@ void testScanGlobalCorridorEnvironmentAndLargerOverrides() {
               std::abs(larger.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12 &&
               std::abs(larger.octoplanner_options.body_offset_m - 0.19) < 1e-12,
           "global overrides must not create another SCAN body envelope");
-
-  const auto cmu = parse({"navd", "--local-planner", "cmu", "--path-library", "fixture-paths"});
-  require(std::abs(cmu.octoplanner_options.robot_radius - 0.10) < 1e-12 &&
-              std::abs(cmu.octoplanner_options.body_clearance_below_m - 0.01) < 1e-12 &&
-              std::abs(cmu.octoplanner_options.body_clearance_above_m - 0.01) < 1e-12,
-          "SCAN geometry normalization must not change the CMU contract");
 }
 
 void testScanGlobalCorridorUsesThunderGeometry() {
@@ -1840,7 +1811,7 @@ int main() {
     testPlannerArtifactCarriesRuntimeMapIdentity();
     testOctoPlanner3DPhysicalContractIsConfigurable();
     testFarPlannerIsAnExplicitOptionalBackend();
-    testScanIsAnExplicitSecondLocalBackend();
+    testScanIsTheOnlyLocalBackend();
     testScanHasSingleCollisionEnvelope();
     testLocalPlannerUsesConfiguredTraversabilityPolicy();
     testCommandBoundaryUsesActiveControlModeMotionLimits();

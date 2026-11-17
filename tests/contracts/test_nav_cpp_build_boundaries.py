@@ -45,7 +45,7 @@ def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
     assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in endpoint
     assert endpoint.count("COMPONENT lingtu_runtime") == 3
     assert 'INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"' in endpoint
-    assert "DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths" in endpoint
+    assert "cmu_paths" not in endpoint
     assert "include(GNUInstallDirs)" in inspection
     assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in inspection
     assert "RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}" in inspection
@@ -281,8 +281,8 @@ def test_build_and_ci_use_the_canonical_navigation_cpp_root() -> None:
     assert "LEGACY_NAV_ENDPOINT_DIR" not in endpoint_builder
     assert "src/nav/services/" + "endpoint/cpp" not in endpoint_builder
     assert "rm -rf" not in endpoint_builder
-    assert "lingtu_cmu_paths" in _read("src/nav/cpp/endpoint/CMakeLists.txt")
-    assert '"$BUILD_DIR/cmu_paths/$profile/$asset"' in endpoint_builder
+    assert "lingtu_cmu_paths" not in _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    assert "cmu_paths" not in endpoint_builder
     assert native_ci.count("src/nav/cpp/**") == 2
     assert "-S src/nav/cpp" in portable_ci
 

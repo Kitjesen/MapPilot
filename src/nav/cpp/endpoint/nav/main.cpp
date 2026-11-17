@@ -1238,11 +1238,10 @@ int main(int argc, char **argv) {
       cfg = std::move(prepared.config);
       safety_config = commandSafetyConfig(cfg);
       input_gate = InputGate(inputGateConfig(cfg));
-      const bool scan = cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
-      plan_config.use_terrain_cloud = !scan;
-      plan_config.use_traversability = !scan && cfg.use_traversability_cost;
-      inputs.setSupportHeight(scan ? cfg.octoplanner_options.support_height_m : 0.0,
-                              scan ? cfg.octoplanner_options.support_height_tolerance_m : 0.0);
+      plan_config.use_terrain_cloud = false;
+      plan_config.use_traversability = false;
+      inputs.setSupportHeight(cfg.octoplanner_options.support_height_m,
+                              cfg.octoplanner_options.support_height_tolerance_m);
       nav_status.configure(buildStatusWriterConfig(cfg, inputGateConfig(cfg)));
     };
     return runEndpointLoop(loop_ctx, g_running);

@@ -552,7 +552,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     recovery_state.currentTime = timestamp_s;
     recovery_state.params = recovery_params;
     recovery_state.goalDistance = std::hypot(output.local_path_body.back().x, output.local_path_body.back().y);
-    recovery_state.standardPathProfile = false;
     nav_kernel::LocalPlan recovery_plan =
         nav_kernel::LocalPlan::path(output.local_path_body);
     const nav_kernel::FollowerOutput recovery_control =
@@ -591,10 +590,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   follower_state.params = config_.follower;
   if(!pose_stages_.empty() && pose_stages_[pose_stage_].tangentHeading) {
     follower_state.params.spline.timeForward=0;
-  }
-  if (path_provided) {
-    follower_state.params = nav_kernel::cmuFollowerParams(follower_state.params);
-    follower_state.standardPathProfile = false;
   }
   // A shifted endpoint must not add another stopping radius outside the task's goal region.
   double endpoint_tolerance = active_goal_reached_m_;

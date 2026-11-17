@@ -111,7 +111,6 @@ if(NOT TARGET lingtu_nav_local_planner)
   add_library(lingtu_nav_local_planner STATIC
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/planner.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/task.cpp"
-    "${LINGTU_NAV_LOCAL_PLANNING_DIR}/cmu/backend.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/backend.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/grid.cpp"
     "${LINGTU_NAV_LOCAL_PLANNING_DIR}/scan/upstream/bspline_opt/bspline_optimizer.cpp"

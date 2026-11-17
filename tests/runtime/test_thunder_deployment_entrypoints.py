@@ -877,22 +877,14 @@ def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> 
     assert '"LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"' in config
 
 
-def test_cmu_path_library_comes_from_the_product_session() -> None:
+def test_nav_session_rejects_a_removed_path_library() -> None:
     service = _read("scripts/deploy/thunder/lt-nav.service")
     runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
 
     assert "Environment=LINGTU_LOCAL_PLANNER_PATHS=" not in service
     assert "EnvironmentFile=/run/lingtu/session.env" in service
-    assert "CMU Product session is missing LINGTU_LOCAL_PLANNER_PATHS" in runner
-    for asset in (
-        "startPaths.ply",
-        "pathList.ply",
-        "paths.ply",
-        "correspondences.txt",
-        "search_radius.txt",
-    ):
-        assert asset in runner
-    assert "go2|thunder" in runner
+    assert "local planner must be scan" in runner
+    assert "LINGTU_LOCAL_PLANNER_PATHS is removed" in runner
 
 
 def test_nav_runner_uses_product_bound_map_artifacts_without_a_map_root() -> None:
@@ -989,8 +981,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "constexpr double kLayerInflationM = 0.0;" in source
     assert "buildExecutorConfig(cfg)" in source
     assert "buildLocalPlannerParams(cfg)" in source
-    assert "cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan" in source
-    assert "out.footprintPadding = planner_obstacle_margin_m;" in source
+    assert "out.footprintPadding = 0.0;" in source
     assert "cfg.teleop_obstacle_margin_m + cfg.live_obstacle_inflation_radius_m" not in source
     assert "params.nominalDt = 1.0 / cfg.tick_hz;" in source
     assert "layer_.dynamicClusters(32, observation->stamp_s)" in source
@@ -1343,12 +1334,9 @@ def test_native_nav_endpoint_has_a_release_install_manifest() -> None:
     assert "lingtu_nav_client" in endpoint_cmake
     assert "lingtu_inspection_evidence_bridge" in endpoint_cmake
     assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in endpoint_cmake
-    assert "DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths" in endpoint_cmake
-    assert 'set(_LINGTU_CMU_PATH_SOURCE "${_NAV_CPP_DIR}/planning/local/cmu/paths")' in endpoint_cmake
-    assert '"${_LINGTU_CMU_PATH_SOURCE}/go2"' in endpoint_cmake
-    assert '"${_LINGTU_CMU_PATH_SOURCE}/thunder"' in endpoint_cmake
-    assert "CMU_PATH_PROFILES=(go2 thunder)" in packager
-    assert "Native navigation install is missing CMU" in packager
+    assert "cmu_paths" not in endpoint_cmake
+    assert "CMU_PATH_PROFILES" not in packager
+    assert "cmu_paths" not in packager
     assert "LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}" in inspection_cmake
     assert "EnvironmentFile=-/opt/lingtu/current/etc/lingtu/release-runtime.env" in service
 
