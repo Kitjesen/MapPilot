@@ -633,6 +633,57 @@ def test_gateway_projects_native_event_and_emits_the_same_fact_to_sse() -> None:
     ]
 
 
+def test_agent_owned_inspection_event_returns_to_the_same_run() -> None:
+    class Store:
+        def append(self, conversation_id, turn_id, role, text, **kwargs):
+            return {
+                "conversation_id": conversation_id,
+                "id": kwargs["message_id"],
+                "seq": 9,
+                "revision": 1,
+                "role": role,
+                "text": text,
+                "turn_id": turn_id,
+                "run_id": kwargs["run_id"],
+                "kind": kwargs["kind"],
+                "created_at": 1001.0,
+                "metadata": kwargs["metadata"],
+            }
+
+    class Agent:
+        def _conversation_store(self):
+            return Store()
+
+    class Gateway:
+        def __init__(self) -> None:
+            self._inspection_task_timeline = InspectionTaskTimeline()
+            self._state_lock = threading.RLock()
+            self._agent_task_bindings = {}
+            self._agent_request_bindings = {
+                "inspection-request-42": {
+                    "run_id": "agent-run-42",
+                    "conversation_id": "conversation-42",
+                    "turn_id": "turn-42",
+                    "kind": "inspection",
+                }
+            }
+            self._all_modules = {"AgentPlannerModule": Agent()}
+            self.events: list[dict[str, object]] = []
+
+        def push_event(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+    gateway = Gateway()
+    handle_inspection_task_event(gateway, _event(event_sequence=1, kind=1, state=2))
+
+    activity = next(item for item in gateway.events if item["type"] == "agent_message")
+    assert activity["run_id"] == "agent-run-42"
+    assert activity["conversation_id"] == "conversation-42"
+    assert activity["turn_id"] == "turn-42"
+    assert activity["seq"] == 9 and activity["revision"] == 1
+    assert activity["metadata"]["activity_type"] == "inspection"
+
+
 def test_terminal_task_fact_is_queryable_after_gateway_restart(tmp_path) -> None:
     journal = tmp_path / "inspection_tasks.json"
     timeline = InspectionTaskTimeline(journal_path=journal)
