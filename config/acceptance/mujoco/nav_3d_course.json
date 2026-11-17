@@ -32,7 +32,7 @@
     "local_planner": "scan",
     "path_follower_lookahead_m": 0.35,
     "path_follower_max_accel_mps2": 1.0,
-    "path_follower_max_speed_mps": 0.6,
+    "path_follower_max_speed_mps": 1.0,
     "path_follower_max_yaw_rate_rad_s": 0.8
   },
   "planner_constraints": {
@@ -86,7 +86,8 @@
     "min_net_displacement_m": 10.0,
     "min_goal_distance_reduction_m": 10.0,
     "require_goal_reached": true,
-    "max_goal_error_m": 0.7
+    "max_goal_error_m": 0.7,
+    "min_mujoco_truth_peak_xy_speed_mps": 0.9
   },
   "acceptance_scope": {
     "coverage": "component",
