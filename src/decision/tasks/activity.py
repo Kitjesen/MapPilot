@@ -29,7 +29,10 @@ def activity_type(name: str, *, role: str = "tool") -> str:
         return "tracking"
     if name == "start_inspection_route":
         return "inspection"
-    if name.startswith("navigate_") or name == "find_object":
+    if name.startswith("navigate_") or name in {
+        "preview_navigation", "start_navigation", "get_navigation_status", "cancel_navigation",
+        "pause_navigation", "resume_navigation", "set_navigation_speed", "find_object",
+    }:
         return "navigation"
     return "tool"
 

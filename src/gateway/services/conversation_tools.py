@@ -17,8 +17,21 @@ from gateway.maps.routes import (
     set_no_go_request,
 )
 from gateway.maps.transport import mapd_request
+from gateway.navigation.actions import cancel as cancel_navigation
+from gateway.navigation.actions import control_task, go as start_navigation
+from gateway.navigation.tasks import query_navigation_task_status
 from gateway.routes.inspection import list_routes, start_task
-from gateway.schemas import InspectionTaskStartRequest, LocationUpsertRequest, NoGoRequest
+from gateway.schemas import (
+    CancelRequest,
+    GoalRequest,
+    InspectionTaskStartRequest,
+    LocationUpsertRequest,
+    NavigationTaskPauseRequest,
+    NavigationTaskResumeRequest,
+    NavigationTaskSpeedLimitRequest,
+    NoGoRequest,
+    PlanPreviewRequest,
+)
 from gateway.services import robot_tools
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.telemetry_normalizers import build_locations_response
@@ -61,6 +74,26 @@ def workbench_tools(gw, *, client_id: str = "web"):
     tool("start_inspection_route", "Start one stored complete inspection route. The route must already exist; this submits the native task and starts its evidence recording. The result confirms submission only, not arrival or inspection completion.",
          {"route_id": {"type": "string", "minLength": 1},
           "revision": {"type": "integer", "minimum": 0, "default": 0}}, ["route_id"], writes=True)
+    tool("preview_navigation", "Preview a native navigation goal without publishing it. Use exact map-frame coordinates and report the returned feasibility reasons.",
+         {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0.0},
+          "acceptance_radius_m": {"type": "number", "exclusiveMinimum": 0}}, ["x", "y"])
+    tool("start_navigation", "Start native navigation to an exact map-frame coordinate. The result is admission only. Retain task_id and query get_navigation_status until native feedback reports success, failure or cancellation.",
+         {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0.0},
+          "yaw": {"type": ["number", "null"], "default": None},
+          "acceptance_radius_m": {"type": ["number", "null"], "exclusiveMinimum": 0},
+          "max_speed_mps": {"type": ["number", "null"], "exclusiveMinimum": 0}}, ["x", "y"], writes=True)
+    navigation_task_id = {"type": "string", "minLength": 1, "description": "Exact task_id returned by start_navigation or native navigation status."}
+    tool("get_navigation_status", "Read the native lifecycle of one navigation task. A missing or stale status is not success or idle.",
+         {"task_id": navigation_task_id}, ["task_id"])
+    tool("cancel_navigation", "Request cancellation of exactly one native navigation task. Query get_navigation_status until stop confirmation is reported.",
+         {"task_id": navigation_task_id, "reason": {"type": "string", "default": "agent_cancel"}}, ["task_id"], writes=True)
+    tool("pause_navigation", "Request a stop-confirmed pause of exactly one native navigation task.",
+         {"task_id": navigation_task_id, "reason": {"type": "string", "default": "agent_pause"}}, ["task_id"], writes=True)
+    tool("resume_navigation", "Resume exactly one paused native navigation task. This does not create a replacement goal.",
+         {"task_id": navigation_task_id, "reason": {"type": "string", "default": "agent_resume"}}, ["task_id"], writes=True)
+    tool("set_navigation_speed", "Change the speed limit of exactly one active native navigation task while retaining its route.",
+         {"task_id": navigation_task_id, "max_speed_mps": {"type": "number", "exclusiveMinimum": 0}},
+         ["task_id", "max_speed_mps"], writes=True)
     tool("preview_map_edits", "Compute a point-cloud edit preview. Does not save or activate a map.", edits, edits)
     tool("save_map_copy", "Save a reviewed edit as a NEW map; preserves the original. Report actual build state; never activate or move.",
          {**edits, "name": {"type": "string"}}, [*edits, "name"], writes=True)
@@ -129,6 +162,43 @@ def workbench_tools(gw, *, client_id: str = "web"):
                 if hasattr(result, "model_dump"):
                     return result.model_dump(mode="json")
                 return result
+            if name == "preview_navigation":
+                result = ControlCommandService(gw).preview_plan(PlanPreviewRequest(
+                    x=args["x"], y=args["y"], z=args.get("z", 0.0),
+                    acceptance_radius_m=args.get("acceptance_radius_m"),
+                ))
+                return result
+            if name == "start_navigation":
+                body = GoalRequest(
+                    x=args["x"], y=args["y"], z=args.get("z", 0.0), yaw=args.get("yaw"),
+                    acceptance_radius_m=args.get("acceptance_radius_m"),
+                    max_speed_mps=args.get("max_speed_mps"), source="api", target_type="coordinate",
+                    instruction="Agent native navigation", client_id=client_id,
+                    request_id=f"agent-nav-{uuid.uuid4().hex}",
+                )
+                result = start_navigation(gw, body)
+                return json.loads(result.body) if isinstance(result, JSONResponse) else result
+            if name == "get_navigation_status":
+                return query_navigation_task_status(gw, args["task_id"])
+            if name == "cancel_navigation":
+                result = cancel_navigation(gw, CancelRequest(
+                    task_id=args["task_id"], reason=args.get("reason", "agent_cancel"), client_id=client_id,
+                    request_id=f"agent-cancel-{uuid.uuid4().hex}",
+                ), args["task_id"])
+                return json.loads(result.body) if isinstance(result, JSONResponse) else result
+            if name in {"pause_navigation", "resume_navigation", "set_navigation_speed"}:
+                task_id = args["task_id"]
+                if name == "pause_navigation":
+                    body = NavigationTaskPauseRequest(task_id=task_id, reason=args.get("reason", "agent_pause"), client_id=client_id)
+                    action = "pause"
+                elif name == "resume_navigation":
+                    body = NavigationTaskResumeRequest(task_id=task_id, reason=args.get("reason", "agent_resume"), client_id=client_id)
+                    action = "resume"
+                else:
+                    body = NavigationTaskSpeedLimitRequest(task_id=task_id, max_speed_mps=args["max_speed_mps"], client_id=client_id)
+                    action = "speed_limit"
+                result = control_task(gw, body, route_task_id=task_id, action=action)
+                return json.loads(result.body) if isinstance(result, JSONResponse) else result
             if name in {"start_imu_recording", "stop_imu_recording", "list_imu_records", "read_imu_record"}:
                 monitor = gw._imu_monitor
                 if name == "start_imu_recording":
