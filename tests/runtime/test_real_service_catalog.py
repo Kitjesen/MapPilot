@@ -442,6 +442,8 @@ def test_install_services_and_runtime_order():
     assert service_install_enable_default("nav") == "0"
     assert service_install_enable_default("mapd") == "0"
     assert service_install_enable_default("driver") == "0"
+    assert service_install_enable_default("lingtu") == "0"
+    assert service_install_enable_default("host") == "0"
     assert service_install_enable_default("unknown") == ""
 
 

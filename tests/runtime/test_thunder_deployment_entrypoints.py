@@ -1585,6 +1585,10 @@ def test_field_mode_units_require_one_valid_transient_product_session() -> None:
         assert "EnvironmentFile=/run/lingtu/session.env" in unit
         assert f"ExecStartPre=/bin/bash {guard_path} {role}" in unit
 
+    host_unit = _read("scripts/deploy/thunder/lt-host.service")
+    assert "[Install]" not in host_unit
+    assert "WantedBy=" not in host_unit
+
     guard = _read("scripts/deploy/thunder/require_product_session.sh")
     for required in (
         "LINGTU_PRODUCT",
