@@ -2961,6 +2961,78 @@ Verification:
   about 0.6 ms on a 320×120 downscaled image in the x86 container. This is
   not a target-platform measurement.
 
+## Provisional DINO return while the VLM verifies, 2026-11-17
+
+At the user's direction, a long-absence return may now be followed
+provisionally while the VLM verifies it. Previously such a return waited for
+a VLM MATCH before any motion goal.
+
+`PersonTracker(provisional_min_similarity=...)` defaults to off.
+`VisualServoModule` uses 0.75, and enables it on each tick only while a
+vision verifier is available. A return after more than 1 s is followed
+provisionally only if all of these hold:
+
+- it passed the existing three-frame confirmation;
+- it was never seen beside the target, and was never refused before;
+- it lies within 2 m of the predicted loss point;
+- its DINO score is at least 0.75, and at most 0.05 below the target's own
+  tracked-similarity EMA. A target that has not been tracked for at least
+  one frame has no EMA yet and is never followed provisionally.
+
+While provisional:
+
+- the target's DINO reference is not adapted;
+- the pending check survives a detection dropout;
+- VisualServo publishes goals and starts verification.
+
+On the verdict:
+
+- MATCH clears the provisional state.
+- OTHER or UNKNOWN (VLM failure or timeout) restores the target's previous
+  position, track ID and timestamps. That candidate is never followed
+  provisionally again, and VisualServo cancels the goal with
+  `visual_servo_identity_revoked`.
+
+This also repairs a gap in the earlier pending-check fix.
+`prepare_observation`, the VisualServo path, did not encode any person while
+a check was pending, so the original track could not resume in production
+even though `update`-only tests passed. While a check is pending it now
+encodes the current track only. A test using `prepare_observation` fails on
+the previous code.
+
+Synthetic results (eight scenarios; `lookalike_reentry` added: the target
+stays hidden behind an occluder and a 0.9-cosine lookalike emerges where it
+vanished):
+
+| Variant | Mean AO | Wrong-person frames | Missed visible |
+| --- | --- | --- | --- |
+| Appearance, oracle 7.88 s (gated) | 0.812 | 0 | 81 |
+| Appearance, oracle 7.88 s, provisional | 0.855 | 0 | 35 |
+| Appearance, oracle 0 s (gated) | 0.854 | 0 | 36 |
+
+`occlusion_reentry` improved from AO 0.415 to 0.754 with provisional
+following.
+
+An absolute 0.75 threshold alone followed the `lookalike_reentry` impostor
+for 47 frames: its OTHER verdict was still pending when the 16 s scenario
+ended. The tracked-similarity condition reduced this to 0.
+
+Remaining risk:
+
+- **A lookalike can still be followed.** One that scores within 0.05 of the
+  target, or a view change that lowers the target's own score, decides the
+  outcome. In the first case the robot follows the wrong person until the
+  VLM answers. Production allows up to 30 s for selection and verification,
+  and the measured median Kimi call is 7.88 s.
+- **The thresholds are untuned.** The 0.75, 0.05 and 2 m values are
+  synthetic and need tuning on TPT-Bench or field recordings with the
+  deployed DINO.
+
+Verification: the perception, decision, runtime, semantic-integration and
+tools suites show no new failures against the previous main: 4782 passed,
+with the same 70 environmental failures and 24 collection errors. No NX,
+MuJoCo or field run was made.
+
 ## Sources
 
 - [MOT17 official dataset](https://motchallenge.net/data/MOT17.zip)

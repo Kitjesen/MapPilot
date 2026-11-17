@@ -96,6 +96,7 @@ def _vision_follow(
     release: threading.Event | None = None,
     *,
     timeout_sec: float = 1.0,
+    provisional: float | None = None,
 ):
     started = threading.Event()
 
@@ -125,7 +126,8 @@ def _vision_follow(
         _loop = loop
         _timeout_sec = timeout_sec
 
-    vs = VisualServoModule()
+    # Default to verification-gated returns; provisional tests opt in.
+    vs = VisualServoModule(person_provisional_min_similarity=provisional)
     vs.on_system_modules({"LLMModule": LLM()})
     vs._mode = "follow"
     vs._target_label = "person in red"
@@ -1689,3 +1691,116 @@ def test_new_identity_candidate_supersedes_held_verification(monkeypatch):
     finally:
         release_first.set()
         _close_vision_loop(loop, loop_thread)
+
+
+def _track_original(vs: VisualServoModule) -> None:
+    """Provisional returns are compared with how the target scored while tracked."""
+    vs._latest_detections = [
+        Detection3D(
+            id="original",
+            label="person",
+            confidence=0.9,
+            position=Vector3(4.0, 0.0, 0.0),
+            bbox_2d=[0, 0, 16, 16],
+            ts=1.1,
+        )
+    ]
+    vs._latest_bgr_ts = 1.1
+    vs._latest_detection_ts = 1.1
+    vs._tick_follow()
+
+
+def test_provisional_return_is_followed_while_the_vlm_verifies_it():
+    release = threading.Event()
+    vs, client, started, loop, loop_thread = _vision_follow("MATCH", release, provisional=0.75)
+    resolved = threading.Event()
+    original_resolve = vs._person_tracker.resolve_identity
+
+    def resolve(candidate_id, source_ts, verdict):
+        result = original_resolve(candidate_id, source_ts, verdict)
+        resolved.set()
+        return result
+
+    vs._person_tracker.resolve_identity = resolve
+    goals = []
+    vs.goal_pose._add_callback(goals.append)
+    try:
+        _track_original(vs)
+        goals.clear()
+        _offer_returning_identity(vs)
+        assert len(goals) == 1
+        assert vs._target_visible is True
+        assert vs._person_tracker.status()["identity_provisional"] is True
+        assert started.wait(timeout=1.0)
+
+        release.set()
+        assert resolved.wait(timeout=1.0)
+        assert vs._person_tracker.status()["identity_provisional"] is False
+        assert vs._person_tracker.status()["id"] == "returned"
+        assert client.calls == 1
+    finally:
+        release.set()
+        _close_vision_loop(loop, loop_thread)
+
+
+def test_vlm_other_revokes_a_provisional_return_and_cancels_its_goal():
+    vs, _client, _started, loop, loop_thread = _vision_follow("OTHER", provisional=0.75)
+    resolved = threading.Event()
+    original_resolve = vs._person_tracker.resolve_identity
+
+    def resolve(candidate_id, source_ts, verdict):
+        result = original_resolve(candidate_id, source_ts, verdict)
+        resolved.set()
+        return result
+
+    vs._person_tracker.resolve_identity = resolve
+    goals = []
+    cancels = []
+    vs.goal_pose._add_callback(goals.append)
+    vs.goal_cancel._add_callback(cancels.append)
+    vs._navigation_tasks = {"visual-goal"}
+    try:
+        _track_original(vs)
+        goals.clear()
+        _offer_returning_identity(vs, "wrong-person")
+        assert len(goals) == 1
+        assert resolved.wait(timeout=1.0)
+        assert [cancel.reason for cancel in cancels] == ["visual_servo_identity_revoked"]
+
+        vs._latest_detections = [
+            Detection3D(
+                id="wrong-person",
+                label="person",
+                confidence=0.9,
+                position=Vector3(4.2, 0.0, 0.0),
+                bbox_2d=[0, 0, 16, 16],
+                ts=5.0,
+            )
+        ]
+        vs._tick_follow()
+
+        assert len(goals) == 1
+        assert vs._target_visible is False
+        assert vs._person_tracker.status()["id"] == "original"
+        assert vs._person_tracker.status()["identity_provisional"] is False
+    finally:
+        _close_vision_loop(loop, loop_thread)
+
+
+def test_provisional_following_needs_an_available_verifier():
+    vs = VisualServoModule()
+    vs._mode = "follow"
+    vs._target_label = "person in red"
+    vs._person_tracker.set_dino_encoder(_FakeDino())
+    vs._latest_bgr = np.ones((32, 32, 3), dtype=np.uint8)
+    vs._person_tracker.lock_target(
+        _person("original", "person", 4.0, [0, 0, 16, 16]) | {"ts": 1.0},
+        vs._latest_bgr[:16, :16],
+    )
+    goals = []
+    vs.goal_pose._add_callback(goals.append)
+
+    _offer_returning_identity(vs)
+
+    assert goals == []
+    assert vs._person_tracker.status()["identity_provisional"] is False

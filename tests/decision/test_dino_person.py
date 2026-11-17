@@ -1037,3 +1037,122 @@ def test_a_short_id_break_with_different_appearance_still_needs_verification():
 
     assert not tracker.update([person("fragment", ts=1.1, x=0.05)], changed)
     assert tracker.status()["id"] == "old"
+
+
+def provisional():
+    tracker = PersonTracker(provisional_min_similarity=0.75)
+    tracker.set_dino_encoder(Dino())
+    frame = np.ones((16, 16, 3), dtype=np.uint8)
+    tracker.lock_target(person("old"), frame)
+    # Provisional returns are compared with how the target scored while tracked.
+    assert tracker.update([person("old", ts=1.03)], frame)
+    return tracker
+
+
+def test_untracked_target_has_no_provisional_return():
+    tracker = PersonTracker(provisional_min_similarity=0.75)
+    tracker.set_dino_encoder(Dino())
+    frame = np.ones((16, 16, 3), dtype=np.uint8)
+    tracker.lock_target(person("old"), frame)
+
+    for timestamp in (3.0, 3.03, 3.06):
+        assert not tracker.update([person("back", ts=timestamp, x=0.5)], frame)
+    assert tracker.status()["identity_provisional"] is False
+
+
+def test_lookalike_scoring_below_the_tracked_similarity_is_not_followed_provisionally():
+    class Lookalike(Dino):
+        def encode(self, crop):
+            return np.array([1.0, 0.0]) if int(crop[0, 0, 0]) == 1 else np.array([0.9, 0.43589])
+
+    tracker = PersonTracker(provisional_min_similarity=0.75)
+    tracker.set_dino_encoder(Lookalike())
+    tracker.lock_target(person("old"), np.ones((16, 16, 3), dtype=np.uint8))
+    assert tracker.update([person("old", ts=1.03)], np.ones((16, 16, 3), dtype=np.uint8))
+    lookalike = np.full((16, 16, 3), 3, np.uint8)
+
+    for timestamp in (3.0, 3.03, 3.06):
+        assert not tracker.update([person("similar", ts=timestamp, x=0.5)], lookalike)
+    assert tracker.status()["identity_provisional"] is False
+    assert tracker.identity_candidate()["object"]["id"] == "similar"
+
+
+def test_long_absence_return_near_the_loss_point_is_followed_provisionally():
+    tracker = provisional()
+    frame = np.ones((16, 16, 3), np.uint8)
+    reference = tracker._person.dino_feat.copy()
+
+    assert not tracker.update([person("back", ts=3.0, x=0.5)], frame)
+    assert not tracker.update([person("back", ts=3.03, x=0.5)], frame)
+    assert tracker.update([person("back", ts=3.06, x=0.5)], frame)
+    assert tracker.status()["identity_provisional"] is True
+    assert tracker.identity_candidate()["object"]["id"] == "back"
+    assert tracker.update([person("back", ts=3.09, x=0.55)], frame)
+    np.testing.assert_array_equal(tracker._person.dino_feat, reference)
+
+
+def test_far_return_still_waits_for_verification():
+    tracker = provisional()
+    frame = np.ones((16, 16, 3), np.uint8)
+
+    for timestamp in (3.0, 3.03, 3.06):
+        assert not tracker.update([person("far", ts=timestamp, x=3.5)], frame)
+    assert tracker.status()["identity_provisional"] is False
+    assert tracker.identity_candidate()["object"]["id"] == "far"
+
+
+def test_refused_provisional_restores_the_target_and_is_not_retried_provisionally():
+    tracker = provisional()
+    frame = np.ones((16, 16, 3), np.uint8)
+    for timestamp in (3.0, 3.03, 3.06):
+        tracker.update([person("back", ts=timestamp, x=0.5)], frame)
+    pending = tracker.identity_candidate()
+
+    assert not tracker.resolve_identity("back", pending["object"]["ts"], "OTHER")
+    assert tracker.consume_provisional_revocation() is True
+    assert tracker.consume_provisional_revocation() is False
+    assert tracker.status()["id"] == "old"
+    assert tracker._person.position[0] == 0.0
+    assert tracker._person.observation_ts == 1.03
+
+    for timestamp in (5.0, 5.03, 5.06, 5.09):
+        assert not tracker.update([person("back", ts=timestamp, x=0.5)], frame)
+    assert tracker.status()["identity_provisional"] is False
+
+
+def test_provisional_dropout_keeps_the_in_flight_check():
+    tracker = provisional()
+    frame = np.ones((16, 16, 3), np.uint8)
+    for timestamp in (3.0, 3.03, 3.06):
+        tracker.update([person("back", ts=timestamp, x=0.5)], frame)
+    pending = tracker.identity_candidate()
+
+    assert not tracker.update([], frame)
+    assert not tracker.update([person("bystander", ts=3.1, x=3.0)], frame)
+    assert tracker.consume_provisional_revocation() is False
+    assert tracker.update([person("back", ts=3.15, x=0.5)], frame)
+    assert tracker.resolve_identity("back", pending["object"]["ts"], "MATCH")
+    assert tracker.status()["identity_provisional"] is False
+
+
+def test_prepared_observations_still_match_the_current_track_while_a_check_is_pending():
+    tracker = provisional()
+    frame = np.ones((16, 16, 3), np.uint8)
+    for timestamp in (3.0, 3.03, 3.06):
+        tracker.update(tracker.prepare_observation([person("back", ts=timestamp, x=0.5)], frame), frame)
+    assert tracker.status()["identity_provisional"] is True
+
+    prepared = tracker.prepare_observation([person("back", ts=3.09, x=0.55)], frame)
+    assert tracker.update(prepared, frame)
+
+
+def test_original_track_returning_with_prepared_features_cancels_a_pending_check():
+    tracker = configured()
+    frame = np.ones((16, 16, 3), np.uint8)
+    for timestamp in (1.6, 1.63, 1.66):
+        tracker.update(tracker.prepare_observation([person("other", ts=timestamp)], frame), frame)
+    assert tracker.identity_candidate() is not None
+
+    observed = [person("old", ts=1.7), person("other", ts=1.7)]
+    assert tracker.update(tracker.prepare_observation(observed, frame), frame)
+    assert tracker.identity_candidate() is None
