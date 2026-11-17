@@ -376,18 +376,8 @@ void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
   const std::size_t point_limit = cfg.local_map_debug_point_limit;
   const bool enabled = point_limit > 0;
   const std::size_t source_points = obstacle_xyzh.size() / 4;
-  const bool cmu_height_filter = false;
-  std::vector<std::size_t> obstacle_indices;
-  obstacle_indices.reserve(source_points);
-  for (std::size_t index = 0; index < source_points; ++index) {
-    const float height = obstacle_xyzh[index * 4U + 3U];
-    if (cmu_height_filter &&
-        (!std::isfinite(height) || height < cfg.planner_obstacle_height_min_m ||
-         height > cfg.planner_obstacle_height_max_m)) {
-      continue;
-    }
-    obstacle_indices.push_back(index);
-  }
+  std::vector<std::size_t> obstacle_indices(source_points);
+  std::iota(obstacle_indices.begin(), obstacle_indices.end(), std::size_t{0});
   const std::size_t total_points = obstacle_indices.size();
   std::vector<std::size_t> risk_indices;
   if (enabled) {
@@ -438,8 +428,7 @@ void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
   out << "\"enabled\": " << (enabled ? "true" : "false") << ", ";
   out << "\"frame_id\": \"map\", ";
   out << "\"source_obstacle_points_total\": " << source_points << ", ";
-  out << "\"obstacle_filter\": \""
-      << (cmu_height_filter ? "cmu_height_envelope" : "none") << "\", ";
+  out << "\"obstacle_filter\": \"none\", ";
   out << "\"obstacle_height_range_m\": [" << cfg.planner_obstacle_height_min_m << ", "
       << cfg.planner_obstacle_height_max_m << "], ";
   out << "\"obstacle_points_fresh\": " << (obstacle_points_fresh ? "true" : "false") << ", ";

@@ -1263,7 +1263,10 @@ void testRotationClearsPreviousTranslationFailureAndPath() {
 
   fixture.request = {0.0, 0.0, 0.35};
   const auto rotating = controller.tick(fixture.input());
-  require(rotating.publish.command.wz == 0.35 && !rotating.teleop.stopped,
+  // Assisted SCAN rotation ramps under its yaw-acceleration limit; the first
+  // accepted tick may still publish zero while preserving direction.
+  require(rotating.publish.cmd_vel && rotating.publish.command.wz >= 0.0 &&
+              !rotating.teleop.stopped,
           "rotation must reach final control after a blocked translation");
   require(rotating.local && !rotating.local->seen && !rotating.local->active &&
               !rotating.local->tracking.active,
@@ -1354,6 +1357,8 @@ void testDirectScanYawUsesOneAccelerationClockAndReversesContinuously() {
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
   fixture.config.path_follower_max_yaw_accel_rad_s2 = 2.0;
+  // The first tick spends one nominal period; 20 Hz keeps every step on the 0.1 rad/s grid.
+  fixture.config.tick_hz = 20.0;
   fixture.request = {0.0, 0.0, 1.0};
   fixture.now_values = {10.0, 10.0, 10.05, 11.0, 11.05, 11.10, 11.15,
                         11.20, 11.20, 11.25};

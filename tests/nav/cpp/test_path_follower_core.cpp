@@ -226,7 +226,7 @@ TEST(FollowerPath, DirectionThresholdControlsLinearAcceleration) {
   EXPECT_NE(output.cmd.wz, 0.0);
 }
 
-TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
+TEST(FollowerLifecycle, PathAndSplineUseTheirOwnHeadingGains) {
   Follower follower;
   FollowerState state;
   state.vehicleYawRelative = 0.2;
@@ -236,13 +236,14 @@ TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
   state.params.maxYawRateRadS = 10.0;
   state.params.maxYawAccelRadS2 = 0.0;
   state.params.nominalDt = 0.05;
-  state.params.yawRateGain = 2.5;
+  // A stationary path follower turns with the stop gain.
+  state.params.stopYawRateGain = 2.5;
   state.params.spline.yawGain = 3.0;
   state.params.spline.headingErrorThreshold = 1.0;
 
   const auto path = follower.follow(LocalPlan::path(straightPath()), state);
   EXPECT_NEAR(path.cmd.wz, -0.5, 1e-12);
-  EXPECT_DOUBLE_EQ(state.params.yawRateGain, 2.5);
+  EXPECT_DOUBLE_EQ(state.params.stopYawRateGain, 2.5);
   EXPECT_DOUBLE_EQ(state.params.nominalDt, 0.05);
 
   const auto spline = follower.follow(

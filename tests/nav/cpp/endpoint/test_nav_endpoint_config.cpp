@@ -84,8 +84,6 @@ CliConfig parse(std::vector<std::string> args) {
 void testNavigationRateAndAcceleration() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--tick-hz",
       "20",
       "--max-speed-mps",
@@ -166,7 +164,7 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
                 buildLocalPlannerParams(cfg).scan.maxAcceleration == 0.5,
             "ordinary defaults must reach planner and follower");
 
-    const auto lower = parse({"navd", "--path-library", "fixture-paths", "--local-planner", backend,
+    const auto lower = parse({"navd", "--local-planner", backend,
                               "--max-accel-mps2", "1.3", "--path-follower-max-accel-mps2", "0.4"});
     require(lower.path_follower_max_accel_mps2 == 0.4 &&
                 lower.scan_planner.maxAcceleration == 0.4 &&
@@ -196,8 +194,6 @@ void testOrdinaryAccelerationDefaultsAndExplicitOverrides() {
 void testCompiledProductMotionContractParses() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--product",
       "nav",
       "--waypoint-reached-m",
@@ -263,17 +259,17 @@ void testCompiledProductMotionContractParses() {
           "path follower heading-alignment hysteresis must parse");
   const auto executor_config = buildExecutorConfig(cfg);
   require(std::abs(executor_config.follower.maxYawRateRadS - 0.70) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignEnterRad - 0.40) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignExitRad - 0.40) < 1e-12 &&
-              std::abs(executor_config.follower.baseLookAheadDis - 0.50) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignEnterRad - 0.80) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignExitRad - 0.30) < 1e-12 &&
+              std::abs(executor_config.follower.baseLookAheadDis - 0.35) < 1e-12 &&
               std::abs(executor_config.follower.maxAccel - 1.0) < 1e-12,
-          "CMU config must apply the official Go2 follower profile");
+          "the compiled follower contract must reach the executor unchanged");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
-  require(std::abs(status.follower_lookahead_m - 0.50) < 1e-12 &&
+  require(std::abs(status.follower_lookahead_m - 0.35) < 1e-12 &&
               std::abs(status.max_accel_mps2 - 1.0) < 1e-12 &&
-              std::abs(status.follower_goal_tolerance_m - 0.30) < 1e-12 &&
-              std::abs(status.nominal_dt_s - 0.01) < 1e-12,
-          "CMU status must report the effective Go2 follower profile");
+              std::abs(status.follower_goal_tolerance_m - 0.05) < 1e-12 &&
+              std::abs(status.nominal_dt_s - 1.0 / cfg.tick_hz) < 1e-12,
+          "status must report the effective follower contract");
   require(executor_config.recovery.behavior_order.size() == 2U &&
               executor_config.recovery.behavior_order[0] ==
                   nav_kernel::RecoveryAction::Rotate &&
@@ -298,7 +294,7 @@ void testDynamicObstacleThresholdsParse() {
   ScopedEnvironment min_speed("LINGTU_NAV_DYNAMIC_MIN_SPEED_MPS", "0.18");
   ScopedEnvironment confirm_frames("LINGTU_NAV_DYNAMIC_CONFIRM_FRAMES", "3");
 
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
 
   require(cfg.dynamic_min_cells == 5U, "dynamic obstacle minimum cells must parse");
   require(std::abs(cfg.dynamic_min_speed_mps - 0.18) < 1e-12,
@@ -310,7 +306,7 @@ void testDynamicObstacleThresholdsParse() {
 void testLegacyNativeProfileSelectorIsRejected() {
   bool rejected = false;
   try {
-    (void)parse({"navd", "--path-library", "fixture-paths", "--profile", "nav"});
+    (void)parse({"navd", "--profile", "nav"});
   } catch (const std::runtime_error &) {
     rejected = true;
   }
@@ -319,7 +315,7 @@ void testLegacyNativeProfileSelectorIsRejected() {
 void testCompiledProductMotionContractRejectsMinimumAboveMaximum() {
   bool rejected = false;
   try {
-    (void)parse({"navd", "--path-library", "fixture-paths", "--path-follower-max-speed-mps", "0.2",
+    (void)parse({"navd", "--path-follower-max-speed-mps", "0.2",
                  "--path-follower-min-speed-mps", "0.3"});
   } catch (const std::runtime_error &) {
     rejected = true;
@@ -330,7 +326,7 @@ void testCompiledProductMotionContractRejectsMinimumAboveMaximum() {
 void testRecoveryConfigurationRejectsInvalidOrderAndAngles() {
   bool duplicate_rejected = false;
   try {
-    (void)parse({"navd", "--path-library", "fixture-paths", "--recovery-order",
+    (void)parse({"navd", "--recovery-order",
                  "rotate,rotate"});
   } catch (const std::runtime_error &) {
     duplicate_rejected = true;
@@ -339,7 +335,7 @@ void testRecoveryConfigurationRejectsInvalidOrderAndAngles() {
 
   bool angle_range_rejected = false;
   try {
-    (void)parse({"navd", "--path-library", "fixture-paths", "--recovery-min-rotation-rad",
+    (void)parse({"navd", "--recovery-min-rotation-rad",
                  "1.0", "--recovery-max-rotation-rad", "0.5"});
   } catch (const std::runtime_error &) {
     angle_range_rejected = true;
@@ -350,8 +346,6 @@ void testRecoveryConfigurationRejectsInvalidOrderAndAngles() {
 void testUnsafeNegativeValuesClampToZero() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--tick-hz",
       "0",
       "--max-speed-mps",
@@ -367,8 +361,6 @@ void testUnsafeNegativeValuesClampToZero() {
 void testInputFutureToleranceIsProfileConfigurable() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--input-future-tolerance-s",
       "0.4",
   });
@@ -379,8 +371,6 @@ void testInputFutureToleranceIsProfileConfigurable() {
 void testEstopLatchFileIsConfigurable() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--estop-latch-file",
       "/tmp/lingtu-estop-latched",
   });
@@ -395,9 +385,7 @@ void testPlannerArtifactCarriesRuntimeMapIdentity() {
   ScopedEnvironment map_frame("LINGTU_MAP_FRAME", "map");
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(cfg.map_path == "/tmp/lingtu/maps/active/octomap.ot",
           "configured OctoMap artifact path must remain explicit");
   require(cfg.map_identity.map_id == "active" && cfg.map_identity.content_epoch == 7 &&
@@ -408,8 +396,6 @@ void testPlannerArtifactCarriesRuntimeMapIdentity() {
 void testOctoPlanner3DPhysicalContractIsConfigurable() {
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--octo-robot-radius-m",
       "0.25",
       "--octo-body-clearance-below-m",
@@ -468,9 +454,14 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "0.18",
   });
   const auto &octo = cfg.octoplanner_options;
-  require(std::abs(octo.robot_radius - 0.25) < 1e-12, "OctoPlanner3D radius must parse");
-  require(std::abs(octo.body_clearance_below_m - 0.18) < 1e-12, "body lower envelope must parse");
-  require(std::abs(octo.body_clearance_above_m - 0.30) < 1e-12, "body upper envelope must parse");
+  // SCAN collision cylinders own the body envelope; --octo-* body flags do not override it.
+  const double voxel = cfg.scan_planner.voxelResolution;
+  require(std::abs(octo.robot_radius - cfg.collision_cylinder_radius_m) < 1e-12 &&
+              std::abs(octo.body_clearance_below_m -
+                        std::ceil(cfg.collision_clearance_below_m / voxel) * voxel) < 1e-12 &&
+              std::abs(octo.body_clearance_above_m -
+                        std::ceil(cfg.collision_clearance_above_m / voxel) * voxel) < 1e-12,
+          "OctoPlanner3D body envelope must come from the SCAN collision cylinders");
   require(octo.max_iterations == 240000, "A* budget must parse");
   require(octo.snap_search_radius_cells == 16, "snap radius must parse");
   require(octo.ground_support, "ground support must stay enabled");
@@ -491,9 +482,7 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
 void testFarPlannerIsAnExplicitOptionalBackend() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(defaults.global_planner == GlobalPlannerBackend::OctoPlanner3D,
           "OctoPlanner3D must remain the product default");
 
@@ -506,8 +495,6 @@ void testFarPlannerIsAnExplicitOptionalBackend() {
                               "/tmp/lingtu/maps/active/occupancy.npz");
   const auto far = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--global-planner",
       "far",
       "--far-robot-radius-m",
@@ -552,8 +539,6 @@ void testFarPlannerRejectsInvalidConfiguration() {
   try {
     (void)parse({
         "navd",
-        "--path-library",
-        "fixture-paths",
         "--global-planner",
         "unsupported",
     });
@@ -566,8 +551,6 @@ void testFarPlannerRejectsInvalidConfiguration() {
   try {
     (void)parse({
         "navd",
-        "--path-library",
-        "fixture-paths",
         "--global-planner",
         "far",
         "--far-allow-unknown-fallback",
@@ -583,8 +566,6 @@ void testFarPlannerRejectsInvalidConfiguration() {
   try {
     (void)parse({
         "navd",
-        "--path-library",
-        "fixture-paths",
         "--global-planner",
         "far",
         "--far-max-graph-nodes",
@@ -601,8 +582,6 @@ void testNonFiniteMotionLimitsFailClosed() {
   try {
     (void)parse({
         "navd",
-        "--path-library",
-        "fixture-paths",
         "--max-accel-mps2",
         "inf",
     });
@@ -615,8 +594,6 @@ void testNonFiniteMotionLimitsFailClosed() {
   try {
     (void)parse({
         "navd",
-        "--path-library",
-        "fixture-paths",
         "--teleop-planner-max-deviation-deg",
         "nan",
     });
@@ -661,8 +638,6 @@ void testSafetyThresholdOrderingFailsClosed() {
 
   const auto distinct_costs = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--control-mode",
       "teleop_avoid",
       "--teleop-local-planner",
@@ -680,8 +655,6 @@ void testSafetyThresholdOrderingFailsClosed() {
 void testControlModesLockTheirSafetyContract() {
   const auto teleop = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--control-mode",
       "teleop",
       "--check-obstacle",
@@ -695,8 +668,6 @@ void testControlModesLockTheirSafetyContract() {
 
   const auto teleop_avoid = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--control-mode",
       "teleop_avoid",
       "--check-obstacle",
@@ -707,7 +678,7 @@ void testControlModesLockTheirSafetyContract() {
   require(teleop_avoid.control_mode == ControlMode::TeleopAvoid, "teleop_avoid mode must parse");
   require(teleop_avoid.check_obstacle, "teleop_avoid must enforce obstacle checks");
   require(!teleop_avoid.use_traversability_cost,
-          "teleop_avoid must allow CMU scan-only operation without traversability");
+          "teleop_avoid must run without traversability");
 
   const auto teleop_gate = inputGateConfig(teleop);
   require(!teleop_gate.require_odom, "pure teleop must not require odometry");
@@ -720,7 +691,8 @@ void testControlModesLockTheirSafetyContract() {
 
   const auto avoid_gate = inputGateConfig(teleop_avoid);
   require(avoid_gate.require_odom, "teleop_avoid needs pose for spatial obstacle safety");
-  require(avoid_gate.require_cloud, "teleop_avoid must require obstacle cloud");
+  require(avoid_gate.require_local_collision && !avoid_gate.require_cloud,
+          "teleop_avoid must require the SCAN collision snapshot, not a raw obstacle cloud");
   require(!avoid_gate.require_traversability,
           "scan-only teleop_avoid must not wait for traversability");
   require(buildStatusWriterConfig(teleop_avoid, avoid_gate).stop_confirmation_evidence ==
@@ -730,8 +702,7 @@ void testControlModesLockTheirSafetyContract() {
           "teleop_avoid must use odometry freshness without a second localization-health hard gate");
 
   const auto autonomy = parse({
-      "navd",          "--path-library",
-      "fixture-paths", "--control-mode",
+      "navd",          "--control-mode",
       "autonomy",      "--allow-teleop-takeover",
       "true",          "--teleop-local-planner",
       "true",          "--teleop-planner-horizon-m",
@@ -766,8 +737,6 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
       "navd",
       "--control-mode",
       "teleop",
-      "--path-library",
-      "",
       "--path-follower-lookahead-m", "0.3",
       "--path-follower-goal-tolerance-m", "0.2",
       "--path-follower-max-accel-mps2", "1.0",
@@ -778,53 +747,19 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
   require(std::abs(status.follower_lookahead_m - teleop.path_follower_lookahead_m) < 1e-12 &&
               std::abs(status.follower_goal_tolerance_m - teleop.path_follower_goal_tolerance_m) < 1e-12 &&
               std::abs(status.max_accel_mps2 - teleop.path_follower_max_accel_mps2) < 1e-12,
-          "unused CMU follower defaults must not override the teleop/map RunPlan status");
+          "teleop status must report the RunPlan follower contract");
   const auto avoid = parse({
       "navd",
       "--control-mode",
       "teleop_avoid",
-      "--path-library",
-      "",
-  });
+      });
   require(avoid.path_library_dir.empty(), "stop-only teleop_avoid must not require planner assets");
-
-  bool assisted_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--control-mode",
-        "teleop_avoid",
-        "--teleop-local-planner",
-        "true",
-        "--path-library",
-        "",
-    });
-  } catch (const std::runtime_error &) {
-    assisted_rejected = true;
-  }
-  require(assisted_rejected, "assisted teleop must require local planner assets");
-
-  bool autonomy_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--control-mode",
-        "autonomy",
-        "--path-library",
-        "",
-    });
-  } catch (const std::runtime_error &) {
-    autonomy_rejected = true;
-  }
-  require(autonomy_rejected, "autonomy must still require planner assets");
 }
 
 void testLocalPlannerVisualizationIsExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(defaults.local_planner_debug_candidate_limit == 0,
           "candidate debug snapshots must be disabled by default");
   require(defaults.local_map_debug_point_limit == 0,
@@ -832,8 +767,6 @@ void testLocalPlannerVisualizationIsExplicitAndBounded() {
 
   const auto enabled = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--local-planner-debug-candidates",
       "99",
       "--local-map-debug-points",
@@ -847,16 +780,12 @@ void testLocalPlannerVisualizationIsExplicitAndBounded() {
 void testLocalPlannerScoringThreadsAreExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(defaults.local_planner_threads == 2,
           "local planner must use a bounded two-thread scoring team by default");
 
   const auto configured = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--local-planner-threads",
       "3",
   });
@@ -864,8 +793,6 @@ void testLocalPlannerScoringThreadsAreExplicitAndBounded() {
 
   const auto clamped = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--local-planner-threads",
       "99",
   });
@@ -876,16 +803,12 @@ void testLocalPlannerScoringThreadsAreExplicitAndBounded() {
 void testStopConfirmationTimeoutIsExplicitAndFailClosed() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(std::abs(defaults.stop_confirmation_timeout_s - 4.0) < 1e-12,
           "stop confirmation must allow a bounded SLAM publication gap by default");
 
   const auto configured = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--stop-confirmation-timeout-s",
       "5.5",
   });
@@ -897,8 +820,6 @@ void testStopConfirmationTimeoutIsExplicitAndFailClosed() {
     try {
       (void)parse({
           "navd",
-          "--path-library",
-          "fixture-paths",
           "--stop-confirmation-timeout-s",
           value,
       });
@@ -912,16 +833,12 @@ void testStopConfirmationTimeoutIsExplicitAndFailClosed() {
 void testLocalPlannerOverheadHeightLimitIsConfigurable() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(std::abs(defaults.local_planner_obstacle_height_max_m - 1.2) < 1e-12,
           "local planner must ignore points above the default body envelope");
 
   const auto configured = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--local-planner-obstacle-height-max-m",
       "1.65",
   });
@@ -934,14 +851,14 @@ void testRuntimeEnvironmentPrecedesDefaultsAndCliPrecedesEnvironment() {
   ScopedEnvironment tick("LINGTU_NAV_DDS_TICK_HZ", "17.5");
   ScopedEnvironment status("LINGTU_NAV_STATUS_S", "0.25");
 
-  const auto from_env = parse({"navd", "--path-library", "fixture-paths"});
+  const auto from_env = parse({"navd"});
   require(from_env.domain_id == 23, "DDS domain must parse from the runtime environment");
   require(std::abs(from_env.tick_hz - 17.5) < 1e-12,
           "navigation tick rate must parse from the runtime environment");
   require(std::abs(from_env.status_s - 0.25) < 1e-12,
           "status period must parse from the runtime environment");
 
-  const auto from_cli = parse({"navd", "--path-library", "fixture-paths", "--domain-id", "24",
+  const auto from_cli = parse({"navd", "--domain-id", "24",
                                "--tick-hz", "30", "--status-s", "0.4"});
   require(from_cli.domain_id == 24, "CLI DDS domain must override the environment");
   require(std::abs(from_cli.tick_hz - 30.0) < 1e-12,
@@ -962,32 +879,13 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   ScopedEnvironment planning_range("LINGTU_NAV_CORRIDOR_LOOKAHEAD_M", "3.0");
   ScopedEnvironment obstacle_voxel("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M", "0.05");
 
-  const auto cmu_cfg = parse({"navd", "--path-library", "fixture-paths"});
-  require(std::abs(cmu_cfg.vehicle_length_m - 0.76) < 1e-12 &&
-              std::abs(cmu_cfg.vehicle_width_m - 0.31) < 1e-12,
-          "Go2 physical dimensions must parse from the compiled RunPlan environment");
-  require(std::abs(cmu_cfg.collision_cylinder_radius_m - 0.25) < 1e-12 &&
-              std::abs(cmu_cfg.collision_cylinder_offset_m - 0.18) < 1e-12,
-          "Go2 double-cylinder geometry must parse from the compiled RunPlan environment");
-  require(std::abs(cmu_cfg.obstacle_voxel_size_m - 0.05) < 1e-12,
-          "Go2 CMU obstacle fusion must retain the upstream five-centimeter density");
-  const auto cmu = buildLocalPlannerParams(cmu_cfg);
-  require(std::abs(cmu.footprintPadding - 0.05) < 1e-12,
-          "Go2 CMU must receive the one configured hard margin");
-  require(std::abs(cmu.autonomySpeed - 0.50) < 1e-12 &&
-              std::abs(cmu.maxSpeed - 0.50) < 1e-12,
-          "CMU speed scaling must normalize against the configured follower speed");
-  require(std::abs(cmu.adjacentRange - 3.0) < 1e-12,
-          "CMU planning range must follow the compiled local corridor range");
-  require(cmu.useTerrainAnalysis,
-          "CMU must use the official terrain-height obstacle semantics");
-  require(!cmu.twoWayDrive,
-          "autonomous CMU planning must match the forward-only Go2 follower contract");
-  require(std::abs(cmu.nearFieldStopDis) < 1e-12,
-          "CMU candidate collision checks must not be followed by a duplicate near-field stop");
-
-  ScopedEnvironment planner_backend("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "scan");
   const auto scan_cfg = parse({"navd"});
+  require(std::abs(scan_cfg.vehicle_length_m - 0.76) < 1e-12 &&
+              std::abs(scan_cfg.vehicle_width_m - 0.31) < 1e-12,
+          "Go2 physical dimensions must parse from the compiled RunPlan environment");
+  require(std::abs(scan_cfg.collision_cylinder_radius_m - 0.25) < 1e-12 &&
+              std::abs(scan_cfg.collision_cylinder_offset_m - 0.18) < 1e-12,
+          "Go2 double-cylinder geometry must parse from the compiled RunPlan environment");
   const auto scan = buildLocalPlannerParams(scan_cfg);
   require(std::abs(scan.scan.cylinderOffset - 0.18) < 1e-12 &&
               std::abs(scan.footprintPadding) < 1e-12,
@@ -1077,7 +975,7 @@ void testScanFollowerEnvironmentReachesExecutor() {
   ScopedEnvironment max_yaw("LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S", "0.95");
   ScopedEnvironment finish_distance("LINGTU_NAV_SCAN_FINISH_DISTANCE_M", "0.07");
 
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
   const auto executor_config = buildExecutorConfig(cfg);
   require(std::abs(executor_config.follower.spline.timeForward - 0.65) < 1e-12,
           "SCAN look-ahead time must reach Executor");
@@ -1123,9 +1021,7 @@ void testGoalHeightToleranceRejectsInvalidEnvironment() {
 void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
-  });
+      });
   require(std::abs(defaults.control_loop_deadline_miss_ratio_limit - 0.05) < 1e-12,
           "field deadline-miss ratio limit must remain five percent by default");
   require(std::abs(defaults.control_loop_p95_utilization_limit - 0.90) < 1e-12,
@@ -1133,8 +1029,6 @@ void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
 
   const auto configured = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--control-loop-deadline-miss-ratio-limit",
       "0.10",
       "--control-loop-p95-utilization-limit",
@@ -1150,8 +1044,6 @@ void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
     try {
       (void)parse({
           "navd",
-          "--path-library",
-          "fixture-paths",
           "--control-loop-deadline-miss-ratio-limit",
           value,
       });
@@ -1166,8 +1058,6 @@ void testControlLoopDeadlineMissRatioIsExplicitAndBounded() {
     try {
       (void)parse({
           "navd",
-          "--path-library",
-          "fixture-paths",
           "--control-loop-p95-utilization-limit",
           value,
       });
@@ -1400,7 +1290,7 @@ void testVelocitySmootherEnvironmentParsesExactly() {
   ScopedEnvironment yaw_decel("LINGTU_NAV_SMOOTHER_YAW_DECEL_RADPS2", "2.5");
   ScopedEnvironment yaw_deadband("LINGTU_NAV_SMOOTHER_YAW_DEADBAND_RADPS", "0.03");
 
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
   require(cfg.velocity_smoother_enabled, "velocity smoother enabled flag must parse");
   require(cfg.velocity_smoother.feedback_mode == nav_kernel::VelocityFeedbackMode::kOpenLoop,
           "velocity smoother feedback mode must parse");
@@ -1440,14 +1330,14 @@ void testVelocitySmootherRejectsUnavailableClosedLoopOnlyWhenEnabled() {
     ScopedEnvironment enabled("LINGTU_NAV_SMOOTHER_ENABLED", "true");
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths"});
+      (void)parse({"navd"});
     } catch (const std::runtime_error &) {
       rejected = true;
     }
     require(rejected, "enabled closed-loop smoothing must fail startup without feedback wiring");
   }
   ScopedEnvironment disabled("LINGTU_NAV_SMOOTHER_ENABLED", "false");
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
   require(!cfg.velocity_smoother_enabled,
           "disabled closed-loop smoother config must preserve legacy runtime behavior");
   require(cfg.velocity_smoother.feedback_mode == nav_kernel::VelocityFeedbackMode::kClosedLoop,
@@ -1466,7 +1356,7 @@ void testVelocitySmootherConfigurationFailsClosed() {
     ScopedEnvironment value(invalid.first, invalid.second);
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths"});
+      (void)parse({"navd"});
     } catch (const std::runtime_error &) {
       rejected = true;
     }
@@ -1484,7 +1374,7 @@ void testEnvironmentNumbersRejectTrailingJunk() {
     ScopedEnvironment value(invalid.first, invalid.second);
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths"});
+      (void)parse({"navd"});
     } catch (const std::runtime_error &) {
       rejected = true;
     }
@@ -1492,7 +1382,7 @@ void testEnvironmentNumbersRejectTrailingJunk() {
   }
 
   ScopedEnvironment padded("LINGTU_NAV_MAX_SPEED_MPS", " 0.5 \t");
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
   require(std::abs(cfg.path_follower_max_speed_mps - 0.5) < 1e-12,
           "environment numbers may contain surrounding whitespace");
 }
@@ -1502,11 +1392,10 @@ void testMotionLimitOverrides() {
   ScopedEnvironment follower_speed("LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS", "0.7");
   ScopedEnvironment accel("LINGTU_NAV_MAX_ACCEL_MPS2", "1.1");
   ScopedEnvironment follower_accel("LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2", "1.2");
-  const auto env = parse({"navd", "--path-library", "fixture-paths"});
+  const auto env = parse({"navd"});
   require(env.path_follower_max_speed_mps == 0.7 && env.path_follower_max_accel_mps2 == 1.2,
           "follower environment limits must override the general limits");
-  const auto cli = parse({"navd", "--path-library", "fixture-paths",
-                          "--max-speed-mps", "0.9", "--path-follower-max-speed-mps", "0.8",
+  const auto cli = parse({"navd", "--max-speed-mps", "0.9", "--path-follower-max-speed-mps", "0.8",
                           "--path-follower-max-accel-mps2", "0.4", "--max-accel-mps2", "1.3"});
   require(cli.path_follower_max_speed_mps == 0.8 && cli.path_follower_max_accel_mps2 == 1.3,
           "later CLI limits must override earlier limits");
@@ -1522,7 +1411,7 @@ void testMotionLimitOverrides() {
   for (const auto &option : {"--max-speed-mps", "--max-accel-mps2"}) {
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths", option, "nan",
+      (void)parse({"navd", option, "nan",
                    "--path-follower-max-speed-mps", "0.8",
                    "--path-follower-max-accel-mps2", "1.0"});
     } catch (const std::runtime_error &) {
@@ -1534,7 +1423,7 @@ void testMotionLimitOverrides() {
     ScopedEnvironment invalid(name, "nan");
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths"});
+      (void)parse({"navd"});
     } catch (const std::runtime_error &) {
       rejected = true;
     }
@@ -1551,7 +1440,7 @@ void testVelocitySmootherAcceptsCoreBoundaryValues() {
   ScopedEnvironment y_max("LINGTU_NAV_SMOOTHER_Y_MAX_MPS", "0");
   ScopedEnvironment y_deadband("LINGTU_NAV_SMOOTHER_Y_DEADBAND_MPS", "0");
 
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
   require(cfg.velocity_smoother.future_tolerance_s == 0.0,
           "zero future tolerance must remain valid");
   require(cfg.velocity_smoother.x.deadband == 0.8,
@@ -1629,7 +1518,7 @@ void testLocalPlannerUsesConfiguredObstacleEnvelope() {
   ScopedEnvironment minimum("LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M", "0.10");
   ScopedEnvironment legacy_maximum("LINGTU_TELEOP_OBSTACLE_HEIGHT_MAX_M", "1.20");
   ScopedEnvironment maximum("LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M", "0.80");
-  const auto cfg = parse({"navd", "--path-library", "fixture-paths"});
+  const auto cfg = parse({"navd"});
 
   const auto planner = buildLocalPlannerParams(cfg);
   require(std::abs(planner.obstacleHeightThre - 0.10) < 1e-12,
@@ -1642,8 +1531,7 @@ void testLocalPlannerUsesConfiguredObstacleEnvelope() {
           "the status preview must use the same obstacle interval as the planner");
 
   const auto low = buildLocalPlannerParams(parse({
-      "navd", "--path-library", "fixture-paths",
-      "--local-planner-obstacle-height-min-m", "0.05",
+      "navd", "--local-planner-obstacle-height-min-m", "0.05",
       "--local-planner-obstacle-height-max-m", "0.10",
   }));
   require(low.obstacleHeightThre == 0.05 && low.obstacleHeightMax == 0.10,
@@ -1654,8 +1542,7 @@ void testLocalPlannerUsesConfiguredObstacleEnvelope() {
         std::pair{"0.90", "local planner obstacle height maximum must be at least the minimum"}}) {
     bool rejected = false;
     try {
-      (void)parse({"navd", "--path-library", "fixture-paths",
-                   "--local-planner-obstacle-height-min-m", value});
+      (void)parse({"navd", "--local-planner-obstacle-height-min-m", value});
     } catch (const std::runtime_error &error) {
       rejected = std::string(error.what()) == expected;
     }
@@ -1669,8 +1556,6 @@ void testDriverControlFreshnessCannotBeDisabled() {
     try {
       (void)parse({
           "navd",
-          "--path-library",
-          "fixture-paths",
           "--driver-control-max-age-s",
           value,
       });
@@ -1685,8 +1570,6 @@ void testRollingSegmentPoliciesAreConfigurableAndBounded() {
   ScopedEnvironment future_tolerance("LINGTU_NAV_SEGMENT_FUTURE_TOLERANCE_S", "0.7");
   const auto cfg = parse({
       "navd",
-      "--path-library",
-      "fixture-paths",
       "--segment-max-distance-m",
       "6.5",
       "--segment-max-waypoints",
@@ -1715,16 +1598,11 @@ void testRollingSegmentPoliciesAreConfigurableAndBounded() {
           "segment map future tolerance must reach the planner");
 
   for (const std::vector<std::string> &args : {
-           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
-                                    "--segment-risk-stop", "39", "--segment-risk-resume", "40"},
-           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
-                                    "--segment-max-distance-m", "0"},
-           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
-                                    "--segment-max-waypoints", "1"},
-           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
-                                    "--segment-max-grid-cells", "1048577"},
-           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
-                                    "--segment-map-max-age-s", "10.1"},
+           std::vector<std::string>{"navd", "--segment-risk-stop", "39", "--segment-risk-resume", "40"},
+           std::vector<std::string>{"navd", "--segment-max-distance-m", "0"},
+           std::vector<std::string>{"navd", "--segment-max-waypoints", "1"},
+           std::vector<std::string>{"navd", "--segment-max-grid-cells", "1048577"},
+           std::vector<std::string>{"navd", "--segment-map-max-age-s", "10.1"},
        }) {
     bool rejected = false;
     try {
