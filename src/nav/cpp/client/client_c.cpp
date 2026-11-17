@@ -660,7 +660,8 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_STATUS |
       LINGTU_NAV_CLIENT_CAP_EXTERNAL_CONTROL |
       LINGTU_NAV_CLIENT_CAP_PLANNER_SELECTION |
-      LINGTU_NAV_CLIENT_CAP_NAVIGATION_MAP_BINDING;
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_MAP_BINDING |
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_CONTINUE_MOTION;
 }
 
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id) {
@@ -769,6 +770,43 @@ int lingtu_nav_client_start_task_with_receipt_v3(
             acceptance_radius_m,
             map_id == nullptr ? "" : map_id,
             map_content_epoch));
+  });
+}
+
+int lingtu_nav_client_start_task_with_receipt_v4(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    const char* map_id,
+    int64_t map_content_epoch,
+    double max_speed_mps,
+    double acceptance_radius_m,
+    int continue_motion,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "navigation start task")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(
+        receipt,
+        client.navigation().startTask(
+            x,
+            y,
+            z,
+            yaw,
+            timeout_ms,
+            task_id == nullptr ? "" : task_id,
+            request_id == nullptr ? "" : request_id,
+            max_speed_mps,
+            acceptance_radius_m,
+            map_id == nullptr ? "" : map_id,
+            map_content_epoch,
+            continue_motion != 0));
   });
 }
 

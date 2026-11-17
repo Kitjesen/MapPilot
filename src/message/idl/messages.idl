@@ -861,6 +861,8 @@ struct NavigationCommandRequest {
   // Expected map binding for a saved-map goal. Empty/zero means live-map goal.
   string map_id;
   long long map_content_epoch;
+  // Goal only: activate the replacement path without stopping the robot first.
+  boolean continue_motion;
 };
 @final
 struct NavigationCommandAck {

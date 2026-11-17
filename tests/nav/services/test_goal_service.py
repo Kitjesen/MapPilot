@@ -27,11 +27,13 @@ def goal_service():
     class FakeCommands:
         def __init__(self) -> None:
             self.goals: list[tuple] = []
+            self.continue_motion: list[bool] = []
             self.cancels: list[tuple] = []
             self.inspections: list[tuple] = []
 
-        def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+        def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
             self.goals.append((x, y, z, yaw, task_id, request_id))
+            self.continue_motion.append(continue_motion)
             return NavigationCommandReceipt(
                 accepted=True,
                 kind=int(NavigationCommandKind.GOAL),
@@ -111,6 +113,12 @@ class TestGoalService:
         assert result["accepted"] is True
         assert goal_service._test_commands.goals[-1][3] is None
         assert result["target"]["yaw"] is None
+        assert goal_service._test_commands.continue_motion[-1] is False
+
+    def test_visual_goal_replaces_previous_path_without_stopping(self, goal_service):
+        goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-a", request_id="req-a"))
+
+        assert goal_service._test_commands.continue_motion[-1] is True
 
     def test_visual_stop_cancels_accepted_visual_task(self, goal_service):
         goal_service.visual_goal_request._deliver(_visual_request(2.0, task_id="follow-a", request_id="req-a"))
@@ -185,7 +193,7 @@ class TestGoalService:
                 self.goals: list[tuple] = []
                 self.cancels: list[tuple] = []
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 self.goals.append((x, y, z, yaw, task_id, request_id))
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -252,7 +260,7 @@ class TestGoalService:
         commands = type("Commands", (), {})()
         commands.goals = []
         commands.cancels = []
-        commands.send_goal = lambda x, y, z, yaw, *, task_id, request_id: (
+        commands.send_goal = lambda x, y, z, yaw, *, task_id, request_id, continue_motion=False: (
             commands.goals.append((task_id, request_id))
             or NavigationCommandReceipt(True, int(NavigationCommandKind.GOAL), task_id, request_id, 100.0, "accepted")
         )
@@ -1107,7 +1115,7 @@ class TestGoalService:
                 self.terminal = terminal
                 self.goals = []
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 self.goals.append((task_id, request_id))
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -1302,7 +1310,7 @@ class TestGoalService:
         class SideEffectThenTimeout:
             cancel_calls = 0
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -1359,7 +1367,7 @@ class TestGoalService:
         class FakeCommands:
             calls = 0
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 self.calls += 1
                 return NavigationCommandReceipt(
@@ -1430,7 +1438,7 @@ class TestGoalService:
 
     def test_explicit_native_rejection_is_admission_not_execution_terminal(self):
         class RejectingCommands:
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 return NavigationCommandReceipt(
                     accepted=False,
@@ -1464,7 +1472,7 @@ class TestGoalService:
 
     def test_get_and_list_tasks_are_read_only(self):
         class Commands:
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -1506,7 +1514,7 @@ class TestGoalService:
 
     def test_native_status_unavailable_does_not_change_execution_on_read(self):
         class UnavailableCommands:
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 return NavigationCommandReceipt(
                     accepted=True,
@@ -1580,7 +1588,7 @@ class TestGoalService:
         class FakeCommands:
             calls = 0
 
-            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
                 del x, y, z, yaw
                 self.calls += 1
                 return NavigationCommandReceipt(

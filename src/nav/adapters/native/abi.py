@@ -41,6 +41,7 @@ NATIVE_COMMAND_CAP_OPERATOR_MOTION_STATUS = 1 << 18
 NATIVE_COMMAND_CAP_EXTERNAL_CONTROL = 1 << 19
 NATIVE_COMMAND_CAP_PLANNER_SELECTION = 1 << 20
 NATIVE_COMMAND_CAP_NAVIGATION_MAP_BINDING = 1 << 21
+NATIVE_COMMAND_CAP_NAVIGATION_CONTINUE_MOTION = 1 << 22
 NATIVE_JOINT_STATE_ABI_VERSION = 1
 
 NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
@@ -1702,6 +1703,7 @@ class NativeCommandSession:
         acceptance_radius_m: float | None = None,
         map_id: str | None = None,
         map_content_epoch: int = 0,
+        continue_motion: bool = False,
     ) -> dict[str, object]:
         """Submit one navigation task and return the correlated native ACK."""
 
@@ -1744,6 +1746,25 @@ class NativeCommandSession:
                 ctypes.POINTER(_NativeNavigationCommandReceiptV1),
             ]
             operation.restype = ctypes.c_int
+        if continue_motion:
+            self._require_capability(
+                NATIVE_COMMAND_CAP_NAVIGATION_CONTINUE_MOTION,
+                "continue-motion goal replacement",
+            )
+            operation = self.library.lingtu_nav_client_start_task_with_receipt_v4
+            operation.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                *([ctypes.c_double] * 4),
+                ctypes.c_char_p,
+                ctypes.c_int64,
+                *([ctypes.c_double] * 2),
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+            ]
+            operation.restype = ctypes.c_int
         operation_args = [
             task.encode("utf-8"),
             request.encode("utf-8"),
@@ -1752,7 +1773,14 @@ class NativeCommandSession:
             float(z),
             math.nan if yaw is None else float(yaw),
         ]
-        if expected_map_id:
+        if continue_motion:
+            operation_args.extend([
+                expected_map_id.encode("utf-8"),
+                expected_map_epoch,
+                *(constraints or [0.0, 0.0]),
+                1,
+            ])
+        elif expected_map_id:
             operation_args.extend([
                 expected_map_id.encode("utf-8"),
                 expected_map_epoch,

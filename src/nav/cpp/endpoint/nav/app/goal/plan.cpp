@@ -174,9 +174,13 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
   pause_pending_ = false;
   active_paused_ = false;
   paused_task_id_.clear();
-  return startPlanning(request.task_id, request.request_id, *request.target, request.origin,
-                       context, "planning", false, std::nullopt, projects_to_navigation_state,
-                       request.source_stamp_s);
+  auto started = startPlanning(request.task_id, request.request_id, *request.target,
+                               request.origin, context, "planning", false, std::nullopt,
+                               projects_to_navigation_state, request.source_stamp_s);
+  if (started.accepted) {
+    planning_continue_motion_ = request.continue_motion;
+  }
+  return started;
 }
 
 GoalPlanSubmitResult GoalPlanController::replanActive(const GoalPlanAdmissionContext &context) {
@@ -414,10 +418,15 @@ GoalPlanController::resumePending(const GoalPlanAdmissionContext &fresh_context,
 
   DeferredPlanStart ready = std::move(*pending_plan_start_);
   pending_plan_start_.reset();
-  return startPlanning(ready.request.task_id, ready.request.request_id, *ready.request.target,
-                       ready.request.origin, fresh_context, "planning", false, ready.goal_epoch,
-                       active_task_id_.empty() || active_task_id_ == ready.request.task_id,
-                       ready.request.source_stamp_s);
+  auto started = startPlanning(
+      ready.request.task_id, ready.request.request_id, *ready.request.target,
+      ready.request.origin, fresh_context, "planning", false, ready.goal_epoch,
+      active_task_id_.empty() || active_task_id_ == ready.request.task_id,
+      ready.request.source_stamp_s);
+  if (started.accepted) {
+    planning_continue_motion_ = ready.request.continue_motion;
+  }
+  return started;
 }
 
 void GoalPlanController::clearPlanningIdentity() {
@@ -430,6 +439,7 @@ void GoalPlanController::clearPlanningIdentity() {
   planning_origin_ = GoalPlanOrigin::kExternal;
   planning_target_.reset();
   planning_source_stamp_s_ = 0.0;
+  planning_continue_motion_ = false;
 }
 
 GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &context) {
@@ -671,7 +681,8 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
     activation.support_height_tolerance_m = support_options.support_height_tolerance_m;
   }
   const bool completing_replacement =
-      !completing_replan && !planning_projects_to_navigation_state_ && !active_task_id_.empty() &&
+      !completing_replan && !planning_continue_motion_ &&
+      !planning_projects_to_navigation_state_ && !active_task_id_.empty() &&
       planning_task_id_ != active_task_id_;
   if (completing_replacement) {
     deferred_replacement_activation_ = DeferredReplacementActivation{

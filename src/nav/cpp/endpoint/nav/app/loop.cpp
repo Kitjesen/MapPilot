@@ -369,6 +369,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     request.request_id = request_id;
     request.origin = origin;
     request.source_stamp_s = goal.stamp_s;
+    request.continue_motion = goal.continue_motion;
     if (!goal.map_id.empty() || goal.map_content_epoch != 0) {
       request.expected_map_identity = lingtu::nav::plan::MapIdentity{
           goal.map_id, goal.map_content_epoch, goal.frame_id};

@@ -247,7 +247,13 @@ class GoalService(Module, layer=6):
         # Register before dispatch: synchronous ACK/terminal callbacks can cancel it.
         with self._visual_task_lock:
             self._visual_task_ids.add(goal.task_id)
-        status = self.submit_goal(goal.goal, task_id=goal.task_id, request_id=goal.request_id, action="visual_servo")
+        status = self.submit_goal(
+            goal.goal,
+            task_id=goal.task_id,
+            request_id=goal.request_id,
+            action="visual_servo",
+            continue_motion=True,
+        )
         if status.get("accepted") is not True and status.get("admission_unconfirmed") is not True:
             with self._visual_task_lock:
                 self._visual_task_ids.discard(goal.task_id)
@@ -389,8 +395,13 @@ class GoalService(Module, layer=6):
         max_speed_mps: float | None = None,
         acceptance_radius_m: float | None = None,
         map_identity: Mapping[str, Any] | None = None,
+        continue_motion: bool = False,
     ) -> dict[str, Any]:
-        """Validate and synchronously admit one typed goal."""
+        """Validate and synchronously admit one typed goal.
+
+        ``continue_motion`` lets the native endpoint replace the active task's
+        path without stopping first; visual following uses it for every update.
+        """
 
         resolved_task_id = str(task_id or "").strip() or self._new_task_id()
         resolved_request_id = str(request_id or "").strip() or self._new_request_id()
@@ -478,6 +489,7 @@ class GoalService(Module, layer=6):
             task_id=resolved_task_id,
             request_id=resolved_request_id,
             map_identity=expected_map_identity,
+            continue_motion=continue_motion,
         )
         if isinstance(dispatch_result, str):
             dispatch_error = dispatch_result or "navigation command failed without error detail"
@@ -823,6 +835,7 @@ class GoalService(Module, layer=6):
         task_id: str,
         request_id: str,
         map_identity: Mapping[str, Any] | None,
+        continue_motion: bool = False,
     ) -> NavigationCommandReceipt | str:
         try:
             kwargs: dict[str, Any] = {
@@ -840,6 +853,8 @@ class GoalService(Module, layer=6):
                 content_epoch = int(identity.get("content_epoch") or 0)
                 if map_id or content_epoch:
                     kwargs.update(map_id=map_id, map_content_epoch=content_epoch)
+            if continue_motion:
+                kwargs["continue_motion"] = True
             return self._call_commands("send_goal", **kwargs)
         except Exception as exc:
             return str(exc)

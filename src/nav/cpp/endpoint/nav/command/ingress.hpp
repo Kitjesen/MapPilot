@@ -24,6 +24,7 @@ struct CommandPayload {
   std::string local_planner;
   std::string map_id{};
   std::int64_t map_content_epoch{0};
+  bool continue_motion{false};
 
   [[nodiscard]] std::string canonical() const;
 };
