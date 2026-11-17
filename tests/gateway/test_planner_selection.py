@@ -32,14 +32,14 @@ def test_http_selection_preserves_native_result(monkeypatch, accepted, reason):
     app = FastAPI()
     register_navigation_routes(app, gateway)
     endpoint = next(route.endpoint for route in app.routes if route.path == "/api/v1/navigation/planner")
-    response = asyncio.run(endpoint(SelectPlannerRequest(name="cmu", request_id="planner-1")))
+    response = asyncio.run(endpoint(SelectPlannerRequest(name="scan", request_id="planner-1")))
     if accepted:
         assert response["accepted"] is True
         assert response["reason"] == reason
     else:
         assert response.status_code == 409
         assert reason in response.body.decode()
-    native.select_planner.assert_called_once_with("cmu", request_id="planner-1")
+    native.select_planner.assert_called_once_with("scan", request_id="planner-1")
 
 
 def test_selection_rejects_unknown_name_before_native_call():

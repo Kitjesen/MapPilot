@@ -87,7 +87,7 @@ def _plan(product: str, processes: tuple[ProcessSpec, ...]) -> RunPlan:
             "publish_cmd_vel": True,
             "check_obstacle": True,
             "global_planner": "none" if product == "teleop_avoid" else "astar",
-            "local_planner": "cmu",
+            "local_planner": "scan",
             "use_traversability_cost": True,
             "allow_teleop_takeover": product == "nav",
             "teleop_local_planner": True,

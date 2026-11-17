@@ -24,7 +24,7 @@ def test_component_yaml_changes_reach_native_launch(tmp_path, monkeypatch):
         "limits": ("native_nav", "braking_deceleration_mps2", 5.0),
         "local": ("parameters", "scan_planner", "smooth_weight", 2.0),
         "global": ("native_nav", "global", "snap_search_radius_cells", 13),
-        "recovery": ("native_nav", "recovery", "translation_timeout_s", 2.7),
+        "recovery": ("native_nav", "recovery", "translation_speed_mps", 0.3),
         "slam": ("slam", "runtime", "tick_hz", 40.0),
     }
     for name, keys in edits.items():
@@ -63,7 +63,7 @@ def test_component_yaml_changes_reach_native_launch(tmp_path, monkeypatch):
     assert float(environment["LINGTU_NAV_SMOOTHER_Y_DECEL_MPS2"]) == 5.0
     assert plan.parameters["scan_planner.smooth_weight"] == 2.0
     assert environment["LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS"] == "13"
-    assert float(environment["LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S"]) == 2.7
+    assert float(environment["LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS"]) == 0.3
 
 
 @pytest.mark.parametrize("key,value", [("scan_hz", 0), ("imu_hz", -1), ("scan_hz", True)])

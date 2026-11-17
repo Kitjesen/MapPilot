@@ -18,8 +18,8 @@ DEPLOY = ROOT / "scripts" / "deploy" / "thunder"
 
 @pytest.mark.parametrize(
     ("product", "local_planner"),
-    [("teleop_avoid", None), ("teleop_avoid", "cmu"), ("map", None), ("teleop", None)],
-    ids=["default-scan", "cmu", "map-without-path-library", "teleop-without-path-library"],
+    [("teleop_avoid", None), ("map", None), ("teleop", None)],
+    ids=["default-scan", "map-without-path-library", "teleop-without-path-library"],
 )
 @pytest.mark.parametrize("missing_geometry", [False, True], ids=["complete", "missing-geometry"])
 def test_nav_runner_consumes_compiled_product_session(
@@ -78,12 +78,6 @@ def test_nav_runner_consumes_compiled_product_session(
             "LINGTU_NAV_DDS_BIN": endpoint.as_posix(),
         }
     )
-    if local_planner == "cmu":
-        paths = tmp_path / Path(session["LINGTU_LOCAL_PLANNER_PATHS"]).name
-        paths.mkdir()
-        for asset in ("startPaths.ply", "pathList.ply", "paths.ply", "correspondences.txt", "search_radius.txt"):
-            (paths / asset).write_text("test asset\n", encoding="utf-8")
-        session["LINGTU_LOCAL_PLANNER_PATHS"] = paths.as_posix()
     if missing_geometry:
         del session["LINGTU_NAV_SENSOR_OFFSET_Z_M"]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("LINGTU_")}

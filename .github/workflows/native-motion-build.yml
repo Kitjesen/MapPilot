@@ -129,16 +129,6 @@ jobs:
             lib/liblingtu_inspection.so; do
             test -f "$install_root/$library"
           done
-          for robot in go2 thunder; do
-            for asset in \
-              paths.ply \
-              pathList.ply \
-              startPaths.ply \
-              search_radius.txt \
-              correspondences.txt; do
-              test -f "$install_root/share/lingtu/cmu_paths/$robot/$asset"
-            done
-          done
 
           test -z "$(find "$install_root" -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.a' -o -name 'libnav_far.*' \) -print -quit)"
           diff -u \
@@ -150,15 +140,5 @@ jobs:
               bin/octoplanner3d_pcd_to_octomap \
               lib/liblingtu_nav_client.so \
               lib/liblingtu_inspection_evidence_bridge.so \
-              lib/liblingtu_inspection.so \
-              share/lingtu/cmu_paths/go2/paths.ply \
-              share/lingtu/cmu_paths/go2/pathList.ply \
-              share/lingtu/cmu_paths/go2/startPaths.ply \
-              share/lingtu/cmu_paths/go2/search_radius.txt \
-              share/lingtu/cmu_paths/go2/correspondences.txt \
-              share/lingtu/cmu_paths/thunder/paths.ply \
-              share/lingtu/cmu_paths/thunder/pathList.ply \
-              share/lingtu/cmu_paths/thunder/startPaths.ply \
-              share/lingtu/cmu_paths/thunder/search_radius.txt \
-              share/lingtu/cmu_paths/thunder/correspondences.txt | sort) \
+              lib/liblingtu_inspection.so | sort) \
             <(find "$install_root" -type f -printf '%P\n' | sort)

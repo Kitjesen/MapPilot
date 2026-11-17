@@ -335,7 +335,7 @@ def resolve_product_host_runtime(
     native_nav = resolved_product_spec.get("native_nav")
     if isinstance(native_nav, Mapping):
         selected_local_planner = local_planner_name(
-            native_nav.get("local_planner") or "cmu"
+            native_nav.get("local_planner") or "scan"
         )
         declared_local_planners = resolved_env.implementation.get("local_planners")
         if not isinstance(declared_local_planners, (list, tuple)):

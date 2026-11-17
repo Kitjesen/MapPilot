@@ -149,24 +149,10 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
 
     if (output.planning_failed) {
       result.outcome.kind = input.rolling_segment_active
-                                ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
+                                ? AutonomyTickOutcomeKind::kRollingPlanningFailed
                                 : AutonomyTickOutcomeKind::kGoalFailed;
       result.outcome.reason = output.reason;
       result.outcome.terminal_failure_intent = true;
-    } else if (output.recovery_exhausted) {
-      result.outcome.reason = output.reason.empty() ? "local_recovery_exhausted" : output.reason;
-      result.outcome.kind = input.rolling_segment_active
-                                ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
-                                : AutonomyTickOutcomeKind::kGoalFailed;
-      if (!input.rolling_segment_active) {
-        GoalReplanTrigger trigger;
-        trigger.kind = GoalReplanTriggerKind::kLocalRecoveryExhausted;
-        trigger.reason = result.outcome.reason;
-        if (input.active_goal_identity) {
-          trigger.goal = *input.active_goal_identity;
-        }
-        result.outcome.replan_trigger = std::move(trigger);
-      }
     } else if (output.goal_reached) {
       if (input.rolling_segment_active) {
         result.outcome.kind = AutonomyTickOutcomeKind::kRollingReached;

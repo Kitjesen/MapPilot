@@ -26,7 +26,7 @@ namespace lingtu::nav::collision { struct Body; class Terrain; }
 
 namespace nav_kernel {
 
-enum class LocalPlannerBackend { Cmu, Scan };
+enum class LocalPlannerBackend { Scan };
 
 using LocalPlanCancel = std::function<bool()>;
 
@@ -60,7 +60,7 @@ struct ScanPlannerParams {
 };
 
 struct LocalPlannerParams {
-  LocalPlannerBackend backend = LocalPlannerBackend::Cmu;
+  LocalPlannerBackend backend = LocalPlannerBackend::Scan;
   ScanPlannerParams scan{};
   // Endpoint input policy shared with recovery collision queries.
   double localCollisionMaxAge{::lingtu::settings::local::parameters::local_collision_max_age_s};
@@ -70,37 +70,12 @@ struct LocalPlannerParams {
   double adjacentRange{::lingtu::settings::follower::native_nav::corridor_lookahead_m};
   double obstacleHeightThre{::lingtu::settings::local::native_nav::local_planner_obstacle_height_min_m};
   double obstacleHeightMax{::lingtu::settings::local::native_nav::local_planner_obstacle_height_max_m};
-  double groundHeightThre{::lingtu::settings::local::native_nav::cmu::ground_height_m};
-  double costHeightThre1{::lingtu::settings::local::native_nav::cmu::cost_height_high_m};
-  double costHeightThre2{::lingtu::settings::local::native_nav::cmu::cost_height_low_m};
-  bool useCost = false;
   bool checkObstacle = true;
-  bool checkRotObstacle = false;
   bool useTerrainAnalysis = false;
-  int pointPerPathThre{::lingtu::settings::local::native_nav::cmu::points_per_path};
-  double dirWeight{::lingtu::settings::local::native_nav::cmu::direction_weight};
-  double dirThre{::lingtu::settings::local::native_nav::cmu::direction_threshold_deg};
-  bool dirToVehicle{::lingtu::settings::local::native_nav::cmu::direction_to_vehicle};
-  double pathScale{::lingtu::settings::local::native_nav::cmu::path_scale};
-  double minPathScale{::lingtu::settings::local::native_nav::cmu::min_path_scale};
-  double pathScaleStep{::lingtu::settings::local::native_nav::cmu::path_scale_step};
-  bool pathScaleBySpeed{::lingtu::settings::local::native_nav::cmu::scale_by_speed};
-  double minPathRange{::lingtu::settings::local::native_nav::cmu::min_path_range_m};
-  double pathRangeStep{::lingtu::settings::local::native_nav::cmu::path_range_step_m};
-  bool pathRangeBySpeed{::lingtu::settings::local::native_nav::cmu::range_by_speed};
-  bool pathCropByGoal{::lingtu::settings::local::native_nav::cmu::crop_by_goal};
   double maxSpeed = kDefaultLinearSpeedMps;
   double autonomySpeed = kDefaultLinearSpeedMps;
-  double slopeWeight = 0.0;
-  double goalClearRange{::lingtu::settings::local::native_nav::cmu::goal_clear_range_m};
   double nearFieldStopDis = 0.5;
   double footprintPadding = 0.1;
-  double selfFilterPadding = 0.03;
-  double freezeAng = 90.0;
-  double freezeTime = 2.0;
-  double omniDirGoalThre = 1.0;
-  int slowPathNumThre{::lingtu::settings::local::native_nav::cmu::slow_path_count};
-  int slowGroupNumThre{::lingtu::settings::local::native_nav::cmu::slow_group_count};
   bool useTraversabilityCost = false;
   bool traversabilityNearFieldStop = false;
   double traversabilityHardCost{::lingtu::settings::local::native_nav::traversability_hard_cost};
@@ -482,7 +457,7 @@ struct ScanFailureSnapshot {
 
 struct LocalPlannerDebugSnapshot {
   bool valid{false};
-  LocalPlannerBackend backend{LocalPlannerBackend::Cmu};
+  LocalPlannerBackend backend{LocalPlannerBackend::Scan};
   double timestampS{0.0};
   double planningTimeMs{0.0};
   double reuseTimeMs{0.0};
@@ -516,24 +491,6 @@ struct LocalPlannerDebugSnapshot {
   std::vector<LocalPlanCandidate> candidates;
 };
 
-// Capabilities exposed by the selected local planner backend.  Navigation
-// execution depends on this contract instead of inspecting the backend enum.
-// SCAN owns the complete reference and consumes the 3D collision/prediction
-// inputs; CMU is the only backend that consumes the optional 2D risk grid.
-struct LocalPlannerCapabilities {
-  bool ownsReferencePath{false};
-  bool consumesTraversability{false};
-  bool consumesPredictions{false};
-  bool supportsBoundaryDeparture{false};
-  bool consumesCollisionMap{false};
-};
-
-// Keep backend-specific capability derivation in the local-planner boundary.
-// Navigation and recovery consume this contract instead of branching on the
-// selected backend enum themselves.
-[[nodiscard]] LocalPlannerCapabilities plannerCapabilities(
-    const LocalPlannerParams &params) noexcept;
-
 inline constexpr int kPathNum = 343;
 inline constexpr int kGroupNum = 7;
 inline constexpr int kRotDirs = 36;
@@ -549,10 +506,9 @@ class LocalPlanner {
   LocalPlanner(const LocalPlanner &) = delete;
   LocalPlanner &operator=(const LocalPlanner &) = delete;
 
-  // CMU loads its fixed path library; SCAN needs no external resource.
+  // SCAN needs no external path library. The argument is ignored.
   bool configure(const std::string &pathLibraryDir = {});
   bool configured() const;
-  [[nodiscard]] LocalPlannerCapabilities capabilities() const noexcept;
   LocalPlannerDebugSnapshot debugSnapshot() const;
 
   LocalPlan plan(const LocalPlanRequest &request);

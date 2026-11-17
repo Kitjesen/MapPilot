@@ -74,7 +74,6 @@ TEST(Benchmark, PathFollowerThroughput) {
     state.vehicleRelative = robot;
     state.currentTime = static_cast<double>(i) * 0.01;
     state.params = p;
-    state.standardPathProfile = false;
     follower.follow(LocalPlan::path(path), state);
   }
   auto end = std::chrono::high_resolution_clock::now();
@@ -148,7 +147,6 @@ TEST(Benchmark, FullPlanCycle) {
   lpp.adjacentRange = 3.5;
   lpp.checkObstacle = true;
   lpp.useTerrainAnalysis = true;
-  lpp.dirWeight = 0.02;
   lpp.twoWayDrive = true;
 
   PlannerFixture planner(lpp);
@@ -349,10 +347,7 @@ TEST(Benchmark, ScoreAndSelectEndToEnd) {
   lpp.adjacentRange = 3.5;
   lpp.checkObstacle = true;
   lpp.useTerrainAnalysis = true;
-  lpp.dirWeight = 0.02;
   lpp.twoWayDrive = true;
-  lpp.pathScale = 1.0;
-  lpp.minPathScale = 0.75;
 
   PlannerFixture planner(lpp);
   planner.setVehicle(0, 0, 0, 0);

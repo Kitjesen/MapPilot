@@ -376,18 +376,8 @@ void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
   const std::size_t point_limit = cfg.local_map_debug_point_limit;
   const bool enabled = point_limit > 0;
   const std::size_t source_points = obstacle_xyzh.size() / 4;
-  const bool cmu_height_filter = cfg.local_planner == "cmu";
-  std::vector<std::size_t> obstacle_indices;
-  obstacle_indices.reserve(source_points);
-  for (std::size_t index = 0; index < source_points; ++index) {
-    const float height = obstacle_xyzh[index * 4U + 3U];
-    if (cmu_height_filter &&
-        (!std::isfinite(height) || height < cfg.planner_obstacle_height_min_m ||
-         height > cfg.planner_obstacle_height_max_m)) {
-      continue;
-    }
-    obstacle_indices.push_back(index);
-  }
+  std::vector<std::size_t> obstacle_indices(source_points);
+  std::iota(obstacle_indices.begin(), obstacle_indices.end(), std::size_t{0});
   const std::size_t total_points = obstacle_indices.size();
   std::vector<std::size_t> risk_indices;
   if (enabled) {
@@ -438,8 +428,7 @@ void writeLocalMapJson(std::ostream &out, const StatusWriterConfig &cfg,
   out << "\"enabled\": " << (enabled ? "true" : "false") << ", ";
   out << "\"frame_id\": \"map\", ";
   out << "\"source_obstacle_points_total\": " << source_points << ", ";
-  out << "\"obstacle_filter\": \""
-      << (cmu_height_filter ? "cmu_height_envelope" : "none") << "\", ";
+  out << "\"obstacle_filter\": \"none\", ";
   out << "\"obstacle_height_range_m\": [" << cfg.planner_obstacle_height_min_m << ", "
       << cfg.planner_obstacle_height_max_m << "], ";
   out << "\"obstacle_points_fresh\": " << (obstacle_points_fresh ? "true" : "false") << ", ";
@@ -1025,11 +1014,7 @@ void writeStatusSnapshot(
         << "  \"live_obstacle_max_clearing_rays\": " << cfg.live_obstacle_max_clearing_rays << ",\n"
         << "  \"live_obstacle_min_hits\": " << cfg.live_obstacle_min_hits << ",\n"
         << "  \"cloud_pose_max_gap_s\": " << cfg.cloud_pose_max_gap_s << ",\n"
-        << "  \"planner_obstacle_source\": \""
-        << (cfg.local_planner == "cmu"
-                ? "fresh_terrain_map_else_registered_scan"
-                : "registered_scan")
-        << "\",\n"
+        << "  \"planner_obstacle_source\": \"registered_scan\",\n"
         << "  \"terrain_map_ext_role\": \"diagnostics\",\n"
         << "  \"sensor_origin_model\": \"body_pose_plus_configured_lidar_extrinsics\",\n"
         << "  \"sensor_offset_m\": [" << cfg.sensor_offset_x_m << ", " << cfg.sensor_offset_y_m
@@ -1234,15 +1219,10 @@ void writeStatusSnapshot(
         << "    \"slow_down\": " << local.slow_down << ",\n"
         << "    \"recovery_state\": " << local.recovery_state << ",\n"
         << "    \"recovery_action\": " << local.recovery_action << ",\n"
-        << "    \"recovery_attempt\": " << local.recovery_attempt << ",\n"
         << "    \"recovery_candidate_count\": " << local.recovery_candidate_count << ",\n"
-        << "    \"recovery_rotation_target_rad\": "
-        << local.recovery_rotation_target_rad << ",\n"
         << "    \"recovery_verified\": " << (local.recovery_verified ? "true" : "false") << ",\n"
-        << "    \"recovery_progress\": " << local.recovery_progress << ",\n"
         << "    \"recovery_trigger\": \"" << jsonEscape(local.recovery_trigger) << "\",\n"
         << "    \"recovery_reason\": \"" << jsonEscape(local.recovery_reason) << "\",\n"
-        << "    \"recovery_exhausted\": " << (local.recovery_exhausted ? "true" : "false") << ",\n"
         << "    \"target_index\": " << local.target_index << ",\n"
         << "    \"target_distance_m\": " << local.target_distance_m << ",\n"
         << "    \"local_path_points\": " << local.local_path_points << ",\n"

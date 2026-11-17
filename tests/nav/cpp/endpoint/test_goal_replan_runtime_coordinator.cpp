@@ -2606,7 +2606,7 @@ void testIneligibleOutcomesNeverTakeOver() {
     frame.rolling_segment_active = true;
   });
   run([](GoalReplanRuntimeFrameInput &, GoalReplanRuntimeAutonomyEvent &event) {
-    event.outcome.kind = AutonomyTickOutcomeKind::kRollingRecoveryExhausted;
+    event.outcome.kind = AutonomyTickOutcomeKind::kRollingPlanningFailed;
   });
 }
 

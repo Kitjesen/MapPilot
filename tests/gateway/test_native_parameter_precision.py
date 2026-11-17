@@ -59,7 +59,7 @@ def test_native_parameter_comparison_preserves_status_decimal_precision(paramete
         assert result["blockers"] == ["native_product_parameters_mismatch"]
 
 
-def test_cmu_readiness_compares_effective_follower_profile() -> None:
+def test_scan_readiness_compares_the_product_follower_profile() -> None:
     environment = {
         "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS": "1.4142135623731",
         "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS": "0",
@@ -71,15 +71,13 @@ def test_cmu_readiness_compares_effective_follower_profile() -> None:
         "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M": "3",
         "LINGTU_TELEOP_PLANNER_HORIZON_M": "3.5",
         "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG": "55",
-        "LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M": "0.5",
-        "LINGTU_NAV_CMU_FOLLOWER_STOP_DISTANCE_M": "0.3",
     }
     plan = SimpleNamespace(
         product="tracking",
         has_process=lambda role: role == "nav",
         required_capabilities=(),
         native_process_environment=environment,
-        native_nav={"control_mode": "autonomy", "local_planner": "cmu", "use_traversability_cost": True},
+        native_nav={"control_mode": "autonomy", "local_planner": "scan", "use_traversability_cost": False},
         lifecycle={"requires_map": True},
     )
     snapshot = {
@@ -89,10 +87,10 @@ def test_cmu_readiness_compares_effective_follower_profile() -> None:
         "input_gate": {"ready": True}, "active_cmd_source": "none",
         "control_authority": {"owner": "native_endpoint"},
         "path_follower": {"max_speed_mps": 1.4142135623731, "min_speed_mps": 0,
-                           "max_accel_mps2": 0.5, "lookahead_m": 0.5, "goal_tolerance_m": 0.3},
+                           "max_accel_mps2": 0.5, "lookahead_m": 0.3, "goal_tolerance_m": 0.2},
         "nav_loop": {"waypoint_reached_m": 0.6, "goal_reached_m": 0.35, "corridor_lookahead_m": 3},
         "teleop_planner_horizon_m": 3.5, "teleop_planner_max_deviation_deg": 55,
-        "teleop_local_planner": True, "check_obstacle": True, "use_traversability_cost": True,
+        "teleop_local_planner": True, "check_obstacle": True, "use_traversability_cost": False,
         "global_planner": "octoplanner3d", "planner_map": "/maps/active/octomap.ot",
         "publish_cmd_vel": True,
     }

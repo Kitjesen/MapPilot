@@ -434,13 +434,9 @@ void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
   fixture.next_output.slow_down = 1;
   fixture.next_output.recovery_state = 2;
   fixture.next_output.recovery_action = 1;
-  fixture.next_output.recovery_attempt = 2;
   fixture.next_output.recovery_candidate_count = 7;
-  fixture.next_output.recovery_rotation_target_rad = -0.6;
   fixture.next_output.recovery_verified = true;
-  fixture.next_output.recovery_progress = 0.625;
   fixture.next_output.recovery_reason = "recovery_translation_active";
-  fixture.next_output.recovery_exhausted = false;
   fixture.next_output.target_index = 4;
   fixture.next_output.target_distance_m = 1.25;
   fixture.next_output.target = {5.0, 6.0, 0.0};
@@ -478,11 +474,8 @@ void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
               result.local->final_safety_reason == "accepted",
           "command-boundary diagnostics must be projected");
   require(result.local->recovery_state == 2 && result.local->recovery_action == 1 &&
-              result.local->recovery_attempt == 2 && result.local->recovery_candidate_count == 7 &&
-              near(result.local->recovery_rotation_target_rad, -0.6) &&
-              result.local->recovery_verified && near(result.local->recovery_progress, 0.625) &&
-              result.local->recovery_reason == "recovery_translation_active" &&
-              !result.local->recovery_exhausted,
+              result.local->recovery_candidate_count == 7 && result.local->recovery_verified &&
+              result.local->recovery_reason == "recovery_translation_active",
           "recovery diagnostics must be projected without collapsing the legacy state");
   require(result.publish.local_path && result.publish.waypoint && result.publish.cmd_vel,
           "normal tick must emit all transport intents");
@@ -677,38 +670,17 @@ void testVerifiedRecoveryCommandUsesPlannerDecision() {
           "rotation must not receive boundary-departure admission");
 }
 
-void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
-  Fixture generic;
-  generic.next_output.recovery_exhausted = true;
-  generic.next_output.recovery_reason = "recovery_exhausted";
-  generic.next_output.reason.clear();
-  AutonomyTickController generic_controller(generic.actions, generic.control());
-  const auto generic_result = generic_controller.tick(generic.input());
-
+void testPlanningFailureDistinguishesRollingAndGenericGoals() {
   Fixture rolling;
-  rolling.next_output.recovery_exhausted = true;
+  rolling.next_output.planning_failed = true;
   rolling.next_output.reason = "planner_stuck";
   AutonomyTickController rolling_controller(rolling.actions, rolling.control());
   const auto rolling_result = rolling_controller.tick(rolling.input(true, true, true));
 
-  require(generic_result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
-              generic_result.outcome.reason == "local_recovery_exhausted",
-          "generic recovery exhaustion must fail the active goal");
-  require(generic_result.outcome.replan_trigger.has_value() &&
-              generic_result.outcome.replan_trigger->kind ==
-                  GoalReplanTriggerKind::kLocalRecoveryExhausted &&
-              generic_result.outcome.replan_trigger->reason == "local_recovery_exhausted" &&
-              lingtu::nav::endpoint::sameGoalReplanIdentity(
-                  generic_result.outcome.replan_trigger->goal,
-                  GoalReplanIdentity{"task-a", "request-a", 11U, generic.active_identity}),
-          "generic recovery exhaustion must carry one typed, identity-bound replan trigger");
-  require(generic_result.local.has_value() && generic_result.local->recovery_exhausted &&
-              generic_result.local->recovery_reason == "recovery_exhausted",
-          "recovery exhaustion evidence must survive the endpoint projection");
-  require(rolling_result.outcome.kind == AutonomyTickOutcomeKind::kRollingRecoveryExhausted &&
+  require(rolling_result.outcome.kind == AutonomyTickOutcomeKind::kRollingPlanningFailed &&
               rolling_result.outcome.reason == "planner_stuck" &&
               !rolling_result.outcome.replan_trigger.has_value(),
-          "rolling recovery exhaustion must remain a segment outcome");
+          "rolling planning failure must remain a segment outcome");
 }
 
 void testRecoveryMotionIsNotPreemptedByTaskReplanning() {
@@ -1273,7 +1245,7 @@ int main() {
     testShapingToZeroPausesTrajectoryBeforeSafety();
     testUnpublishedCommandDoesNotAdvanceSmootherCommit();
     testVerifiedRecoveryCommandUsesPlannerDecision();
-    testRecoveryOutcomesDistinguishRollingAndGenericGoals();
+    testPlanningFailureDistinguishesRollingAndGenericGoals();
     testPlannerExhaustionTerminatesWithoutGlobalRetry();
     testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();

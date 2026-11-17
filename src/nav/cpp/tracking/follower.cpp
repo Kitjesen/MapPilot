@@ -576,31 +576,6 @@ class SplineAlgorithm {
 
 }  // namespace
 
-FollowerParams cmuFollowerParams(FollowerParams params) {
-  const auto &profile = params.cmu;
-  params.baseLookAheadDis = profile.lookahead_m;
-  params.lookAheadRatio = 0.0;
-  params.minLookAheadDis = profile.lookahead_m;
-  params.maxLookAheadDis = profile.lookahead_m;
-  params.yawRateGain = profile.yaw_gain;
-  params.stopYawRateGain = profile.yaw_gain;
-  params.minSpeed = 0.0;
-  params.linearStopThreshold = params.maxAccel / 100.0;
-  params.nominalDt = profile.nominal_dt_s;
-  params.switchTimeThre = profile.switch_time_s;
-  params.headingAlignEnterRad = profile.heading_align_rad;
-  params.headingAlignExitRad = profile.heading_align_rad;
-  params.omniDirGoalThre = profile.omni_goal_m;
-  params.omniDirDiffThre = profile.omni_heading_rad;
-  params.stopDisThre = profile.stop_distance_m;
-  params.slowDwnDisThre = profile.slowdown_distance_m;
-  params.turnSpeedYawRateStart = 0.0;
-  params.turnSpeedMinScale = 1.0;
-  params.cornerGate = false;
-  params.noRotAtGoal = true;
-  return params;
-}
-
 FollowerParams recoveryFollowerParams(FollowerParams params, double speed, double localRange) {
   params.maxSpeed = speed;
   params.minSpeed = 0.0;
@@ -642,8 +617,6 @@ class Follower::Impl {
         active_ = requested;
       }
     }
-    if (path && input.standardPathProfile) input.params = cmuFollowerParams(input.params);
-
     if (!plan.ready() && !path) {
       FollowerOutput result;
       result.awaitingTrajectory = true;

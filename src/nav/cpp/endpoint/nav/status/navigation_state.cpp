@@ -62,9 +62,7 @@ void NavigationStateTracker::observe(const GoalPlanStatus &status) {
         state_.planning_state = static_cast<std::int32_t>(NavigationPlanningState::kFailed);
       }
       state_.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kBlocked);
-      state_.recovery_state = static_cast<std::int32_t>(status.reason == "local_recovery_exhausted"
-                                                            ? NavigationRecoveryState::kFailed
-                                                            : NavigationRecoveryState::kIdle);
+      state_.recovery_state = static_cast<std::int32_t>(NavigationRecoveryState::kIdle);
       state_.progress = -1.0F;
       state_.failure_code = status.reason.empty() ? "navigation_failed" : status.reason;
       break;

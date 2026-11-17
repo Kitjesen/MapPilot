@@ -33,14 +33,6 @@ NAV_LIBRARIES=(
   liblingtu_inspection_evidence_bridge.so
   liblingtu_inspection.so
 )
-CMU_PATH_PROFILES=(go2 thunder)
-CMU_PATH_FILES=(
-  startPaths.ply
-  pathList.ply
-  paths.ply
-  correspondences.txt
-  search_radius.txt
-)
 RECORDING_EXECUTABLES=(
   lingtu_recorder
   lingtu_dds_recorder
@@ -228,7 +220,6 @@ run_self_test() {
     "${install_prefix}/lib/lingtu/video/bin" \
     "${install_prefix}/lib/lingtu/video/lib/aarch64-linux-gnu/gstreamer-1.0" \
     "${install_prefix}/lib/lingtu/video/libexec/gstreamer-1.0" \
-    "${install_prefix}/share/lingtu/cmu_paths" \
     "${install_prefix}/share/lingtu/schemas"
   printf '0.0.0\n' > "${test_root}/source/VERSION"
   printf 'native release self-test\n' > "${test_root}/source/config/self-test.txt"
@@ -306,13 +297,6 @@ EOF
     "${install_prefix}/lib/lingtu/video/libexec/gstreamer-1.0/gst-plugin-scanner"
   install -m 0755 /dev/null \
     "${install_prefix}/lib/lingtu/video/bin/gst-inspect-1.0"
-  for profile in "${CMU_PATH_PROFILES[@]}"; do
-    mkdir -p "${install_prefix}/share/lingtu/cmu_paths/${profile}"
-    for relative in "${CMU_PATH_FILES[@]}"; do
-      printf 'fixture\n' \
-        > "${install_prefix}/share/lingtu/cmu_paths/${profile}/${relative}"
-    done
-  done
   for relative in "${RECORDING_EXECUTABLES[@]}"; do
     install -m 0755 /dev/null "${install_prefix}/bin/${relative}"
   done
@@ -1198,9 +1182,6 @@ prepare_default_install_prefix() {
     native-recording; do
     install_cmake_tree "${ROOT}/build/${component}"
   done
-  cmake --install "${ROOT}/build/nav_endpoint" \
-    --prefix "${INSTALL_PREFIX}" \
-    --component cmu_paths
   if git -C "${ROOT}" ls-files --error-unmatch -- \
       scripts/build/build_mapd.sh >/dev/null 2>&1; then
     install_cmake_tree "${ROOT}/build/maps"
@@ -1317,14 +1298,6 @@ elif [[ -z "$(find -L "${INSTALL_PREFIX}/lib" -maxdepth 1 -type f -name 'libreal
   echo "Standard install prefix is missing the RealSense SDK runtime: ${INSTALL_PREFIX}/lib/librealsense2.so*" >&2
   exit 1
 fi
-for profile in "${CMU_PATH_PROFILES[@]}"; do
-  for relative in "${CMU_PATH_FILES[@]}"; do
-    if [[ ! -s "${INSTALL_PREFIX}/share/lingtu/cmu_paths/${profile}/${relative}" ]]; then
-      echo "Native navigation install is missing CMU ${profile} asset: ${relative}" >&2
-      exit 1
-    fi
-  done
-done
 for relative in "${RECORDING_EXECUTABLES[@]}"; do
   require_install_executable "${relative}"
 done
@@ -1376,9 +1349,6 @@ stage_legacy_build_layout() {
   copy_legacy_file \
     "${INSTALL_PREFIX}/lib/liblingtu_inspection.so" \
     "build/nav_endpoint/inspection/liblingtu_inspection.so" 0644
-  rsync -aL \
-    "${INSTALL_PREFIX}/share/lingtu/cmu_paths/" \
-    "${PACKAGE_ROOT}/build/nav_endpoint/cmu_paths/"
   for relative in "${RECORDING_EXECUTABLES[@]}"; do
     copy_legacy_file \
       "${INSTALL_PREFIX}/bin/${relative}" \

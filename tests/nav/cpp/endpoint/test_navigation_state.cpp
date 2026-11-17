@@ -194,16 +194,16 @@ void testFailureCarriesStableCode() {
       "goal-11",
       11U,
       NavigationGoalState::Failed,
-      "local_recovery_exhausted",
+      "local_no_path",
   });
   const auto state = tracker.sample({});
   require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kFailed),
           "failure lifecycle missing");
   require(state.execution_state == static_cast<int>(NavigationExecutionState::kBlocked),
           "failed execution must be blocked");
-  require(state.failure_code == "local_recovery_exhausted", "failure code missing");
-  require(state.recovery_state == static_cast<int>(NavigationRecoveryState::kFailed),
-          "local recovery exhaustion must remain a recovery failure");
+  require(state.failure_code == "local_no_path", "failure code missing");
+  require(state.recovery_state == static_cast<int>(NavigationRecoveryState::kIdle),
+          "a navigation failure is not a recovery state");
 
   tracker.observe(GoalPlanStatus{
       "navigation-task-12",

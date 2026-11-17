@@ -524,7 +524,7 @@ class SwitchProfileRequest(StopRequest):
 
 
 class SelectPlannerRequest(StopRequest):
-    name: Literal["scan", "cmu"]
+    name: Literal["scan"]
 
 
 class CancelRequest(BaseModel):

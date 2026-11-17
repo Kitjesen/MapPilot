@@ -19,9 +19,8 @@ velocity.
 | [`intent.cpp`](intent.cpp) | 辅助运动的完整流程：滚动参考、操作方向变化、局部规划、边界脱离及跟踪。 |
 | [`route.hpp / route.cpp`](route.cpp) | 路线参考、进度与位置到达判断；map/odom/机身坐标转换、规划请求构造及诊断转换。 |
 | [`pose_route.hpp / pose_route.cpp`](pose_route.cpp) | 把带方向的路线整理成行走或转身阶段，并对适合的阶段生成连续参考。 |
-| [`state.cpp`](state.cpp) | 路线与姿态阶段的激活、限速、清除、暂停和恢复；实际命令反馈、运动状态及停滞记录。 |
-| [`recovery.hpp / recovery.cpp`](recovery.cpp) | 路线受阻或运动停滞时，管理恢复动作及重试。 |
-| [`recovery_search.hpp / recovery_search.cpp`](recovery_search.cpp) | 为 CMU 平移恢复搜索路径，并检查旋转恢复，供 Recovery 内部使用。 |
+| [`state.cpp`](state.cpp) | 路线与姿态阶段的激活、限速、清除、暂停和恢复；实际命令反馈及运动状态。 |
+| [`recovery.hpp`](recovery.hpp) | 恢复配置；目前只有辅助遥控的边界脱离使用其平移速度。 |
 | [`stairs.hpp / stairs.cpp`](stairs.cpp) | 实验性的楼梯段匹配和进出梯状态；正式导航端点目前未接通这套流程，不等于 SCAN 的三维上下楼算法。 |
 
 局部规划算法位于 `../planning/local/`，轨迹跟踪位于 `../tracking/`；最终运动检查由 `../endpoint/nav/control/` 所有。要读正常导航，先看 `route.hpp` 的 `Route`，再看 `executor.hpp` 的 `ExecutionInput` / `ExecutionOutput` 和 `Executor::tick()`；需要排查某种具体行为时，再进入对应实现。
@@ -95,8 +94,6 @@ Evidence: `build/scan-upstream-goal-20261108/`.
 
 ```text
 GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
-                              |                         |
-                              +------ Recovery ---------+ (CMU / teleop)
                                                         |
                                                  MotionCandidate
                                                         |
@@ -107,9 +104,9 @@ GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
   reference, and computes a bounded segment where the execution mode needs it.
 - `executor.*` calls one already configured `LocalPlanner`, then one
   `Follower`, and returns execution state plus a pre-safety command.
-- `recovery.*` coordinates CMU / assisted-teleop recovery. Autonomous SCAN
-  owns its local retries without this additional loop.
-- `state.cpp` owns odometry-derived kinematics and measured progress.
+- `recovery.hpp` holds the recovery settings. Assisted-teleop boundary
+  departure uses its translation speed; SCAN owns its local retries.
+- `state.cpp` owns odometry-derived kinematics.
 - `stairs.*` resolves measured stair surfaces against the actual 3D route and
   owns Executor's entry/profile/exit phases. It does not recognize point clouds,
   run global search, choose concrete platform models, or publish commands.
@@ -124,9 +121,8 @@ recovery goals, direct recovery rotations or an independent stall latch.
 Solver duration and native handoff/command holds make this a failure-count
 limit, not a fixed elapsed-time limit. FinalControl still checks final commands.
 
-CMU recovery exhaustion retains its typed `local_recovery_exhausted` event and
-the existing retained-goal retry path. Explicit cancellation, inspection action
-failures and assisted teleop retain their existing business policy.
+Explicit cancellation, inspection action failures and assisted teleop retain
+their existing business policy.
 
 The endpoint's goal controller also retains an accepted initial goal when an
 ordinary search finds no path or times out. It uses the existing pending request
@@ -135,44 +131,29 @@ Until a route is activated the state remains Planning. Invalid requests,
 algorithm exceptions, map replacement and explicit cancellation retain their
 terminal handling; preview requests never start this motion-task retry loop.
 
-CMU and teleop Recovery use current geometry through RecoverySearch. A supplied
-Grid remains authoritative for those geometric checks when point sampling is
-disabled. This separate policy does not participate in autonomous SCAN.
-
 The five responsibilities are:
 
 | Owner | Produces | Does not do |
 | --- | --- | --- |
-| Global planner | A route through the saved 3D map | Local control or recovery |
-| LocalPlanner | An executable local path or spline using live collision data | Global search, task progress, recovery state, or final command publication |
-| Recovery | Temporary goals, measured completion and retries; rotation/CMU candidate search | Replace the global route or publish velocity |
-| Executor | Route/recovery coordination and a candidate command | Goal admission or final authority arbitration |
-| FinalControl | The checked final command | Search routes or choose recovery candidates |
+| Global planner | A route through the saved 3D map | Local control |
+| LocalPlanner | An executable local spline using live collision data, including its own retries | Global search, task progress, or final command publication |
+| Executor | Route coordination and a candidate command | Goal admission or final authority arbitration |
+| FinalControl | The checked final command | Search routes |
 
 The endpoint's `GoalPlanController` owns goal admission, cancellation and
 replanning. `Executor` coordinates an admitted route and assisted motion; it is
 not the task manager or the hardware driver.
 
-`Recovery` is Executor's CMU/teleop recovery state, not a separate global planner.
-It tracks the selected candidate's progress and retries. Its rotation and CMU
-search remain internal details.
-
-`LocalPlanner` is the module name. SCAN is the default algorithm behind that
-interface; CMU remains an explicitly selected alternative. Executor calls the
-same module interface for either algorithm.
+`LocalPlanner` is the module name; SCAN is the only algorithm behind it.
 
 The local boundary uses `local_no_path`, `local_blocked`, and
-`local_near_field_stop` for its stable status vocabulary. `execution_stalled`
-belongs to Executor: it compares requested motion with measured progress.
+`local_near_field_stop` for its stable status vocabulary.
 SCAN's `searchReason` (also surfaced as the execution reason when relevant)
 retains the specific search diagnostic. A diagnostic is not another owner of
 the motion state machine.
 
-Planner capabilities are derived at the local-planner boundary. Executor and
-recovery consume these capabilities; they do not branch on Scan/Cmu. SCAN
-does not consume the optional 2D traversability grid, and its request identity
-ignores that grid's generation. The grid remains available to the CMU backend
-used by other Products.
+SCAN does not consume the optional 2D traversability grid, and its request
+identity ignores that grid's generation.
 
 ## Local planning boundary
 
@@ -191,12 +172,12 @@ struct LocalPlanRequest {
 
 `LocalPlan` carries one executable `FollowTarget`:
 
-- CMU returns `PathTarget`.
 - SCAN returns `SplineTarget`.
+- Assisted-teleop boundary departure follows a short `PathTarget`.
 
 The Follower dispatches that variant internally. Executor converts preview
-geometry and robot state between the target's frames, but does not select
-CMU/SCAN, inspect backend strings, or manage SCAN task reuse and continuity.
+geometry and robot state between the target's frames, but does not inspect
+backend strings or manage SCAN task reuse and continuity.
 The endpoint composition root chooses and configures the Planner before
 constructing Executor.
 
@@ -204,12 +185,9 @@ For terminal alignment, the follower computes the yaw command and
 LocalPlanner checks the turn sweep. These remain separate
 in-place stages, not ordinary spline following. LocalPlanner also owns the
 grid queries for pose-stage reconnect and assisted boundary departure.
-These geometry queries retain the existing SCAN Grid implementation even
-when CMU is selected; this change does not add a CMU-specific checker.
 FinalControl checks braking with the configured runtime values when enabled.
 
-Composition selects `PlanningFrame::Map` for SCAN and `PlanningFrame::Odom`
-for CMU. SCAN's complete reference, robot kinematics, collision queries and
+Composition selects `PlanningFrame::Map`. SCAN's complete reference, robot kinematics, collision queries and
 spline tracking share map coordinates; the Follower still returns body-frame
 velocity. Small map-to-odom corrections update the measured robot pose, not
 the reference generation or spline execution clock.
@@ -248,7 +226,6 @@ Executor may:
 - activate and clear a Route;
 - project progress and choose the local route segment;
 - request a local plan;
-- invoke recovery;
 - follow the returned target;
 - report target, preview path, control hints, and a pre-safety velocity.
 
@@ -258,7 +235,7 @@ Executor may not:
 - select/configure a local backend;
 - decode or publish DDS;
 - perform final authority or safety arbitration;
-- duplicate CMU/SCAN continuity state;
+- duplicate SCAN continuity state;
 - branch on free-form planner failure strings.
 
 The endpoint `FinalControl` remains the sole owner of shaping, authority,
@@ -284,10 +261,8 @@ to the installed model/profile, owns any required Grounded transition, and
 reports readiness only after actual profile readback and motion readiness.
 Missing, stale, unsupported, or mismatching feedback holds the same route.
 
-Local collision planning remains active while traversing. Executor limits speed,
-rejects a local lateral detour outside the observed flight, and suppresses flat
-ground recovery rotations/translations there. Existing measured-stall stopping
-still holds zero; it does not complete or terminate the navigation task.
+Local collision planning remains active while traversing. Executor limits speed
+and rejects a local lateral detour outside the observed flight.
 
 The driver receives `restore` only after the complete footprint clears onto an
 observed exit landing and measured motion is quiet. Until then Executor holds
@@ -339,35 +314,6 @@ along the same arc and retains the active trajectory. Occupied current space,
 unsafe measured motion, or an unavailable safe prefix still stops execution.
 The sweep keeps measured body height: an ascending global route cannot be
 used as evidence that the physical robot has already climbed the stairs.
-
-Disabling automatic recovery does not disable stall stopping. If a commanded
-robot makes no measured progress for the existing recovery observation interval,
-the executor holds zero output with `execution_stalled`. A new route or
-operator intent clears this hold; periodic local replanning does not. This keeps
-an unqualified locomotion policy from repeatedly pushing against the same step.
-
-Stall progress follows the previous requested motion in the planning frame.
-Translation accumulates signed horizontal displacement along the commanded
-path-following direction; heading alignment accumulates rotation in the
-requested direction. Reverse drift, cross-track slip, body heave and incidental
-yaw do not refresh a translation timer. Instantaneous velocity alone does not
-prove progress. The existing distance/angle threshold is capped at half the
-requested travel accumulated in that observation window, so a slow command is
-not required to cover an impossible fixed distance. This is a stall detector,
-not a locomotion tracking-accuracy qualification.
-
-When local planning returns `Pending`, no executable trajectory is available:
-the executor sends zero and pauses this observation window without discarding
-earlier motion evidence. A safe active SCAN trajectory is returned as `Ready`
-even while its replacement is being prepared, so it keeps normal progress
-monitoring. `Blocked` and near-field holds still count toward failed motion.
-
-A translating recovery also rejects excursions beyond its existing cross-track
-limit. Completion requires both along-path progress and actual XY proximity to
-the exit; merely projecting onto the endpoint cannot finish recovery. A rejected
-action advances the existing checked candidate sequence. These checks do not
-raise recovery speed, change braking limits or establish that policy 4998 can
-execute low-speed lateral commands.
 
 The goal is `(56, 32, 0.3)`. A successful global plan or accepted command is not
 arrival: the report requires physical travel, native `REACHED`, final position,

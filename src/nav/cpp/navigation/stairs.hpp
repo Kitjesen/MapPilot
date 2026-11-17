@@ -68,7 +68,6 @@ struct StairTraversalOutput {
   StairProfile request{StairProfile::None};
   bool hold{false};
   bool onFlight{false};
-  bool constrainRecovery{false};
   double speedLimit{0.0};
   std::optional<nav_kernel::Vec3> approachTarget;
   std::optional<double> bodyYaw;  // Map-frame flight direction, independent of local path tangent.

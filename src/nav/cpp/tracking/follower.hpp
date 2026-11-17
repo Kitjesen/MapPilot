@@ -5,9 +5,8 @@
  * same Follower::follow entry point. Algorithm selection and state ownership
  * stay inside Follower.
  *
- * The geometric branch implements the CMU-style path tracking law while its
- * caller supplies the operating profile. Executor applies the upstream Go2
- * values for CMU plans; generic LingTu paths may use different parameters.
+ * The geometric branch tracks a polyline with the caller's operating profile.
+ * Recovery supplies its own profile. SCAN trajectories use the spline branch.
  */
 #pragma once
 
@@ -34,18 +33,6 @@ struct SplineFollowerParams {
   double maxVy{::lingtu::settings::limits::parameters::scan_follower::max_vy_mps};
   double maxYawRateRadS{::lingtu::settings::limits::native_nav::follower::max_yaw_rate_rad_s};
   double finishDistance{::lingtu::settings::follower::parameters::scan_follower::finish_distance_m};
-};
-
-struct CmuFollowerProfile {
-  double lookahead_m{::lingtu::settings::follower::native_nav::cmu::follower_lookahead_m};
-  double yaw_gain{::lingtu::settings::follower::native_nav::cmu::follower_yaw_gain};
-  double nominal_dt_s{::lingtu::settings::follower::native_nav::cmu::follower_nominal_dt_s};
-  double switch_time_s{::lingtu::settings::follower::native_nav::cmu::follower_switch_time_s};
-  double heading_align_rad{::lingtu::settings::follower::native_nav::cmu::follower_heading_align_rad};
-  double omni_goal_m{::lingtu::settings::follower::native_nav::cmu::follower_omni_goal_m};
-  double omni_heading_rad{::lingtu::settings::follower::native_nav::cmu::follower_omni_heading_rad};
-  double stop_distance_m{::lingtu::settings::follower::native_nav::cmu::follower_stop_distance_m};
-  double slowdown_distance_m{::lingtu::settings::follower::native_nav::cmu::follower_slowdown_distance_m};
 };
 
 struct FollowerParams {
@@ -76,12 +63,8 @@ struct FollowerParams {
   bool twoWayDrive = true;
   bool noRotAtGoal = true;
   SplineFollowerParams spline{};
-  CmuFollowerProfile cmu{};
 };
 
-// Apply the upstream CMU pathFollower profile while preserving the Product's
-// selected maximum speed and external slow/stop inputs.
-FollowerParams cmuFollowerParams(FollowerParams params);
 FollowerParams recoveryFollowerParams(FollowerParams params, double speed, double localRange);
 
 enum class FollowerAlgorithm {
@@ -101,7 +84,6 @@ struct FollowerState {
   int safetyStop{0};       // 0=none, 1=stop linear, 2=stop all
   FollowerParams params{};
   double goalDistance{-1.0};
-  bool standardPathProfile{true};
   // Callers can supply body heading independently of the spline tangent.
   std::optional<double> desiredHeading{};
   // An absent observation must not be mistaken for measured standstill.

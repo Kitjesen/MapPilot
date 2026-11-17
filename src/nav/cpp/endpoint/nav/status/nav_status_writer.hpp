@@ -32,7 +32,7 @@ struct TraversabilityGrid;
 struct StatusWriterConfig {
   std::string control_mode{"autonomy"};
   std::string global_planner{"octoplanner3d"};
-  std::string local_planner{"cmu"};
+  std::string local_planner{"scan"};
   std::string product;
   std::string product_session_id;
   int domain_id{0};
@@ -123,14 +123,10 @@ struct LocalDiagnostics {
   int slow_down{0};
   int recovery_state{0};
   int recovery_action{0};
-  int recovery_attempt{0};
   int recovery_candidate_count{0};
-  double recovery_rotation_target_rad{0.0};
   bool recovery_verified{false};
-  double recovery_progress{0.0};
   std::string recovery_trigger{"inactive"};
   std::string recovery_reason{"inactive"};
-  bool recovery_exhausted{false};
   std::size_t target_index{0};
   double target_distance_m{0.0};
   std::size_t local_path_points{0};

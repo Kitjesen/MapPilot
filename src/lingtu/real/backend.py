@@ -711,7 +711,7 @@ class FieldBackend:
                 -0.05 <= age_s <= 1.0,
                 _text(last.get("control_mode")) == native_environment.get("LINGTU_NAV_CONTROL_MODE"),
                 _text(last.get("local_planner"))
-                == native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "cmu"),
+                == native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "scan"),
                 _text(native_product.get("product")) == native_environment.get("LINGTU_PRODUCT"),
                 _status_bool(last.get("publish_cmd_vel"))
                 == _env_bool(native_environment.get("LINGTU_NAV_PUBLISH_CMD_VEL")),

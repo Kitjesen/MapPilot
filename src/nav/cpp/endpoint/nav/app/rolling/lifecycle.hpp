@@ -58,7 +58,7 @@ struct RollingSegmentGenericPreempt {
 
 enum class RollingSegmentMotionOutcomeKind {
   kReached,
-  kRecoveryExhausted,
+  kPlanningFailed,
 };
 
 struct RollingSegmentMotionOutcome {

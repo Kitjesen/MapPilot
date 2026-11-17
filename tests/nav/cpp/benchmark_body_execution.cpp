@@ -453,7 +453,7 @@ int main(int argc,char** argv) try {
       final_support_ms=std::chrono::duration<double,std::milli>(Clock::now()-started).count();
     }
     if(!safe) {cmd={};final_scale=0.;++blocked;}
-    executor.reportFinalMotionBlocked(!safe,t);
+    executor.reportFinalMotionBlocked(!safe);
     const double tick_ms=std::chrono::duration<double,std::milli>(Clock::now()-tick_start).count();
     max_tick=std::max(max_tick,tick_ms);++ticks;++reasons[output.reason];
     if(output.tracking.active && !output.trajectory_frozen) ++tracking_ticks;
