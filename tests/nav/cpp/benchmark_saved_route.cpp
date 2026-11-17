@@ -613,7 +613,7 @@ int run(int argc, char** argv) {
       executor.commitApplied(applied_command);
       if (final_scale <= 0.0 || std::hypot(applied_command.vx, applied_command.vy) > 1e-6 ||
           std::abs(applied_command.wz) > 1e-6)
-        executor.reportFinalMotionBlocked(final_scale <= 0.0, now);
+        executor.reportFinalMotionBlocked(final_scale <= 0.0);
       if (final_scale <= 0.0) executor.pauseLinearMotion();
       const double final_geometry_ms = milliseconds(final_start);
       if (raw_command.vx != 0 || raw_command.vy != 0 || raw_command.wz != 0) ++raw_motion_ticks;

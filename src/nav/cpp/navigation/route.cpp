@@ -200,83 +200,6 @@ void Executor::buildReference(
   }
 }
 
-void Executor::applyLocalGuide(
-    const nav_kernel::Pose& map_body,
-    const nav_kernel::Pose& planning_body,
-    const MapFromOdomTransform& map_from_odom,
-    double timestamp_s) {
-  const double commitment_timeout_s =
-      std::max(0.5, config_.recovery.blocked_interval_s);
-  const bool commitment_expired =
-      guide_stamp_s_ < 0.0 || !std::isfinite(timestamp_s) ||
-      timestamp_s < guide_stamp_s_ ||
-      timestamp_s - guide_stamp_s_ > commitment_timeout_s;
-  if (commitment_expired) {
-    guide_map_.clear();
-  }
-  if (guide_generation_ != generation ||
-      guide_map_.size() < 2 || segment.size() < 2) {
-    return;
-  }
-
-  const double minimum_guide_distance = std::clamp(
-      1.5 * std::max(0.0, config_.follower.baseLookAheadDis),
-      0.30,
-      std::max(0.30, 0.5 * config_.corridor_lookahead_m));
-  const auto closest = std::min_element(
-      guide_map_.begin(), guide_map_.end(),
-      [&](const nav_kernel::Vec3& left, const nav_kernel::Vec3& right) {
-        return nav_kernel::distance3D(map_body.position, left) <
-               nav_kernel::distance3D(map_body.position, right);
-      });
-  if (closest == guide_map_.end() ||
-      std::next(closest) == guide_map_.end()) {
-    return;
-  }
-  const nav_kernel::Vec3* guide_map = nullptr;
-  for (auto point = std::next(closest);
-       point != guide_map_.end(); ++point) {
-    if (nav_kernel::distance3D(map_body.position, *point) >=
-        minimum_guide_distance) {
-      guide_map = &*point;
-      break;
-    }
-  }
-  if (guide_map == nullptr) {
-    return;
-  }
-
-  const nav_kernel::Vec3 guide_planning =
-      map_from_odom.odomPointFromMap(*guide_map);
-  const nav_kernel::Vec3 route_direction{
-      segment.back().x - planning_body.position.x,
-      segment.back().y - planning_body.position.y,
-      0.0,
-  };
-  const nav_kernel::Vec3 guide_direction{
-      guide_planning.x - planning_body.position.x,
-      guide_planning.y - planning_body.position.y,
-      0.0,
-  };
-  if (route_direction.x * guide_direction.x +
-          route_direction.y * guide_direction.y <=
-      0.0) {
-    return;
-  }
-  std::vector<nav_kernel::Vec3> guided;
-  guided.reserve(segment.size() + 1);
-  guided.push_back(planning_body.position);
-  if (nav_kernel::distance3D(guided.back(), guide_planning) > 1e-4) {
-    guided.push_back(guide_planning);
-  }
-  for (std::size_t index = 1; index < segment.size(); ++index) {
-    if (nav_kernel::distance3D(guided.back(), segment[index]) > 1e-4) {
-      guided.push_back(segment[index]);
-    }
-  }
-  segment.swap(guided);
-}
-
 std::vector<nav_kernel::Vec3> Executor::bodyPathToMap(
     const nav_kernel::Pose& odom_map_body,
     const std::vector<nav_kernel::Vec3>& body_path) const {
@@ -426,13 +349,8 @@ ExecutionOutput Executor::tickRoute(const nav_kernel::Pose &map_body,
     output.active = !route.empty();
     output.near_field_stop = output.active;
     output.reason = "invalid_map_from_odom";
-    recovery_action_ = 0;
-    recovery_attempt_ = -1;
-    recovery_follower_.reset();
     velocity_stamp_s_ = -1.0;
     resetLocalPlanning(true);
-    recovery_.reset();
-    resetAutonomyProgress();
     return output;
   }
 

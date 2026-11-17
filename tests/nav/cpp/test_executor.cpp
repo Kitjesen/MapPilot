@@ -2269,15 +2269,15 @@ TEST(Executor, AcceptedMotionAndNewRouteClearFinalBrakingRejection) {
   auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
   const auto path = route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}});
   executor.setRoute(path);
-  executor.reportFinalMotionBlocked(true, 1.0);
-  executor.reportFinalMotionBlocked(false, 1.05);
+  executor.reportFinalMotionBlocked(true);
+  executor.reportFinalMotionBlocked(false);
   const auto tick = [&](double now) {
     return executor.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, now, {},
                                     emptyScanObservation(now)));
   };
   const auto accepted = awaitScanOutput([&] { return tick(1.11); });
   EXPECT_EQ(accepted.recovery_trigger, "inactive") << accepted.reason;
-  executor.reportFinalMotionBlocked(true, 1.12);
+  executor.reportFinalMotionBlocked(true);
   executor.setRoute(path);
   const auto replacement = awaitScanOutput([&] { return tick(1.25); });
   EXPECT_EQ(replacement.recovery_trigger, "inactive") << replacement.reason;
@@ -3441,11 +3441,11 @@ TEST(Executor, FinalBlockReplansFromCurrentPose) {
   ASSERT_GT(moving.cmd_vel.vx, 0.0);
   const auto route_generation = moving.route_generation;
 
-  executor.reportFinalMotionBlocked(true, now);
+  executor.reportFinalMotionBlocked(true);
   executor.pauseLinearMotion();
   body.position.y = .3;
   now += .05;
-  executor.reportFinalMotionBlocked(false, now);
+  executor.reportFinalMotionBlocked(false);
   const auto next = tick();
   if (next.tracking.active) {
     ASSERT_FALSE(next.local_path_map.empty());
@@ -3474,7 +3474,7 @@ TEST(Executor, ScanDoesNotInjectRecoveryAfterFinalMotionBlock) {
   auto input = routeInput(pose(0, 0, 0, 0), nullptr, 0, 1.0, {}, emptyScanObservation(1.0));
   const auto first = awaitScanOutput([&] { return executor.tick(input); });
   ASSERT_TRUE(first.path_found) << first.reason;
-  executor.reportFinalMotionBlocked(true, 1.0);
+  executor.reportFinalMotionBlocked(true);
   for (int i=1; i<=40; ++i) {
     input.timestampS = 1.0 + .05*i;
     const auto output = executor.tick(input);

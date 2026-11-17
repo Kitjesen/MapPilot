@@ -1189,8 +1189,8 @@ int main(int argc, char **argv) {
               observation,
               {}});
         };
-    autonomy_tick_actions.report_final_motion_blocked = [&](bool blocked, double timestamp_s) {
-      executor.reportFinalMotionBlocked(blocked, inputs.executionTime(timestamp_s));
+    autonomy_tick_actions.report_final_motion_blocked = [&](bool blocked, double) {
+      executor.reportFinalMotionBlocked(blocked);
     };
     autonomy_tick_actions.pause_linear_motion = [&]() { executor.pauseLinearMotion(); };
     AutonomyTickController autonomy_tick(std::move(autonomy_tick_actions), final_control);

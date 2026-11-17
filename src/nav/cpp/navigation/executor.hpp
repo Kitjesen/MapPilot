@@ -159,7 +159,7 @@ class Executor {
   void pauseLinearMotion();
   // Record the command actually accepted by final control.
   void commitApplied(const nav_kernel::Twist &command);
-  void reportFinalMotionBlocked(bool blocked, double timestamp_s);
+  void reportFinalMotionBlocked(bool blocked);
   void replanTeleop();
   void stopLinearMotion();
   // Reset local execution while retaining the admitted route and goal.
@@ -231,9 +231,6 @@ class Executor {
                              const MapFromOdomTransform &map_from_odom);
   void buildReference(const SegmentTarget &target,
                       const MapFromOdomTransform &map_from_odom);
-  void applyLocalGuide(const nav_kernel::Pose &map_body,
-                       const nav_kernel::Pose &planning_body,
-                       const MapFromOdomTransform &map_from_odom, double timestamp_s);
   nav_kernel::LocalKinematicState planningKinematics(const nav_kernel::Pose &planning_body,
                                                      const ExecutionObservation &observation,
                                                      double timestamp_s);
@@ -244,16 +241,9 @@ class Executor {
                      nav_kernel::LocalPlannerDebugSnapshot snapshot) const;
   double slowFactor(int slow_down) const;
   bool atGoal(const nav_kernel::Pose &body) const;
-  bool autonomyMotionStalled(const nav_kernel::Pose &odom_map_body, double timestamp_s,
-                            bool planning_pending);
-  void setAutonomyMotionExpected(const nav_kernel::Twist &command,
-                                 const nav_kernel::Pose &odom_map_body,
-                                 double timestamp_s);
-  void resetAutonomyProgress();
 
   ExecutorConfig config_;
   nav_kernel::LocalPlanner local_planner_;
-  Recovery recovery_;
   Recovery teleop_recovery_;
   StairTraversal stairs_;
   StairTraversalOutput stair_step_;
@@ -279,13 +269,10 @@ class Executor {
   std::vector<nav_kernel::Vec3> segment;
   std::vector<nav_kernel::Vec3> reference;
   std::optional<std::uint64_t> reference_epoch;
-  std::vector<nav_kernel::Vec3> guide_map_;
   std::optional<double> teleop_recovery_intent_rad_;
   std::optional<double> teleop_boundary_departure_intent_rad_;
   std::optional<TeleopReference> teleop_reference_;
   std::uint64_t generation{0};
-  std::uint64_t guide_generation_{0};
-  double guide_stamp_s_{-1.0};
   std::optional<double> stage_yaw_;
   std::optional<nav_kernel::Vec3> requested_goal_;
   double active_goal_reached_m_{0.35};
@@ -294,21 +281,9 @@ class Executor {
   std::size_t progress{0};
   std::vector<float> obstacle_xyzh_odom_scratch_;
   std::vector<nav_kernel::PredictedObstacle> predictions_odom_scratch_;
-  int recovery_action_{0};
-  int recovery_attempt_{-1};
-  bool autonomy_motion_expected_{false};
-  bool autonomy_stall_stop_{false};
-  nav_kernel::Twist autonomy_expected_command_{};  // Planning-frame translation.
-  nav_kernel::Pose autonomy_progress_pose_{};
-  double autonomy_progress_time_s_{0.0};
-  double autonomy_sample_time_s_{0.0};
-  double autonomy_observed_progress_{0.0};
-  double autonomy_requested_progress_{0.0};
   nav_kernel::Vec3 previous_planning_velocity_{};
   double velocity_stamp_s_{-1.0};
   std::uint64_t previous_kinematics_frame_epoch_{0};
-  double local_blocked_since_s_{-1.0};
-  double final_motion_blocked_since_s_{-1.0};
   bool traj_frozen_{false};
   bool route_start_pending_{false};
   bool stair_replan_pending_{false};

@@ -53,17 +53,11 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
                                       TraversabilityGridView traversability,
                                       ExecutionObservation observation) {
   ExecutionOutput output;
-  autonomy_stall_stop_ = false;
-
-  recovery_action_ = 0;
-  recovery_attempt_ = -1;
   if (!intent_mode_) {
     local_planner_.reset();
     resetTeleopBoundaryDeparture();
     intent_mode_ = true;
   }
-  recovery_.reset();
-  resetAutonomyProgress();
   const double requested_speed = std::hypot(intent.vx, intent.vy);
   if (requested_speed <= 1e-6 || config_.max_speed <= 1e-6) {
     stopLinearMotion();
