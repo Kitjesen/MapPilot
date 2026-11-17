@@ -59,6 +59,7 @@ class YoloTensorRTDetector:
             track_low_thresh=min(0.1, self.confidence),
             new_track_thresh=self.confidence,
         )
+        self._source_ts: float | None = None
 
     def load_model(self) -> None:
         if self._handle is not None:
@@ -109,7 +110,8 @@ class YoloTensorRTDetector:
             left=left,
             top=top,
         )
-        tracks = self._tracker.update(_TrackerInput(detections), bgr)
+        timestamp, self._source_ts = self._source_ts, None
+        tracks = self._tracker.update(_TrackerInput(detections), bgr, timestamp=timestamp)
         tracked: list[Detection2D] = []
         for row in tracks:
             detection_index = int(row[7])
@@ -124,6 +126,10 @@ class YoloTensorRTDetector:
                 )
             )
         return tracked
+
+    def set_source_ts(self, source_ts: float) -> None:
+        """Receive the next frame's source time so track motion follows real elapsed time."""
+        self._source_ts = float(source_ts)
 
     def shutdown(self) -> None:
         if self._handle is not None:

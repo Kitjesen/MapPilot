@@ -149,3 +149,49 @@ def test_bpu_tracker_can_explicitly_use_native_backend() -> None:
     assert len(result) == 1
     assert result[0].label == "person"
     assert result[0].track_id > 0
+
+
+def test_source_time_gap_predicts_motion_across_dropped_frames() -> None:
+    tracker = NativeByteTracker(track_buffer=30)
+    ids = []
+    for step in range(8):
+        timestamp = 0.1 * step
+        left = 100.0 + 100.0 * timestamp  # 100 px/s
+        rows = tracker.update(_results(([left, 10, left + 40, 110], 0.9, 0)), timestamp=timestamp)
+        ids.append(int(rows[0, 4]))
+    # 0.6 s without detections: a one-step prediction would miss this box.
+    rows = tracker.update(_results(([230, 10, 270, 110], 0.9, 0)), timestamp=1.3)
+    ids.append(int(rows[0, 4]))
+
+    assert len(set(ids)) == 1
+
+
+def test_lost_tracks_expire_after_source_time_not_update_count() -> None:
+    tracker = NativeByteTracker(track_buffer=30)  # one second at 30 FPS
+    first = tracker.update(_results(([10, 10, 50, 110], 0.9, 0)), timestamp=0.0)
+    tracker.update(_results(), timestamp=1.5)
+    returned = tracker.update(_results(([10, 10, 50, 110], 0.9, 0)), timestamp=1.6)
+
+    assert int(returned[0, 4]) != int(first[0, 4])
+
+
+def test_camera_motion_compensation_keeps_ids_while_the_image_pans() -> None:
+    import cv2
+
+    rng = np.random.default_rng(3)
+    noise = rng.integers(0, 255, size=(240, 640)).astype(np.uint8)
+    background = cv2.GaussianBlur(noise, (0, 0), 3)
+    compensated, uncompensated = NativeByteTracker(), NativeByteTracker()
+    ids: dict[str, set[int]] = {"compensated": set(), "uncompensated": set()}
+    for step in range(4):
+        shift = 60 * step  # a static person while the camera turns
+        frame = np.repeat(np.roll(background, -shift, axis=1)[:, :, None], 3, axis=2)
+        box = [300 - shift, 60, 340 - shift, 200]
+        frame[box[1]:box[3], box[0]:box[2]] = (40, 40, 200)
+        rows = compensated.update(_results((box, 0.9, 0)), frame)
+        ids["compensated"].add(int(rows[0, 4]))
+        rows = uncompensated.update(_results((box, 0.9, 0)))
+        ids["uncompensated"].add(int(rows[0, 4]))
+
+    assert len(ids["compensated"]) == 1
+    assert len(ids["uncompensated"]) > 1

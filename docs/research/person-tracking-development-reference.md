@@ -1,6 +1,6 @@
 # 人物识别、跟踪与遮挡恢复：开发参考
 
-核对日期：**2026-10-20**。范围：2024–2026 年与 LingTu 人物跟随直接相关的工作，重点补充 2025–2026 年的新结果。本文是论文与源码对照、开发依据及待验证方案；**不是新模型实测，也不是功能已经实现的声明**。
+核对日期：**2026-10-20**；GitHub 实现、快速适配和当前缺口于 **2026-11-17** 补充在[第 11 节](#11-2026-11-17-补充github-实现快速适配与当前缺口)。范围：2024–2026 年与 LingTu 人物跟随直接相关的工作，重点补充 2025–2026 年的新结果。本文是论文与源码对照、开发依据及待验证方案；**不是新模型实测，也不是功能已经实现的声明**。
 
 历史回放、已复现反例和经典基线见 [person-follow.md](person-follow.md)。本文维护较新的论文依据与实施映射；后续实现、PR 和实验记录可引用下面的稳定编号，如 `SEL-01`、`MEM-01`、`DEV-03`。每次引用同时写清采用了哪一项机制，不能只写“参考某论文”。
 
@@ -241,6 +241,19 @@ DEV-02/09 是确定性实现修复，不应包装为论文创新；DEV-04 的真
 
 后续优先接入：DEV-03 的 ByteTrack 弱候选恢复入口；DEV-04 的真实源时间动态状态；DEV-05/07 的身份恢复与可信参考提交条件。先固定输入逐项比较，再决定是否引入 TrackTrack/OA-SORT 的额外关联策略。现有跨帧 VLM 首选参考的 freshness、长时间换轨仅凭运动等问题仍在后续范围，不能把本批取消修复解释为全部恢复问题已解决。
 
+### 第二批代码修复记录：2026-11-17
+
+依据 [合成场景基线](person-follow.md#tpt-bench-harness-and-synthetic-identity-baseline-2026-11-17) 暴露的问题，修改现有 owner，不新增模块或依赖。前后对照见 [person-follow.md](person-follow.md#identity-and-track-continuity-repairs-2026-11-17)。
+
+- [x] DEV-04 时间：[native_byte_tracker.py](../../src/perception/tracking/native_byte_tracker.py) 按源时间 Δt 预测、按速度（像素/秒）更新，丢失轨迹按源时间过期（`track_buffer` 帧 @30 FPS，默认 1 s）。[yolo_trt.py](../../src/perception/detection/yolo_trt.py) 实现已有的 `set_source_ts` 钩子，每帧只用一次；没有时间戳时仍按名义帧周期。
+- [x] DEV-04 相机自运动：同一 tracker 在收到图像时用相位相关估计整幅图像平移（检测框区域置均值），在关联前补偿预测框；相关峰值低于 0.3 时不补偿。合成纹理上 0–120 px/帧平移 450/450 正确；局部光流在 40 px 以上不可靠，因此未采用。
+- [x] DEV-05/DEV-10 换轨：[person.py](../../src/decision/vision/person.py) 记录与已接受目标同帧出现过的轨迹 ID（5 s 内），这些 ID 不能成为运动恢复、外观 ReID 或身份确认候选（同帧可见是可靠否定）。没有身份证据时，新 ID 只能在 ≤0.5 s 的检测断开、位于预测位置附近且唯一时立即续接；0.5–1 s 需 3 帧一致确认；超过 1 s 不再凭运动换人。
+- [x] 外观模式续接与等待：同样 ≤0.5 s、预测位置附近、DINO 达阈值、当前 ID 不可见且不在否定冷却中的新 ID 直接续接；长于此仍走 VLM 确认。确认等待期间，原轨迹 ID 在短间隔内回来可直接匹配并撤销待确认请求。
+- [ ] DEV-03：BPU 路径的弱框入口仍未修（`tracking` Product 默认的 `yolo_trt` 路径不受影响）。
+- [ ] 长时间完全遮挡后的恢复仍依赖 VLM 确认时延：合成 `occlusion_reentry` 在 7.88 s 确认延迟下 14 s 内未恢复。是否允许 DINO 在特定条件下先行放行属于运动授权策略，未改变。
+
+验证：perception、decision、runtime、semantic 集成与 tools 测试同时在改动前后运行，改动后无新增失败；13 个新增/更新用例在旧代码上失败、新代码通过。其余 70 个失败与 24 个收集错误在两次运行中完全相同，来自本环境缺少 PIL/模型/LFS 资源。没有 NX、MuJoCo 或实机运行；相位相关耗时只在 x86 容器上测得约 0.6 ms（320×120 降采样图）。
+
 ## 10. 实验与开发记录要求
 
 每次比较只改变一个主要因素，保持检测输入、人物初始化和测试划分一致；调阈值使用验证集，测试集冻结。图库来自因果过去；需要完整视频才能得出的结果只能离线报告，不倒灌给在线链。
@@ -256,3 +269,47 @@ DEV-02/09 是确定性实现修复，不应包装为论文创新；DEV-04 的真
 单看已接受帧准确率会隐藏大面积缺失；“零错人但长期拒识”不能当可靠跟随。原始余弦、重排序分数和置信度都不是身份概率。多参考取最大值时，还应固定或记录参考数，防止只是图库变大导致误接受增加。
 
 后续每条实验在 [person-follow.md](person-follow.md) 记录：引用编号与具体改法、源码版本、模型/实际权重/预处理、输入与划分、平台/加速器/分辨率、是否含检测/编码/网络/导航的计时边界、主要指标与保留失败、许可和部署结论。文献核对阶段未修改算法；随后代码修复见第 9 节。两阶段均未安装依赖或下载这些新增模型/数据；所有外部 FPS 都不是本机验证结果。
+
+## 11. 2026-11-17 补充：GitHub 实现、快速适配与当前缺口
+
+本节核对 GitHub 上公开的 README、配置和 LICENSE（固定到下列提交），并对照本仓库 2026-11-17 的代码。**没有下载模型或数据，没有安装依赖，也没有运行新的回放。** 本环境无法访问 arxiv，论文正文未复核；论文事实仍以前文各编号为准。
+
+### 11.1 新增实现条目
+
+| 编号与实现 | 已核对事实（固定版本） | 对 LingTu 的用法与边界 |
+| --- | --- | --- |
+| TOOL-01 Ultralytics 跟踪模式 | [track.md @4d254d8](https://github.com/ultralytics/ultralytics/blob/4d254d8141e49dd85009e1ec7657ab3c4ee8c150/docs/en/modes/track.md)：`ultralytics` 8.4.63 起在 BoT-SORT、ByteTrack 之外新增 OC-SORT、Deep OC-SORT、FastTracker 和 TrackTrack；未指定 tracker 时默认用 `tracktrack.yaml`。[tracktrack.yaml](https://github.com/ultralytics/ultralytics/blob/4d254d8141e49dd85009e1ec7657ab3c4ee8c150/ultralytics/cfg/trackers/tracktrack.yaml) 默认 high/low/new = 0.6/0.25/0.7，`min_track_len: 3`。ReID 默认关闭（`with_reid: False`）；`model: auto` 先复用检测器特征，没有可用特征时回退到 `yolo26n-cls.pt`。另发布了 YOLO26 n–x 的 ReID ONNX 编码器。许可 AGPL-3.0 | 只作离线对照工具，不进入运行链。默认阈值与我们 `yolo_trt` 的 0.3/0.1 不同，对照时必须把检测输入固定为同一份 |
+| TOOL-02 BoxMOT | [README @fab3fe0](https://github.com/mikel-brostrom/boxmot/blob/fab3fe0383e62993b4e15148c09d4ea0ccf54bf7/README.md)：检测器、分割器、外观编码器和 tracker 是可独立替换的组件；`materialize` 把检测、mask 和 embedding 存成可复用的 Parquet；内置 occluboost、botsort、boosttrack、strongsort、deepocsort、bytetrack、hybridsort、ocsort、sfsort，可选 C++ 后端。README 自测表在 MOT17 ablation 上的 HOTA：occluboost 71.10、botsort 69.68、bytetrack 67.68。需要 Python 3.10–3.13 和 `ultralytics>=8.4.58`。许可 AGPL-3.0 | 表中分数是作者自己的检测和配置，不是论文成绩，也不是本机结果。`materialize` 正好满足第 10 节"固定检测输入，一次只改一个因素"，适合当离线评测壳 |
+| DET-01 YOLOE | [README @40cd606](https://github.com/THU-MIG/yoloe/blob/40cd606cabdbe2b566d6f14a6b162c89206e9a1b/README.md)：ICCV 2025，支持文本、视觉和无提示三种模式；代码基于 ultralytics；FPS 是在 T4/TensorRT 和 iPhone 12/CoreML 上测的。[LICENSE](https://github.com/THU-MIG/yoloe/blob/40cd606cabdbe2b566d6f14a6b162c89206e9a1b/LICENSE) 为 AGPL-3.0 | 仓库已有 [yoloe_detector.py](../../src/perception/detection/yoloe_detector.py)（DEV-09）。跟人的 `tracking` Product 实际配置是 `detector: yolo_trt` 加 `default_classes: person`（[tracking.yaml](../../config/system/products/tracking.yaml)），跟人本身不需要开放词汇检测；YOLOE 留给描述物体或非人目标 |
+| REID-03 torchreid 人物 ReID 权重 | [MODEL_ZOO @f8cd150](https://github.com/KaiyangZhou/deep-person-reid/blob/f8cd150fdf77e8d9e1ed143b7f308c2c609ded50/docs/MODEL_ZOO.md)：`osnet_x1_0` 有分别在 Market1501、DukeMTMC-reID 和 MSMT17 上训练的权重（同域 Rank-1/mAP 分别为 94.2/82.6、87.0/70.2、74.9/43.8）；`osnet_ain_x1_0` 有跨域权重（如 MSMT17→Market1501 为 70.1/43.3）。输入 256×128，参数 2.2M，0.98 GFLOPs。许可 MIT | 直接对应 DEV-06：[reid.py](../../src/decision/vision/reid.py) 第 55–56 行的开发路径用 `model_path=""`，加载的是 ImageNet 权重。换成人物训练的权重不需要新增依赖，但必须和 DINOv3 在同一输入上对照。标准数据集上的成绩不能当作机器人场景结论；BPU `.hbm` 文件的训练来源仍然未知 |
+| MEM-03 DAM4SAM | [README @aad389b](https://github.com/jovanavidenovic/DAM4SAM/blob/aad389b85c224bd408da8923e8fcb96410cf7e30/README.md)：CVPR 2025，扩展版被 IJCV 2026 接收；在 SAM2.1 上加入干扰物感知 memory，不需要额外训练；安装和运行示例都用 CUDA | 与 WATCH-04 同级：只用于离线困难片段对照。许可和端侧速度本轮未核实 |
+
+另外两项许可事实会影响移植路线：TrackTrack 作者仓库（MOT-01）的 [LICENSE](https://github.com/kamkyu94/TrackTrack/blob/ee7f1c5fcbdcac48ed8bfab38d52c0006bf304da/LICENSE) 是 MIT，可以按作者实现把机制移植进现有 tracker；Ultralytics 和 BoxMOT 里的同名实现是 AGPL-3.0，只适合离线对照。BENCH-01 的[工具仓库 @2488f8b](https://github.com/MedlarTea/TPT-BENCH-TOOLS/blob/2488f8bb50f757930c5131688fa60eb273e2611f/README.md) 于 2025-07-10 发布数据和工具，2026-01-26 修正了 `panoramic_images` 中 0019–0026 号归档；它提供 rosbag 下载入口，以及按 `evaluation_results/<seq>/<baseline>.json` 格式评测的 `evaluate_baselines.py`，测试环境是 Ubuntu 20.04/Python 3.7.16。数据仍未下载。
+
+### 11.2 快速、简洁的适配方式
+
+原则：**运行链不新增框架或 AGPL 依赖。** 外部工具只用于离线评测；选中的机制移植到现有 owner 里，每次只改一个因素。
+
+| 环节 | 现有 owner | 最小改法 | 不做什么 |
+| --- | --- | --- | --- |
+| 评测壳 | 无 | 从 TPT-Bench rosbag 用现有 `yolo_trt` 导出一次检测和 crop，固定下来；用 BoxMOT `materialize` 或一个本地脚本，分别比较关联器和特征；用 TPT-Bench 的目标人物真值评测完整的"选人→身份→位置"链 | 不用 MOT 的 HOTA 代替目标人物指标；不在测试集上调阈值 |
+| 短时关联 | [native_byte_tracker.py](../../src/perception/tracking/native_byte_tracker.py)（253 行） | 先做 DEV-04：`predict` 按 source_ts 的 Δt 推进。离线证明有益后，再按 MIT 作者实现移植 TrackTrack 的迭代分配或 TAI | 不把 ultralytics、boxmot 作为运行时依赖 |
+| 身份特征 | [person.py](../../src/decision/vision/person.py) 中 OSNet、DINO、CLIP 融合 | REID-03：把 OSNet 换成人物训练的权重，与 DINOv3 在同一输入上对照，再决定融合权重 | 不新增第四种外观特征 |
+| 恢复 | `person.py` 的 `_motion_reacquire` | DEV-05：换轨需要身份证据 | 不删除全部运动回退（见 DEV-10） |
+| 重模型 | — | SAM 3/3.1、DAM4SAM、SAMURAI 只放在离线困难片段或远端事件触发 | 不放进机载每帧链路 |
+
+### 11.3 当前缺口（2026-11-17 代码核对）
+
+| 缺口 | 代码或记录事实 | 对应项 |
+| --- | --- | --- |
+| 没有真实数据的可复跑基线 | [tpt_bench.py](../../tools/datasets/tpt_bench.py) 已实现官方指标（与官方脚本逐项一致）和回放；合成场景基线见 [person_scenarios.py](../../tools/datasets/person_scenarios.py)。TPT-Bench 数据仍未下载（本云环境网络策略拦截其托管站点） | BENCH-01 |
+| ReID 权重来源不明 | `reid.py:55-56` 加载 ImageNet 权重；BPU `.hbm` 的训练来源未知；[person-follow.md](person-follow.md) 记录当前 NX DINO 引擎未通过真实 crop 特征比对，之后没有新的 NX 证据 | DEV-06、REID-03 |
+| ~~预测不随真实时间推进~~（2026-11-17 已修，见第 9 节第二批记录） | 原先每次调用 `bbox += velocity`，速度按更新次数做 EMA | DEV-04 |
+| ~~仅凭运动换轨~~（2026-11-17 已修） | 原先只要唯一候选连续出现 3 帧即可恢复，不论离开多久 | DEV-05 |
+| 深度污染、丢失后搜索 | 未实施 | DEV-08、DEV-11 |
+| VLM 选人慢 | 2026-11-16 Kimi 抽样：中位 7.88 s，最长 38.05 s；一次 47.74 s 的初始序列会超过 30 s 截止时间 | 需要本地快速路径，VLM 只按事件触发 |
+| ~~身份确认等待期间阻塞恢复~~（2026-11-17 已修） | 外观模式下只要轨迹 ID 变化，就必须等 `resolve_identity`（VLM）；`person.py:1021` 在 `_pending_identity` 存在时直接返回，原轨迹 ID 回来也不接受，只有候选离开画面才清除（`person.py:741`）。合成基准中，0.2 s 遮挡后相似干扰者成为待确认候选；确认延迟 7.88 s 时，直到 12 s 场景结束都未恢复，0 s 时 0.1 s 恢复（[实验记录](person-follow.md#tpt-bench-harness-and-synthetic-identity-baseline-2026-11-17)） | DEV-05/07、新增 |
+| ~~相机自运动打碎 2D 轨迹~~（2026-11-17 已修） | 原先合成 ±0.6 rad/⅓ Hz 偏航下 `NativeByteTracker` 在 116 帧中给目标 41 个 ID、84 次切换；最好 AO 0.113 | DEV-04、BoT-SORT CMC |
+| 跟随运动未验证 | `tracking` Product 默认 `local_planner: cmu`，20 Hz；VisualServo 按 2.5 Hz、0.25 m 死区、1.5 m 跟随距离下发目标。移动目标下是否走走停停未测；没有原生仿真或实机跟随证据；相机到机体的标定仍待完成 | 原生导航，不属于本文实施项 |
+
+DEV-03 的弱框入口问题只适用于 BPU 路径（`backends.py:33` 置信度 0.3、BPU detector 0.25、`bpu_tracker` 低阈值 0.1）。`tracking` Product 默认的 `yolo_trt` 在后处理中保留 ≥ `track_low_thresh`（0.1）的框再交给 `NativeByteTracker`（`yolo_trt.py:57-61`、`:175-177`），这条路径没有该问题。

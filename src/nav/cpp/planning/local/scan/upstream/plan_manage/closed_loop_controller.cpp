@@ -85,10 +85,8 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   const double yawError = state.desiredYawRate ? 0.0 : normalizeAngle(desiredHeading - state.yaw);
   const double yawLimit =
       std::min(kMaxYawRateLimit, std::max(0.0, params.maxYawRate));
-  // Keep a small numerical band around the official threshold to avoid
-  // freezing a trajectory on a boundary fluctuation.
   const bool aligning = !state.desiredYawRate &&
-      std::abs(yawError) > std::max(0.0, params.headingErrorThreshold) + 0.002;
+      std::abs(yawError) > std::max(0.0, params.headingErrorThreshold);
   double yawFeedforward=0;
   if(hasAcceleration_ && params.timeForward<=0 && !state.desiredHeading && !state.desiredYawRate &&
      !aligning && desiredVelocity.head<2>().norm()>0.03) {
@@ -136,13 +134,8 @@ ClosedLoopControllerOutput ClosedLoopController::step(
   const double bodyVy = -s * worldVelocity.x() + c * worldVelocity.y();
   const double maxVx = std::max(0.0, params.maxVx);
   const double maxVy = std::max(0.0, params.maxVy);
-  double axisScale = 1.0;
-  if (std::abs(bodyVx) > maxVx) axisScale = std::min(axisScale, maxVx / std::abs(bodyVx));
-  if (std::abs(bodyVy) > maxVy) axisScale = std::min(axisScale, maxVy / std::abs(bodyVy));
-  // Keep the feedback-corrected travel direction when either body-axis limit
-  // is active. Independent clipping bends the command away from its spline.
-  output.command.vx = bodyVx * axisScale;
-  output.command.vy = bodyVy * axisScale;
+  output.command.vx = clamp(bodyVx, -maxVx, maxVx);
+  output.command.vy = clamp(bodyVy, -maxVy, maxVy);
   output.command.wz = yawCommand;
   output.executionTimeS = executionTimeS_;
 

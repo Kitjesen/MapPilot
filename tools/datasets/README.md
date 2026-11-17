@@ -13,12 +13,15 @@ repository root in the existing project environment. Tool output belongs under
 | Inspect Habitat scenes, episodes, objects, and visual evidence | [`habitat_probe.py`](habitat_probe.py), [`habitat_scene.py`](habitat_scene.py), [`habitat_episode.py`](habitat_episode.py), [`habitat_objects.py`](habitat_objects.py), [`habitat_vision.py`](habitat_vision.py) |
 | Inspect ReplicaCAD and 3DSSG data | [`replicacad_probe.py`](replicacad_probe.py), [`replicacad_persistence_check.py`](replicacad_persistence_check.py), [`3dssg_probe.py`](3dssg_probe.py), [`3dssg_goal_query.py`](3dssg_goal_query.py) |
 | Inspect TUM RGB-D or evaluate person tracking | [`tum_rgbd_probe.py`](tum_rgbd_probe.py), [`person_follow.py`](person_follow.py), [`dino_follow.py`](dino_follow.py), [`person_eval.py`](person_eval.py) |
+| Score or replay target-person tracking in the TPT-Bench layout; run synthetic identity scenarios | [`tpt_bench.py`](tpt_bench.py), [`person_scenarios.py`](person_scenarios.py) |
 
 ```bash
 python tools/datasets/public_slam_dataset.py list
 python tools/datasets/semantic_dataset_inventory.py --write build/dataset-inventory.json
 python tools/datasets/elevator_bag_to_ltu1.py --help
 python tools/datasets/person_eval.py --help
+python tools/datasets/person_scenarios.py
+python tools/datasets/tpt_bench.py --help
 ```
 
 Dataset availability, calibration, timestamps, and ground-truth coverage belong
