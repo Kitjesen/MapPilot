@@ -241,12 +241,8 @@ def test_scan_parameters_survive_run_plan_round_trip(env, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("env", ["real", "sim"])
-@pytest.mark.parametrize("local_planner", ["scan", "cmu"])
-def test_nav_product_owns_arrival_height_across_envs_and_local_planners(
-    env: str,
-    local_planner: str,
-) -> None:
-    plan = compile_run_plan("nav", env, local_planner=local_planner)
+def test_nav_product_owns_arrival_height_across_envs(env: str) -> None:
+    plan = compile_run_plan("nav", env, local_planner="scan")
 
     assert plan.native_process_environment["LINGTU_NAV_GOAL_HEIGHT_TOLERANCE_M"] == "0.35"
     assert "scan_planner.route_z_tolerance_m" not in plan.parameters
@@ -2106,7 +2102,6 @@ def test_sim_mujoco_explore_map_compiles_saved_map_route_into_run_plan(
 @pytest.mark.parametrize(
     ("product", "local_planner"),
     (
-        ("nav", "cmu"),
         ("nav", "scan"),
         ("tracking", None),
         ("inspection", None),

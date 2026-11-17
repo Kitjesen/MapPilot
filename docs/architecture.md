@@ -241,8 +241,8 @@ pose updates do not create routes. Persistent blockage can request one bounded
 replacement through the goal lifecycle. Global search does not inspect LocalPlanner's
 private failures, and local planning does not rewrite the saved map.
 
-`LocalPlanner` names the module. SCAN is its default algorithm; CMU remains an
-explicit alternative. The execution layer depends on the module interface.
+`LocalPlanner` names the module. SCAN is the only algorithm the `nav` Product
+selects; CMU remains declared by other Products until they migrate. The execution layer depends on the module interface.
 
 See [runtime conditions and parameters](runtime.md#route-trajectory-and-motion-conditions)
 and the [native navigation interfaces](../src/nav/cpp/README.md).
