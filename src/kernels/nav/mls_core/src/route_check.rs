@@ -1154,21 +1154,9 @@ impl Checker<'_> {
                     0.0
                 })
             };
-            let incoming = previous_heading.unwrap_or(if pair[0].has_yaw != 0 {
-                pair[0].yaw
-            } else {
-                heading
-            });
-            let stance = if pair[0].has_yaw != 0 {
-                pair[0].yaw
-            } else {
-                heading
-            };
-            for (a, b) in [(incoming, stance), (stance, heading)] {
-                if let Some((failure, point)) = self.rotation(from, a, b) {
-                    return route_failure(failure, index as i32, self.cell(point));
-                }
-            }
+            // Start and intermediate vertices are not in-place pivots: SCAN
+            // turns along a continuous spline and checks that sweep against
+            // live occupancy. Only an explicit terminal yaw needs a turn here.
             let actual_start = index == 0 && starts_at_actual;
             let failure = self.oriented_query(
                 from,
@@ -1477,15 +1465,10 @@ mod tests {
         let d = pose(point(0.05, 1.05, 0.45), None);
         assert_eq!(checker.check_poses(&[a, b]).valid, 1);
         assert_eq!(checker.check_poses(&[b, d]).valid, 1);
-        let rejected = checker.check_poses(&[a, b, d]);
-        assert_eq!(rejected.failure_kind, ROUTE_OCCUPIED);
-        assert_eq!(rejected.failed_segment, 1);
-        assert_eq!(
-            checker
-                .check_poses(&[pose(b.point, Some(0.0)), d])
-                .failure_kind,
-            ROUTE_OCCUPIED
-        );
+        // A pivot at b would hit the wall; vertices and start yaw are not pivots.
+        assert_eq!(checker.check_poses(&[a, b, d]).valid, 1);
+        assert_eq!(checker.check_poses(&[pose(b.point, Some(0.0)), d]).valid, 1);
+        // An explicit terminal yaw still has to turn in place.
         assert_eq!(
             checker
                 .check_poses(&[a, pose(b.point, Some(std::f64::consts::FRAC_PI_2))])
