@@ -16,15 +16,11 @@ LocalDiagnostics makeLocalDiagnostics(
   local.slow_down = output.slow_down;
   local.recovery_state = output.recovery_state;
   local.recovery_action = output.recovery_action;
-  local.recovery_attempt = output.recovery_attempt;
   local.recovery_candidate_count = output.recovery_candidate_count;
-  local.recovery_rotation_target_rad = output.recovery_rotation_target_rad;
   local.recovery_verified = output.recovery_verified;
-  local.recovery_progress = output.recovery_progress;
   local.recovery_trigger = output.recovery_trigger;
   local.recovery_reason = output.recovery_reason;
   local.prediction_count = output.prediction_count;
-  local.recovery_exhausted = output.recovery_exhausted;
   local.target_index = output.target_index;
   local.target_distance_m = output.target_distance_m;
   local.target = output.target;

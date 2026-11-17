@@ -209,7 +209,7 @@ def test_autonomy_publishes_planner_output_without_a_second_send_gate() -> None:
     assert "hold(" not in zero
 
 
-def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:
+def test_local_planning_failure_routes_into_inspection_failure_policy() -> None:
     endpoint = Path("src/nav/cpp/endpoint/nav/app/loop.cpp").read_text(encoding="utf-8")
     controller = Path(
         "src/nav/cpp/endpoint/nav/control/autonomy.cpp"
@@ -218,7 +218,7 @@ def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> No
         "src/nav/cpp/endpoint/nav/app/goal/runtime.cpp"
     ).read_text(encoding="utf-8")
 
-    assert "output.recovery_exhausted" in controller
+    assert "output.planning_failed" in controller
     assert "AutonomyTickOutcomeKind::kGoalFailed" in controller
     # Completion semantics and stop ordering are covered by the native runtime test.
     assert "inspectionCompletion" in runtime

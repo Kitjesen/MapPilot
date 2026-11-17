@@ -2369,9 +2369,7 @@ TEST(Executor, ScanOccupiedStartHoldsWithoutRecovery) {
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
-  EXPECT_FALSE(output.recovery_exhausted);
   EXPECT_EQ(output.recovery_state, 0);
-  EXPECT_EQ(output.recovery_attempt, 0);
 }
 
 TEST(Executor, ScanIgnoresTwoDimensionalTraversabilityInput) {
@@ -2660,7 +2658,6 @@ TEST(Executor, ScanDoesNotAddAnExecutorStallLatch) {
     moving = moving || output.cmd_vel.vx > 0.0;
     EXPECT_NE(output.reason, "execution_stalled");
     EXPECT_EQ(output.recovery_trigger, "inactive");
-    EXPECT_EQ(output.recovery_attempt, 0);
   }
   ASSERT_TRUE(moving);
   executor.setRoute(guide);
@@ -3465,8 +3462,6 @@ TEST(Executor, ScanDoesNotInjectRecoveryAfterFinalMotionBlock) {
     const auto output = executor.tick(input);
     EXPECT_EQ(output.recovery_state, 0);
     EXPECT_EQ(output.recovery_action, 0);
-    EXPECT_EQ(output.recovery_attempt, 0);
-    EXPECT_FALSE(output.recovery_exhausted);
     EXPECT_EQ(output.recovery_trigger, "inactive");
     EXPECT_EQ(output.route_generation, first.route_generation);
   }

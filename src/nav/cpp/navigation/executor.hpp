@@ -45,7 +45,6 @@ struct ExecutionOutput {
   bool path_found{false};
   bool near_field_stop{false};
   bool trajectory_frozen{false};
-  bool recovery_exhausted{false};
   bool planning_failed{false};
   // Public failure names are owned by the producing boundary:
   // local_no_path/local_blocked/local_near_field_stop come from the local
@@ -55,11 +54,8 @@ struct ExecutionOutput {
   int slow_down{0};
   int recovery_state{0};
   int recovery_action{0};
-  int recovery_attempt{0};
   int recovery_candidate_count{0};
-  double recovery_rotation_target_rad{0.0};
   bool recovery_verified{false};
-  double recovery_progress{0.0};
   std::string recovery_trigger{"inactive"};
   std::string recovery_reason{"inactive"};
   std::size_t target_index{0};

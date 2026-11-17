@@ -1874,9 +1874,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         }
         output_count += autonomy_result.delta.output_count;
         switch (autonomy_result.outcome.kind) {
-          case AutonomyTickOutcomeKind::kRollingRecoveryExhausted:
+          case AutonomyTickOutcomeKind::kRollingPlanningFailed:
             (void)rolling_effects.apply(rolling_segment.step(
-                RollingSegmentMotionOutcome{RollingSegmentMotionOutcomeKind::kRecoveryExhausted,
+                RollingSegmentMotionOutcome{RollingSegmentMotionOutcomeKind::kPlanningFailed,
                                             autonomy_result.outcome.reason}));
             break;
           case AutonomyTickOutcomeKind::kRollingReached:

@@ -96,13 +96,9 @@ struct Fixture {
     local.cmd_vel.vx = 0.31;
     local.recovery_state = 2;
     local.recovery_action = 1;
-    local.recovery_attempt = 2;
     local.recovery_candidate_count = 7;
-    local.recovery_rotation_target_rad = -0.6;
     local.recovery_verified = true;
-    local.recovery_progress = 0.625;
     local.recovery_reason = "recovery_translation_active";
-    local.recovery_exhausted = true;
     teleop.manual_mode = true;
     teleop.output.vx = 0.77;
     motion_stats.dynamic_cells = 6;
@@ -402,14 +398,11 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
           "status must expose whether the active teleop sample requested manual escape");
   require(contains(autonomy, "\"recovery_state\": 2") &&
               contains(autonomy, "\"recovery_action\": 1") &&
-              contains(autonomy, "\"recovery_attempt\": 2") &&
               contains(autonomy, "\"recovery_candidate_count\": 7") &&
-              contains(autonomy, "\"recovery_rotation_target_rad\": -0.600000") &&
               contains(autonomy, "\"recovery_verified\": true") &&
-              contains(autonomy, "\"recovery_progress\": 0.625000") &&
               contains(autonomy, "\"recovery_reason\": \"recovery_translation_active\"") &&
-              contains(autonomy, "\"recovery_exhausted\": true"),
-          "last_local must expose the complete recovery decision and progress evidence");
+              !contains(autonomy, "\"recovery_exhausted\""),
+          "last_local must expose the boundary-departure decision");
   require(contains(autonomy, "\"final_output\": {\"published\": true") &&
               contains(autonomy, "\"producer_boot_id\": \"endpoint-a:boot\"") &&
               contains(autonomy, "\"output_sequence\": 17"),

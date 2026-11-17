@@ -238,44 +238,6 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
-      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp")
-  find_package(Threads REQUIRED)
-  add_executable(test_active_path_replan_cycle
-    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/command/cancel.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/autonomy.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/diagnostics.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/final.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/control/authority.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/planner.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/input/obstacle.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/stop.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/safety/command.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/task.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/retry.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/plan.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/goal_terminal_status_delivery.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/status/navigation_goal_status_outbox.cpp"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav/app/goal/runtime.cpp")
-  target_include_directories(test_active_path_replan_cycle PRIVATE
-    "${LINGTU_SRC_ROOT}"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint"
-    "${LINGTU_NAV_CPP_ROOT}/endpoint/nav"
-    "${LINGTU_NAV_CPP_ROOT}"
-    "${LINGTU_NAV_CPP_ROOT}"
-    "${LINGTU_NAV_KERNEL_DIR}/include")
-  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads lingtu_nav_navigation lingtu_nav_velocity_smoother)
-  target_compile_options(test_active_path_replan_cycle PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  add_test(
-    NAME test_active_path_replan_cycle
-    COMMAND test_active_path_replan_cycle)
-endif()
-
-if(LINGTU_NAV_CPP_BUILD_TESTS
-    AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
-    AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_ingress_policy.cpp")
   add_executable(test_goal_terminal_ingress_policy
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_ingress_policy.cpp"
@@ -1020,38 +982,6 @@ if(NOT TARGET test_goal_replan_runtime_coordinator
   lingtu_endpoint_enable_warnings(test_goal_replan_runtime_coordinator)
   add_test(NAME test_goal_replan_runtime_coordinator
            COMMAND test_goal_replan_runtime_coordinator)
-endif()
-
-if(NOT TARGET test_active_path_replan_cycle
-    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp")
-  add_executable(test_active_path_replan_cycle
-    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp"
-    "${_ENDPOINT_DIR}/nav/command/cancel.cpp"
-    "${_ENDPOINT_DIR}/nav/control/autonomy.cpp"
-    "${_ENDPOINT_DIR}/nav/control/diagnostics.cpp"
-    "${_ENDPOINT_DIR}/nav/control/final.cpp"
-    "${_ENDPOINT_DIR}/nav/control/authority.cpp"
-    "${_ENDPOINT_DIR}/nav/input/planner.cpp"
-    "${_ENDPOINT_DIR}/nav/input/obstacle.cpp"
-    "${_ENDPOINT_DIR}/nav/safety/stop.cpp"
-    "${_ENDPOINT_DIR}/nav/safety/command.cpp"
-    "${_ENDPOINT_DIR}/nav/app/goal/task.cpp"
-    "${_ENDPOINT_DIR}/nav/app/goal/retry.cpp"
-    "${_ENDPOINT_DIR}/nav/app/goal/plan.cpp"
-    "${_ENDPOINT_DIR}/nav/status/goal_terminal_status_delivery.cpp"
-    "${_ENDPOINT_DIR}/nav/status/navigation_goal_status_outbox.cpp"
-    "${_ENDPOINT_DIR}/nav/app/goal/runtime.cpp")
-  target_include_directories(test_active_path_replan_cycle PRIVATE
-    "${_ENDPOINT_DIR}"
-    "${_LINGTU_ROOT}/src"
-    "${_NAV_CORE_DIR}"
-    "${_NAV_CORE_DIR}"
-    "${_NAV_KERNEL_DIR}/include"
-    ${_EP_DIRS})
-  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads lingtu_nav_navigation lingtu_nav_velocity_smoother)
-  lingtu_endpoint_enable_warnings(test_active_path_replan_cycle)
-  add_test(NAME test_active_path_replan_cycle
-           COMMAND test_active_path_replan_cycle)
 endif()
 
 if(NOT TARGET test_goal_terminal

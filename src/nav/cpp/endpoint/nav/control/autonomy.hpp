@@ -19,7 +19,7 @@ namespace lingtu::nav::endpoint {
 
 enum class AutonomyTickOutcomeKind {
   kNone,
-  kRollingRecoveryExhausted,
+  kRollingPlanningFailed,
   kRollingReached,
   kGoalFailed,
   kGoalReached,
