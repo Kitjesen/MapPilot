@@ -309,10 +309,9 @@ namespace global_planner
             const octomap::point3d b(to.x, to.y, to.z);
             TraversabilityFailure failure = TraversabilityFailure::None;
             const double yaw=heading(from,to);
-            const double incoming=i>1?heading(route[i-2],from):from.yaw.value_or(yaw);
-            if ((from.yaw && !turnFree(from,incoming,*from.yaw,&failure)) ||
-                !turnFree(from,from.yaw.value_or(incoming),yaw,&failure) ||
-                (i+1==route.size() && to.yaw && !turnFree(to,yaw,*to.yaw,&failure))) {
+            // Vertices and the start are not in-place pivots; only an explicit
+            // terminal yaw turns here. SCAN checks the executed turn live.
+            if (i+1==route.size() && to.yaw && !turnFree(to,yaw,*to.yaw,&failure)) {
                 record(failure,i-1,true);
                 return result;
             }
@@ -592,11 +591,25 @@ namespace global_planner
                     search_info_.outcome = SearchInfo::Outcome::IterationLimit;
                     return false;
                 }
-                if (query.status == QueryStatus::Exhausted) {
+                if (query.status == QueryStatus::GoalUnreachable) {
                     search_info_.outcome = SearchInfo::Outcome::Exhausted;
                     search_info_.rust_failure_kind = "query";
-                    search_info_.rust_failure = "Rust surface route exhausted";
+                    search_info_.rust_failure = "Rust goal has no admissible surface";
                     ++search_info_.rust_query_failures;
+                    endpoint_resolution_.failure = EndpointResolutionInfo::Failure::GoalSnapExhausted;
+                    return false;
+                }
+                if (query.status == QueryStatus::Exhausted ||
+                    query.status == QueryStatus::StartUnreachable) {
+                    const bool no_start = query.status == QueryStatus::StartUnreachable;
+                    search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                    search_info_.rust_failure_kind = "query";
+                    search_info_.rust_failure = no_start
+                        ? "Rust start has no admissible surface" : "Rust surface route exhausted";
+                    ++search_info_.rust_query_failures;
+                    if (no_start) {
+                        endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                    }
                     // Keep the public blocked-start diagnosis without launching another planner.
                     metric.actual_start = 0;
                     metric.ground_support = 0;
@@ -842,13 +855,6 @@ namespace global_planner
 
                 auto g_it = g_score.find(nbr);
                 if (g_it == g_score.end() || tentative_g < g_it->second) {
-                const auto previous=came_from.find(current.idx);
-                if(body_offset_m_>0 && previous!=came_from.end() &&
-                    !turnFree(current_pose,heading(poseAt(previous->second),current_pose),
-                              heading(current_pose,poseAt(nbr)))) {
-                    ++rejected_sweep;
-                    continue;
-                }
                 if ((support_height_m_>0.0 && !lowest_traversable_only_) &&
                     !routeConnectionFree(current_pose,poseAt(nbr),!(current.idx==start))) {
                     ++rejected_sweep;
@@ -1074,7 +1080,6 @@ namespace global_planner
             const double yaw=(to-from).norm()>1e-9?std::atan2(to.y()-from.y(),to.x()-from.x()):start_point_.yaw.value_or(0.0);
             const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
             // The actual start may contain the robot or incomplete ground observations.
-            if(actual_start && start_point_.yaw && !turnFree(start_point_,*start_point_.yaw,yaw,failure))return false;
             const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start,yaw);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
             if(from==to)return true;

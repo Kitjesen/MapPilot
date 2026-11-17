@@ -1899,7 +1899,11 @@ pub unsafe extern "C" fn lt_mls_artifact_query_checked(
         |from, to, kind| check(cell_to_abi(from), cell_to_abi(to), kind, context),
     ) {
         Ok(path) => put_buffer(path, route).map_or(-3, |_| 0),
-        Err(query::QueryError::Exhausted) => 1,
+        Err(
+            query::QueryError::Exhausted
+            | query::QueryError::StartUnreachable
+            | query::QueryError::GoalUnreachable,
+        ) => 1,
         Err(query::QueryError::Budget) => 2,
         Err(query::QueryError::Cancelled) => 3,
     }
@@ -2100,9 +2104,9 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     };
     let goal = match checker.resolve_goal(start, goal, max_snap_cells, &mut budget) {
         Ok(goal) => goal,
-        Err(query::QueryError::Exhausted) => return 1,
         Err(query::QueryError::Budget) => return 2,
         Err(query::QueryError::Cancelled) => return 3,
+        Err(_) => return 5,
     };
     let cell = |pose: LtMlsPose| {
         SurfaceCell::new(
@@ -2179,6 +2183,8 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
             Err(query::QueryError::Exhausted) => return 1,
             Err(query::QueryError::Budget) => return 2,
             Err(query::QueryError::Cancelled) => return 3,
+            Err(query::QueryError::StartUnreachable) => return 4,
+            Err(query::QueryError::GoalUnreachable) => return 5,
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
         poses.push(start);
@@ -2868,7 +2874,7 @@ mod tests {
     }
 
     #[test]
-    fn metric_turn_replans() {
+    fn metric_route_turns_at_vertex_without_pivot() {
         let corners = [
             SurfaceCell::new(-10, 0, 4),
             SurfaceCell::new(0, 0, 4),
@@ -2982,10 +2988,9 @@ mod tests {
         )
         .unwrap();
         let first_poses = first.iter().copied().map(world).collect::<Vec<_>>();
-        assert_eq!(
-            checker.check_poses(&first_poses).failure_kind,
-            ROUTE_OCCUPIED
-        );
+        // A pivot at corner 1 would hit the wall cell; the shorter corner
+        // route is kept because vertices are not in-place turns.
+        assert_eq!(checker.check_poses(&first_poses).valid, 1);
         let mut route = LtMlsPoseBuffer::default();
         let status = unsafe {
             lt_mls_artifact_query_metric(&handle, start, goal, 0, 2000, &geometry, &mut route)
@@ -2994,7 +2999,7 @@ mod tests {
         let poses = unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
         assert!(poses
             .iter()
-            .any(|p| (p.point.x + 0.95).abs() < 1e-12 && (p.point.y - 1.05).abs() < 1e-12));
+            .any(|p| (p.point.x - 0.05).abs() < 1e-12 && (p.point.y - 0.05).abs() < 1e-12));
         let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
         assert_eq!(checker.check_poses(poses).valid, 1);
         unsafe { lt_mls_free_pose_buffer(&mut route) };

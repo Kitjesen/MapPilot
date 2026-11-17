@@ -2327,9 +2327,6 @@ def _planner_constraint_args(manifest: dict[str, Any]) -> list[str]:
         "collision_cylinder_offset_m": ("--collision-cylinder-offset-m", float),
         "collision_clearance_below_m": ("--collision-clearance-below-m", float),
         "collision_clearance_above_m": ("--collision-clearance-above-m", float),
-        "robot_radius_m": ("--octo-robot-radius-m", float),
-        "body_clearance_below_m": ("--octo-body-clearance-below-m", float),
-        "body_clearance_above_m": ("--octo-body-clearance-above-m", float),
         "max_iterations": ("--octo-max-iterations", int),
         "snap_radius_cells": ("--octo-snap-radius-cells", int),
         "ground_support": ("--octo-ground-support", bool),
@@ -3346,14 +3343,11 @@ def _run_phase(
     navigation_environment.update(
         _scan_follower_environment(navigation_runtime_cfg)
     )
-    local_planner_debug_candidates = int(
-        navigation_runtime_cfg.get("debug_candidate_limit", 36 if record_video else 0)
-    )
     local_map_debug_points = int(
         navigation_runtime_cfg.get("debug_local_map_points", 320 if record_video else 0)
     )
     status_period_s = float(navigation_runtime_cfg.get("status_period_s") or 0.1)
-    if record_video and (local_planner_debug_candidates > 0 or local_map_debug_points > 0):
+    if record_video and local_map_debug_points > 0:
         status_period_s = min(status_period_s, 0.2)
     navigation_command = _native_command(
         binaries["navigation"],
@@ -3400,8 +3394,6 @@ def _run_phase(
         "--local-planner-obstacle-height-max-m",
         str(float(navigation_runtime_cfg.get("obstacle_height_max_m", 1.2))),
         *lidar_offset_args,
-        "--local-planner-debug-candidates",
-        str(local_planner_debug_candidates),
         "--local-map-debug-points",
         str(local_map_debug_points),
         "--odom-max-age-s",

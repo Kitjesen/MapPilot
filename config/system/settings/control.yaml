@@ -33,6 +33,9 @@ native_nav:
   smoother_y_deadband_mps: 0.0
   smoother_yaw_deadband_rad_s: 0.0
 
+# Fallbacks for fields a Product or RobotConfig normally supplies. Both the
+# RunPlan compiler and the generated native defaults read them; they are not
+# a second runtime profile.
 standalone:
   native_nav:
     local_planner: scan

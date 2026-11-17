@@ -48,7 +48,7 @@ def test_component_yaml_changes_reach_native_launch(tmp_path, monkeypatch):
     )
     environment = plan.native_process_environment
     assert float(environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"]) == 0.1
-    assert float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"]) == pytest.approx(0.3)
+    assert float(environment["LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M"]) == pytest.approx(0.1)
     assert environment["LINGTU_CAMERA_CAPTURE_TIMEOUT_MS"] == "1234"
     assert environment["LINGTU_LIVOX_SCAN_HZ"] == "12"
     assert environment["LINGTU_SLAM_TICK_HZ"] == "40"

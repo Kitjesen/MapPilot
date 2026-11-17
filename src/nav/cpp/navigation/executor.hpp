@@ -46,6 +46,11 @@ struct ExecutionOutput {
   bool near_field_stop{false};
   bool trajectory_frozen{false};
   bool planning_failed{false};
+  // Planning-frame route point found occupied when planning_failed was set,
+  // with the live obstacle generation that observed it; empty when the
+  // failure could not be placed on the route.
+  std::optional<nav_kernel::Vec3> blocked_point;
+  std::uint64_t blocked_obstacle_generation{0};
   // Public failure names are owned by the producing boundary:
   // local_no_path/local_blocked/local_near_field_stop come from the local
   // planner. "active" and "inactive" in recovery_trigger are lifecycle
@@ -230,9 +235,6 @@ class Executor {
                                                      double timestamp_s);
   std::vector<nav_kernel::Vec3> bodyPathToMap(const nav_kernel::Pose &odom_map_body,
                                               const std::vector<nav_kernel::Vec3> &body_path) const;
-  nav_kernel::LocalPlannerDebugSnapshot
-  debugSnapshotToMap(const nav_kernel::Pose &odom_map_body,
-                     nav_kernel::LocalPlannerDebugSnapshot snapshot) const;
   double slowFactor(int slow_down) const;
   bool atGoal(const nav_kernel::Pose &body) const;
 

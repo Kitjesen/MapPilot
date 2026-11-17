@@ -356,12 +356,6 @@ void testPlannerArtifactCarriesRuntimeMapIdentity() {
 void testOctoPlanner3DPhysicalContractIsConfigurable() {
   const auto cfg = parse({
       "navd",
-      "--octo-robot-radius-m",
-      "0.25",
-      "--octo-body-clearance-below-m",
-      "0.18",
-      "--octo-body-clearance-above-m",
-      "0.30",
       "--octo-max-iterations",
       "240000",
       "--octo-snap-radius-cells",
@@ -720,20 +714,14 @@ void testLocalPlannerVisualizationIsExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
       });
-  require(defaults.local_planner_debug_candidate_limit == 0,
-          "candidate debug snapshots must be disabled by default");
   require(defaults.local_map_debug_point_limit == 0,
           "local-map debug snapshots must be disabled by default");
 
   const auto enabled = parse({
       "navd",
-      "--local-planner-debug-candidates",
-      "99",
       "--local-map-debug-points",
       "640",
   });
-  require(enabled.local_planner_debug_candidate_limit == 36,
-          "candidate debug snapshots must clamp to the 36 library rotations");
   require(enabled.local_map_debug_point_limit == 640, "local-map debug point limit must parse");
 }
 
@@ -1154,7 +1142,6 @@ void testCommandBoundaryUsesActiveControlModeMotionLimits() {
 }
 
 void testScanCollisionEnvelopeIsConfigurable() {
-  ScopedEnvironment global_radius("LINGTU_NAV_OCTO_ROBOT_RADIUS_M", "0.155");
   const auto cfg = parse({
       "navd",
       "--local-planner",
@@ -1193,9 +1180,6 @@ void testScanGlobalCorridorEnvironmentAndLargerOverrides() {
   ScopedEnvironment offset("LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M", "0.19");
   ScopedEnvironment below("LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M", "0.10");
   ScopedEnvironment above("LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M", "0.24");
-  ScopedEnvironment global_radius("LINGTU_NAV_OCTO_ROBOT_RADIUS_M", "0.10");
-  ScopedEnvironment global_below("LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M", "0.01");
-  ScopedEnvironment global_above("LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M", "0.01");
   const auto cfg = parse({"navd"});
   require(std::abs(cfg.octoplanner_options.robot_radius - 0.25) < 1e-12 &&
               std::abs(cfg.octoplanner_options.body_clearance_below_m - 0.10) < 1e-12 &&
@@ -1203,14 +1187,13 @@ void testScanGlobalCorridorEnvironmentAndLargerOverrides() {
               std::abs(cfg.octoplanner_options.body_offset_m - 0.19) < 1e-12,
           "global planning must derive exact local geometry from the selected platform");
 
-  const auto larger = parse({"navd", "--octo-robot-radius-m", "0.70",
-                            "--octo-body-clearance-below-m", "0.40",
-                            "--octo-body-clearance-above-m", "0.50"});
-  require(std::abs(larger.octoplanner_options.robot_radius - 0.25) < 1e-12 &&
-              std::abs(larger.octoplanner_options.body_clearance_below_m - 0.10) < 1e-12 &&
-              std::abs(larger.octoplanner_options.body_clearance_above_m - 0.25) < 1e-12 &&
-              std::abs(larger.octoplanner_options.body_offset_m - 0.19) < 1e-12,
-          "global overrides must not create another SCAN body envelope");
+  bool global_body_flag_rejected = false;
+  try {
+    (void)parse({"navd", "--octo-robot-radius-m", "0.70"});
+  } catch (const std::runtime_error &) {
+    global_body_flag_rejected = true;
+  }
+  require(global_body_flag_rejected, "a separate global body radius must not be accepted");
 }
 
 void testScanGlobalCorridorUsesThunderGeometry() {

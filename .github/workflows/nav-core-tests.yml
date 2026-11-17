@@ -13,6 +13,8 @@ on:
       - 'tests/explore/cpp/**'
       - 'src/drivers/sim/mujoco/**'
       - 'tests/sim/test_mujoco_runtime.py'
+      - 'config/acceptance/official_global_planner.json'
+      - 'tools/bench/official_global_planner.py'
       - '.github/workflows/nav-core-tests.yml'
   pull_request:
     paths:
@@ -26,6 +28,8 @@ on:
       - 'tests/explore/cpp/**'
       - 'src/drivers/sim/mujoco/**'
       - 'tests/sim/test_mujoco_runtime.py'
+      - 'config/acceptance/official_global_planner.json'
+      - 'tools/bench/official_global_planner.py'
       - '.github/workflows/nav-core-tests.yml'
 
 jobs:
@@ -85,3 +89,17 @@ jobs:
 
       - name: Test global planner
         run: ctest --test-dir build/global --output-on-failure --parallel 2
+
+      # Real public point clouds with pinned endpoints; synthetic smokes alone
+      # missed the 2026-11-17 vertex-pivot regression.
+      - name: Public-map global planner acceptance
+        run: |
+          python3 tools/bench/official_global_planner.py \
+            --build-dir build/global --output-dir build/official-global --download
+
+      - name: Upload global planner acceptance results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-global-planner
+          path: build/official-global

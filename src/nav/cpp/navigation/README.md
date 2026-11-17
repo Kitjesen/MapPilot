@@ -114,9 +114,14 @@ GlobalPlanner -> Route -> Executor -> LocalPlanner -> LocalPlan -> Follower
 Autonomous SCAN retries inside its FSM at the upstream 100 Hz target period,
 with a separate 20 Hz future-collision callback. After 1000 consecutive failed
 planning rounds it stops, waits for measured 3-D speed below 0.1 m/s, clears
-the local target and reports `NoPath`. Executor forwards `planning_failed` to
-the existing task termination transaction, which confirms stopping and fails
-the goal without an automatic global retry. It does not insert temporary
+the local target and reports `NoPath`. Executor then looks along the remaining
+reference, inside the live collision window, for the first occupied point.
+When one is found, the goal lifecycle runs one bounded replacement search whose
+temporary overlay keeps out of every blockage located for that goal (0.3 m
+around the point, ±1 m in height, shrunk to keep the measured start outside the
+body keep-out). Without a located point, or when no keep-out fits beside the
+start, the task termination transaction confirms stopping and fails the goal,
+because a replan would return the same route. It does not insert temporary
 recovery goals, direct recovery rotations or an independent stall latch.
 Solver duration and native handoff/command holds make this a failure-count
 limit, not a fixed elapsed-time limit. FinalControl still checks final commands.

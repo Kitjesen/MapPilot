@@ -137,67 +137,6 @@ void writeDynamicClustersJson(std::ostream &out, const std::vector<DynamicCluste
   out << "]";
 }
 
-void writeLocalCandidatesJson(std::ostream &out,
-                              const nav_kernel::LocalPlannerDebugSnapshot &snapshot) {
-  out << "{";
-  out << "\"valid\": " << (snapshot.valid ? "true" : "false") << ", ";
-  out << "\"frame_id\": \"map\", ";
-  out << "\"representation\": \"sampled_best_group_per_valid_rotation\", ";
-  out << "\"state_semantics\": \"first_zero_survivor_gate_or_soft_cost\", ";
-  out << "\"timestamp_s\": " << snapshot.timestampS << ", ";
-  out << "\"path_scale\": " << snapshot.pathScale << ", ";
-  out << "\"path_range_m\": " << snapshot.pathRange << ", ";
-  out << "\"relative_goal_distance_m\": " << snapshot.relativeGoalDistanceM << ", ";
-  out << "\"traversability_soft_cost\": " << snapshot.traversabilitySoftCost << ", ";
-  out << "\"traversability_hard_cost\": " << snapshot.traversabilityHardCost << ", ";
-  out << "\"valid_rotation_count\": " << snapshot.validRotationCount << ", ";
-  out << "\"returned_count\": " << snapshot.candidates.size() << ", ";
-  out << "\"truncated\": "
-      << (snapshot.candidates.size() <
-                  static_cast<std::size_t>(std::max(0, snapshot.validRotationCount))
-              ? "true"
-              : "false")
-      << ", ";
-  out << "\"selected_flat_group_id\": " << snapshot.selectedGroupId << ", ";
-  out << "\"selected_rotation_index\": "
-      << (snapshot.selectedGroupId >= 0 ? snapshot.selectedGroupId / nav_kernel::kGroupNum : -1)
-      << ", ";
-  out << "\"selected_group_id\": "
-      << (snapshot.selectedGroupId >= 0 ? snapshot.selectedGroupId % nav_kernel::kGroupNum : -1)
-      << ", ";
-  out << "\"candidates\": [";
-  for (std::size_t index = 0; index < snapshot.candidates.size(); ++index) {
-    const auto &candidate = snapshot.candidates[index];
-    if (index > 0) {
-      out << ", ";
-    }
-    out << "{";
-    out << "\"rotation_index\": " << candidate.rotationIndex << ", ";
-    out << "\"rotation_deg\": " << candidate.rotationDeg << ", ";
-    out << "\"group_id\": " << candidate.groupId << ", ";
-    out << "\"state\": \"" << nav_kernel::localCandidateStateName(candidate.state) << "\", ";
-    out << "\"dominant_state\": \"" << nav_kernel::localCandidateStateName(candidate.state)
-        << "\", ";
-    out << "\"rotation_allowed\": " << (candidate.rotationAllowed ? "true" : "false") << ", ";
-    out << "\"selected\": " << (candidate.selected ? "true" : "false") << ", ";
-    out << "\"score\": " << candidate.aggregateScore << ", ";
-    out << "\"terrain_risk\": " << candidate.terrainRisk << ", ";
-    out << "\"total_path_count\": " << candidate.totalPathCount << ", ";
-    out << "\"collision_free_path_count\": " << candidate.collisionFreePathCount << ", ";
-    out << "\"direction_allowed_path_count\": " << candidate.directionAllowedPathCount << ", ";
-    out << "\"terrain_allowed_path_count\": " << candidate.terrainAllowedPathCount << ", ";
-    out << "\"direction_scored_path_count\": " << candidate.directionScoredPathCount << ", ";
-    out << "\"height_cost_allowed_path_count\": " << candidate.heightCostAllowedPathCount << ", ";
-    out << "\"terrain_soft_penalized_path_count\": " << candidate.terrainSoftPenalizedPathCount
-        << ", ";
-    out << "\"contributing_path_count\": " << candidate.contributingPathCount << ", ";
-    out << "\"path\": ";
-    writePathJson(out, candidate.path);
-    out << "}";
-  }
-  out << "]}";
-}
-
 std::vector<float> copyCollisionDebugPoints(std::size_t point_limit,
                                             const nav_kernel::LocalCollisionMapView &collision,
                                             const SensorOrigin &sensor_origin,
@@ -1134,9 +1073,6 @@ void writeStatusSnapshot(
     out << ",\n"
         << "  \"local_path\": ";
     writePathJson(out, local_path);
-    out << ",\n"
-        << "  \"local_candidates\": ";
-    writeLocalCandidatesJson(out, local_planner_debug);
     out << ",\n"
         << "  \"local_planner_debug\": {\"backend\": \""
         << nav_kernel::localPlannerBackendName(local_planner_debug.backend)

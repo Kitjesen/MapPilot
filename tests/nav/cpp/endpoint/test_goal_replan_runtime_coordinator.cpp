@@ -1,3 +1,4 @@
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -68,6 +69,8 @@ void require(bool condition, const char *message) {
     std::exit(1);
   }
 }
+
+bool near(double lhs, double rhs) { return std::abs(lhs - rhs) < 1e-9; }
 
 bool sameStatus(const GoalPlanStatus &lhs, const GoalPlanStatus &rhs) {
   return lhs.task_id == rhs.task_id && lhs.request_id == rhs.request_id &&
@@ -283,12 +286,30 @@ struct Fixture {
   }
 
   GoalReplanRuntimeAutonomyEvent recoveryEvent() const {
+    // A located blockage well clear of the start; lifecycle tests ignore its overlay.
     GoalReplanTrigger trigger;
-    trigger.kind = GoalReplanTriggerKind::kLocalRecoveryExhausted;
     trigger.reason = "local_recovery_exhausted";
     trigger.goal = activeIdentity();
+    trigger.blocked_point = lingtu::nav::plan::GlobalPlanPoint{2.0, 0.0, 0.0};
+    trigger.obstacle_generation = 9U;
     return {
         AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "local_recovery_exhausted", false,
+                            trigger},
+        goal_plan.snapshot(),
+        false,
+        false,
+    };
+  }
+
+  GoalReplanRuntimeAutonomyEvent blockedEvent(double x) const {
+    GoalReplanTrigger trigger;
+    trigger.kind = GoalReplanTriggerKind::kLocalPlanningBlocked;
+    trigger.reason = "local_no_path";
+    trigger.goal = activeIdentity();
+    trigger.blocked_point = lingtu::nav::plan::GlobalPlanPoint{x, 0.0, 0.0};
+    trigger.obstacle_generation = 9U;
+    return {
+        AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "local_no_path", false,
                             trigger},
         goal_plan.snapshot(),
         false,
@@ -588,6 +609,56 @@ void testAdvancePlanningCycleProgressesWithoutAutonomyOutcome() {
   require(activated && fixture.planner_calls.load() == 1 &&
               fixture.goal_plan.snapshot().active_task_id == "task-a",
           "advancePlanningCycle did not progress a planner completion without an outcome");
+}
+
+void testLocatedBlockagesAccumulateIntoReplacementOverlay() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  const auto replanAround = [&](double time_s, double x) {
+    const auto armed =
+        fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(time_s), fixture.blockedEvent(x));
+    require(armed.handled && armed.reason == "backoff_pending" && !armed.terminal_after_stop,
+            "located blockage did not arm a replacement search");
+    const auto started = fixture.coordinator.advancePlanningCycle(fixture.frameInput(time_s + 0.5));
+    require(started.replan_started, "located blockage did not start a replacement search");
+    fixture.waitForPlanning(
+        [](const GoalReplanRuntimeResult &result) { return result.plan_advance.path_activated; },
+        time_s + 0.501);
+  };
+
+  replanAround(10.0, 2.0);
+  auto requests = fixture.plannerRequests();
+  require(requests.size() == 2U && requests.front().temporary_overlay.empty(),
+          "initial search must not carry a temporary overlay");
+  const auto &first = requests.back().temporary_overlay;
+  require(first.blocked_regions.size() == 1U && first.revision == 1U && first.frame_epoch == 3U &&
+              first.obstacle_generation == 9U &&
+              near(first.blocked_regions[0].center.x, 2.0) &&
+              near(first.blocked_regions[0].radius_xy_m, 0.3) &&
+              near(first.blocked_regions[0].min_z, -1.0) &&
+              near(first.blocked_regions[0].max_z, 1.0),
+          "replacement search did not avoid the located blockage");
+
+  replanAround(20.0, 3.0);
+  requests = fixture.plannerRequests();
+  const auto &second = requests.back().temporary_overlay;
+  require(requests.size() == 3U && second.blocked_regions.size() == 2U && second.revision == 2U &&
+              near(second.blocked_regions[0].center.x, 2.0) &&
+              near(second.blocked_regions[1].center.x, 3.0),
+          "a later replacement must keep avoiding earlier blockages of the same goal");
+}
+
+void testBlockageInsideStartKeepOutFailsWithoutReplanning() {
+  Fixture fixture;
+  fixture.activate(fixture.request());
+  // Default planner body radius is 0.25 m; 0.3 m leaves no room for a region.
+  const auto armed =
+      fixture.coordinator.handleAutonomyOutcome(fixture.frameInput(10.0), fixture.blockedEvent(0.3));
+  require(armed.handled && armed.reason == "backoff_pending", "blockage did not arm");
+  const auto due = fixture.coordinator.advancePlanningCycle(fixture.frameInput(10.5));
+  require(!due.replan_started && due.reason == "local_blockage_at_start" &&
+              due.terminal_after_stop.has_value() && fixture.planner_calls.load() == 1,
+          "a blockage at the start must fail the goal instead of replanning the same route");
 }
 
 void testRecoveryFailureOnlyArmsUntilAdvanceDeadline() {
@@ -2978,6 +3049,8 @@ int main() {
   testHandleAutonomyOutcomeDoesNotAdvanceOrResume();
   testAdvancePlanningCycleProgressesWithoutAutonomyOutcome();
   testRecoveryFailureOnlyArmsUntilAdvanceDeadline();
+  testLocatedBlockagesAccumulateIntoReplacementOverlay();
+  testBlockageInsideStartKeepOutFailsWithoutReplanning();
   testPendingTerminalBlocksAllRuntimePhases();
   testDrainPendingCycleDoesNotAdvanceOrStartRetry();
   testSteadyClockOwnsRetryDeadlineAcrossWallRegression();

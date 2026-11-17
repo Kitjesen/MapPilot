@@ -213,7 +213,7 @@ def test_go2_standing_height_reaches_native_planner() -> None:
     assert compiled.environment["LINGTU_NAV_OCTO_DIRECT_SUPPORT_ONLY"] == "0"
     assert "LINGTU_NAV_OCTO_SURFACE_MAX_HOLE_AREA_M2" not in compiled.environment
     assert "LINGTU_NAV_OCTO_SURFACE_MAX_SLOPE" not in compiled.environment
-    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.25"
+    assert "LINGTU_NAV_OCTO_ROBOT_RADIUS_M" not in compiled.environment
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.25"
     assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.19"
     assert compiled.environment["LINGTU_NAV_OCTO_TERMINAL_GOAL_TOLERANCE_M"] == "0.15"
@@ -328,8 +328,6 @@ def test_go2_vertical_clearance_reaches_nav_and_mapd(product: str) -> None:
     compiled = compile_native_nav_config(product, _compiled_product_config(product))
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.1"
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.24"
-    assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.1"
-    assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.25"
     environment = mapd_environment(default_map_settings(), compiled.environment)
     assert environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
     assert environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.24"
@@ -414,7 +412,9 @@ def test_scan_octoplanner_radius_follows_collision_cylinder_not_a_separate_overr
         },
     )
 
-    assert compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"] == "0.4"
+    # navd derives the global body from the collision cylinder; no second radius is sent.
+    assert "LINGTU_NAV_OCTO_ROBOT_RADIUS_M" not in compiled.environment
+    assert compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"] == "0.4"
 
 
 @pytest.mark.parametrize(
@@ -457,7 +457,7 @@ def test_scan_octoplanner_radius_follows_the_collision_cylinder(
         },
     )
 
-    assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
+    assert float(compiled.environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
         radius
     )
     assert compiled.parameters["collision_cylinder_radius_m"] == radius
@@ -467,7 +467,7 @@ def test_scan_octoplanner_radius_follows_the_collision_cylinder(
 @pytest.mark.parametrize(
     ("robot", "radius", "below", "above"),
     [
-        ("unitree/go2", 0.25, 0.10, 0.25),
+        ("unitree/go2", 0.25, 0.10, 0.24),
         ("doso/thunder_v4", 0.32, 0.05, 0.35),
     ],
 )
@@ -476,9 +476,11 @@ def test_scan_global_corridor_uses_robot_width_and_vertical_clearance(
 ) -> None:
     compiled = compile_native_nav_config("nav", _compiled_product_config("nav", robot))
 
-    assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(radius)
-    assert float(compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"]) == pytest.approx(below)
-    assert float(compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"]) == pytest.approx(above)
+    # navd rounds these clearances to the SCAN voxel grid for the global body.
+    env = compiled.environment
+    assert float(env["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(radius)
+    assert float(env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]) == pytest.approx(below)
+    assert float(env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]) == pytest.approx(above)
 
 
 @pytest.mark.parametrize("robot", ["unitree/go2", "doso/thunder_v4"])
@@ -498,7 +500,7 @@ def test_scan_uses_one_body_radius(requested: float) -> None:
     config["native_nav"]["octoplanner3d_robot_radius"] = requested
     compiled = compile_native_nav_config("nav", config)
 
-    assert float(compiled.environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(0.25)
+    assert "LINGTU_NAV_OCTO_ROBOT_RADIUS_M" not in compiled.environment
     assert compiled.parameters["collision_cylinder_radius_m"] == 0.25
     assert compiled.parameters["collision_cylinder_offset_m"] == 0.19
 
@@ -513,8 +515,6 @@ def test_scan_global_clearance_uses_the_mapd_voxel_resolution() -> None:
     assert profile["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.22"
     assert compiled.environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.36"
-    assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.25"
-    assert compiled.environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.4"
 
 
 @pytest.mark.parametrize(

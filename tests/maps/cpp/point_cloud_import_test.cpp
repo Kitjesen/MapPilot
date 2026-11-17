@@ -72,9 +72,34 @@ void TestBinaryCompressedPcd() {
   std::filesystem::remove(path);
 }
 
+void TestPagePaddedBinaryPcd() {
+  // PCL pads binary files to a page boundary after the declared points.
+  const float points[2][4] = {{1.0F, 2.0F, 3.0F, 0.0F}, {4.0F, 5.0F, 6.0F, 0.0F}};
+  const auto path = std::filesystem::temp_directory_path() /
+      ("lingtu_padded_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".pcd");
+  const auto write = [&](int declared, std::size_t padding) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << "VERSION 0.7\nFIELDS x y z _\nSIZE 4 4 4 1\nTYPE F F F U\nCOUNT 1 1 1 4\n"
+            "WIDTH " << declared << "\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\nPOINTS " << declared
+         << "\nDATA binary\n";
+    file.write(reinterpret_cast<const char*>(points), sizeof(points));
+    file << std::string(padding, '\0');
+  };
+  write(2, 20U);
+  const auto loaded = lingtu::maps::LoadPcdXyz(path);
+  assert(loaded.ok);
+  assert(loaded.points.size() == 2U);
+  assert(loaded.points[1].x == 4.0F && loaded.points[1].z == 6.0F);
+  write(3, 0U);  // fewer bytes than the declared points
+  assert(!lingtu::maps::LoadPcdXyz(path).ok);
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
   TestBinaryCompressedPcd();
+  TestPagePaddedBinaryPcd();
   return 0;
 }

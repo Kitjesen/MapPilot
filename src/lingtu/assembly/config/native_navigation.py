@@ -64,7 +64,6 @@ _TUNING_ENVIRONMENT = {
     "traversability_weight": "LINGTU_NAV_TRAVERSABILITY_WEIGHT",
     "max_obstacle_points": "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS",
     "local_planner_threads": "LINGTU_NAV_LOCAL_PLANNER_THREADS",
-    "local_planner_debug_candidates": "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES",
     "local_map_debug_points": "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS",
     "live_obstacle_decay_s": "LINGTU_NAV_LIVE_OBSTACLE_DECAY_S",
     "live_obstacle_ray_clearing": "LINGTU_NAV_LIVE_OBSTACLE_RAY_CLEARING",
@@ -89,7 +88,7 @@ _FAR_ENVIRONMENT = {
 }
 _TUNING_INTEGER_FIELDS = frozenset({
     "max_obstacle_points", "local_planner_threads",
-    "local_planner_debug_candidates", "local_map_debug_points",
+    "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
     "far_corner_separation_cells", "far_snap_search_radius_cells",
     "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",
@@ -98,7 +97,6 @@ _TUNING_BOOLEAN_FIELDS = frozenset({
     "smoother_scale_velocities", "live_obstacle_ray_clearing", "far_simplify_path",
 })
 _OCTOPLANNER_ENVIRONMENT = {
-    "octoplanner3d_robot_radius": "LINGTU_NAV_OCTO_ROBOT_RADIUS_M",
     "octoplanner3d_max_iterations": "LINGTU_NAV_OCTO_MAX_ITERATIONS",
     "octoplanner3d_snap_search_radius_cells": "LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS",
     "octoplanner3d_ground_support": "LINGTU_NAV_OCTO_GROUND_SUPPORT",
@@ -332,20 +330,10 @@ class NativeNavConfig:
             "LINGTU_NAV_WAYPOINT_REACHED_M": _env_number(parameters["waypoint_reached_m"]),
         }
         env.update(_octoplanner_environment(self.native_nav["octoplanner3d"]))
-        # Native route vertices are body poses in both envs. Ground-support
-        # calibration must not disable the physical collision envelope.
-        env["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]
-        env["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = env["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]
+        # navd derives the global body (radius, offset and whole-cell
+        # clearances) from these collision values and this resolution.
         if self.map_resolution_m is not None:
-            # Mapd rounds vertical inflation to whole cells. Global body
-            # clearance must cover that same forbidden body-center volume.
-            resolution = self.map_resolution_m
-            env["LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M"] = _env_number(resolution)
-            for direction in ("BELOW", "ABOVE"):
-                clearance = float(env[f"LINGTU_NAV_COLLISION_CLEARANCE_{direction}_M"])
-                env[f"LINGTU_NAV_OCTO_BODY_CLEARANCE_{direction}_M"] = _env_number(
-                    math.ceil(clearance / resolution) * resolution
-                )
+            env["LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M"] = _env_number(self.map_resolution_m)
         return env
 
     def as_dict(self) -> dict[str, Any]:
@@ -442,7 +430,6 @@ def compile_native_nav_config(
     vehicle_length_m = _finite_number(config, "vehicle_length_m", 1.0)
     vehicle_width_m = _finite_number(config, "vehicle_width_m", 0.6)
     vehicle_height_m = _finite_number(config, "vehicle_height_m", 0.5)
-    defaults["octoplanner3d_robot_radius"] = 0.5 * vehicle_width_m
     native_nav["octoplanner3d"] = {
         key: explicit.get(key, config.get(key, defaults[key]))
         for key in _OCTOPLANNER_ENVIRONMENT
@@ -541,11 +528,6 @@ def compile_native_nav_config(
             tuning_environment[env_key] = str(value)
         else:
             tuning_environment[env_key] = _env_number(_finite_number(native_nav_config, key))
-    if local_planner == "scan":
-        # The native endpoint derives both planners' envelope from these cylinders.
-        native_nav["octoplanner3d"]["octoplanner3d_robot_radius"] = parameters[
-            "collision_cylinder_radius_m"
-        ]
     if parameters["teleop_planner_horizon_m"] < 0.5:
         raise ValueError("teleop_planner_horizon_m must be at least 0.5")
     if parameters["tick_hz"] <= 0.0:

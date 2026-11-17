@@ -73,8 +73,9 @@ struct OctoPlannerGridQueryTest {
     require(planner.sweptRouteFree({-.8,0,.5},center) &&
                 planner.sweptRouteFree(center,{0,.8,.5}),
             "corner fixture must admit both straight segments");
-    require(!planner.validateRoute({{-.8,0,.5},{0,0,.5},{0,.8,.5}}).valid,
-            "route validation omitted the turn between individually clear segments");
+    // A vertex is not an in-place pivot; turnFree above still rejects one.
+    require(planner.validateRoute({{-.8,0,.5},{0,0,.5},{0,.8,.5}}).valid,
+            "route validation treated a vertex as an in-place pivot");
     planner.setNoGoRegions(std::make_shared<const std::vector<lingtu::maps::NoGoRegion>>(
         std::vector<lingtu::maps::NoGoRegion>{{"turn",{.51,.205,.5},{.515,.21,.505}}}));
     require(!planner.turnFree({0,0,.5},0,pi/2,&failure) && failure==Failure::ExternalPreblockedBody,

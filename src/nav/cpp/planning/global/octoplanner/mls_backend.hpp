@@ -136,7 +136,7 @@ struct ArtifactUpdateReport {
 
 class PreparedArtifactHandle {
 public:
-  enum class QueryStatus { Found, Exhausted, Budget, Cancelled };
+  enum class QueryStatus { Found, Exhausted, Budget, Cancelled, StartUnreachable, GoalUnreachable };
   struct QueryResult {
     QueryStatus status;
     std::vector<SurfaceCell> cells;

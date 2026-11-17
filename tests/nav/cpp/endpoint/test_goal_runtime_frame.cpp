@@ -81,6 +81,10 @@ struct Fixture {
               result.ok = true;
               result.reached_goal = true;
               result.map_identity = map_identity;
+              // Real planners echo the overlay they searched with.
+              result.overlay_revision = request.temporary_overlay.revision;
+              result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
+              result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
               result.path = {request.start, request.goal};
               return result;
             },
@@ -525,8 +529,9 @@ void testRejectedReplacementPreservesTheActiveGoalRetry() {
   fixture.activateGoal();
   const auto original = fixture.goal_plan.snapshot();
   lingtu::nav::endpoint::GoalReplanTrigger trigger;
-  trigger.kind = lingtu::nav::endpoint::GoalReplanTriggerKind::kLocalRecoveryExhausted;
   trigger.reason = "local_recovery_exhausted";
+  trigger.blocked_point = lingtu::nav::plan::GlobalPlanPoint{2.0, 0.0, 0.0};
+  trigger.obstacle_generation = 9U;
   trigger.goal = {original.active_task_id, original.active_request_id,
                   original.active_goal_epoch, *original.active_map_identity};
   const auto armed = fixture.coordinator.handleAutonomyOutcome(

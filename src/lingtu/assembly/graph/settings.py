@@ -51,7 +51,6 @@ _GROUPS = {
             )
         },
         "planner": "global_planner",
-        "robot_radius_m": "octoplanner3d_robot_radius",
         "max_step_height_m": "octoplanner3d_max_step_height",
         "same_floor_z_tolerance_m": "octoplanner3d_same_floor_z_tolerance",
         "preblocked": "octoplanner3d_enable_preblocked_costmap",
