@@ -545,4 +545,6 @@ class TestPersonTrackerReID:
             "dino_match": 0,
             "dino_rejected": 0,
             "track_continuation": 0,
+            "provisional": 0,
+            "provisional_revoked": 0,
         }

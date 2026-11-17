@@ -223,6 +223,7 @@ def replay_sequence(
     encoder: Any | None,
     verifier: Verifier | None = None,
     verifier_latency_s: float = 0.0,
+    provisional_min_similarity: float | None = None,
     seconds_per_tick: float = 1e-9,
 ) -> tuple[dict[str, dict], dict[str, Any]]:
     """Replay one sequence and return TPT predictions plus replay diagnostics.
@@ -237,7 +238,8 @@ def replay_sequence(
         track_low_thresh=min(0.1, DETECTOR_CONFIDENCE),
         new_track_thresh=DETECTOR_CONFIDENCE,
     )
-    tracker = PersonTracker()
+    # As in VisualServo, provisional following needs a verifier to confirm it.
+    tracker = PersonTracker(provisional_min_similarity=provisional_min_similarity if verifier else None)
     if encoder is not None:
         tracker.set_dino_encoder(encoder)
     predictions: dict[str, dict] = {}
@@ -247,6 +249,7 @@ def replay_sequence(
     keys_by_time: dict[float, str] = {}
     request: tuple[float, str, float, str] | None = None  # due time, candidate id, source ts, verdict
     verdicts = {"MATCH": 0, "OTHER": 0}
+    revocations = 0
     with source_clock() as set_time:
         for key in sorted(ground_truth, key=int):
             timestamp = int(key) * seconds_per_tick
@@ -254,6 +257,7 @@ def replay_sequence(
             set_time(timestamp)
             if request is not None and timestamp >= request[0]:
                 tracker.resolve_identity(request[1], request[2], request[3])
+                revocations += tracker.consume_provisional_revocation()
                 request = None
             frame = _read_image(next(image_dir.glob(f"{key}.*")))
             record = detections.get(key, {"boxes": []})
@@ -293,7 +297,7 @@ def replay_sequence(
                     if match is not None:
                         similarity = status.get("dino_similarity")
                         target = (match, float(similarity) if similarity is not None else match["confidence"])
-                elif verifier is not None and request is None:
+                if verifier is not None and request is None:
                     candidate = tracker.identity_candidate()
                     if candidate is not None:
                         obj = candidate["object"]
@@ -314,6 +318,7 @@ def replay_sequence(
         "selected_track_changes": sum(1 for a, b in pairwise(reported) if a != b),
         "heuristic_position_objects": heuristic_positions,
         "verifier_verdicts": verdicts,
+        "provisional_revocations": revocations,
         "selected_track_ids": selected_ids,
     }
     return predictions, diagnostics
@@ -359,6 +364,8 @@ def main() -> int:
     replay.add_argument("--verifier", choices=("none", "oracle"), default="none",
                         help="oracle answers identity checks from the label (perfect-VLM upper bound)")
     replay.add_argument("--verifier-latency-s", type=float, default=0.0)
+    replay.add_argument("--provisional-min-similarity", type=float,
+                        help="follow a strong DINO return provisionally while the verifier checks it")
     args = parser.parse_args()
 
     if args.command == "score":
@@ -377,6 +384,7 @@ def main() -> int:
         load_detections(args.detections), encoder=_encoder(args.encoder, args),
         verifier=oracle_verifier(truth) if args.verifier == "oracle" else None,
         verifier_latency_s=args.verifier_latency_s,
+        provisional_min_similarity=args.provisional_min_similarity,
     )
     _write_json(args.results_dir / args.sequence / f"{args.method}.json", predictions)
     _write_json(args.results_dir / args.sequence / f"{args.method}.diagnostics.json", diagnostics)

@@ -180,6 +180,10 @@ class PersonTracker:
     # A new detector ID may continue the target without identity evidence only
     # across a detector break this short (camera motion, a few dropped frames).
     TRACK_CONTINUATION_GAP = 0.5
+    PROVISIONAL_RADIUS = 2.0  # m from the predicted loss position
+    # A provisional return must look as much like the target as its own tracked
+    # frames did; a lookalike scores above the absolute threshold but below this.
+    PROVISIONAL_SIMILARITY_DROP = 0.05
     MAX_PERSON_SPEED = 3.0  # m/s, with measurement noise allowed separately
     POSITION_NOISE = 0.2  # m
     MAX_VERIFIED_VIEWS = 8
@@ -193,8 +197,13 @@ class PersonTracker:
     def __init__(
         self, follow_distance: float = 1.5, lost_timeout: float = 5.0,
         dino_min_similarity: float = 0.65, dino_margin: float = 0.03,
+        provisional_min_similarity: float | None = None,
     ):
+        """``provisional_min_similarity`` enables following a strong DINO match that
+        reappears near the loss point after a long absence while the VLM verifies it;
+        ``None`` keeps every long-absence return gated on verification."""
         self.follow_distance = follow_distance
+        self._provisional_min_similarity = provisional_min_similarity
         self.lost_timeout = lost_timeout
         self._person: TrackedPerson | None = None
         self._description: str = ""  # user description e.g. "person in red"
@@ -232,6 +241,11 @@ class PersonTracker:
         self._identity_retry_state: dict[str, dict] = {}
         # Track IDs seen in the same frame as the accepted target are other people.
         self._co_visible_ids: dict[str, float] = {}
+        # Provisionally followed candidate and the target state to restore if refused.
+        self._provisional: dict | None = None
+        self._provisional_refused: set[str] = set()
+        self._provisional_revoked = False
+        self._tracked_similarity: float | None = None  # EMA of accepted DINO scores
 
         # Observability counters for Re-ID signal usage.
         self._reid_stats: dict = {
@@ -242,6 +256,8 @@ class PersonTracker:
             "dino_match": 0,
             "dino_rejected": 0,
             "track_continuation": 0,
+            "provisional": 0,
+            "provisional_revoked": 0,
         }
 
     def set_dino_encoder(self, encoder) -> None:
@@ -259,6 +275,17 @@ class PersonTracker:
         """Inject CLIP encoder for secondary appearance feature extraction."""
         with self._encoder_lock:
             self._clip_encoder = clip_encoder
+
+    def consume_provisional_revocation(self) -> bool:
+        """Report once that a provisionally followed candidate was withdrawn."""
+        with self._lock:
+            revoked, self._provisional_revoked = self._provisional_revoked, False
+            return revoked
+
+    def set_provisional_min_similarity(self, value: float | None) -> None:
+        """Enable provisional following only while a verifier can confirm it."""
+        with self._lock:
+            self._provisional_min_similarity = value
 
     @property
     def has_image_selector(self) -> bool:
@@ -344,7 +371,10 @@ class PersonTracker:
             except Exception as exc:
                 logger.debug("Person %s preparation failed: %s", name, exc)
 
-        if dino_active and not pending:
+        if dino_active and pending:
+            # Only the current track can match while a check is pending.
+            eligible = [item for item in eligible if item[1] == str(current_id or "")]
+        if dino_active:
             encode_batch = getattr(dino, "encode_batch", None)
             if authorized is None and len(eligible) > 1 and all(item[1] != str(current_id or "") for item in eligible) and callable(encode_batch):
                 batch = []
@@ -698,6 +728,9 @@ class PersonTracker:
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
             self._co_visible_ids.clear()
+            self._provisional = None
+            self._provisional_refused.clear()
+            self._tracked_similarity = None
             self._reset_reacquire()
             self._frame_dino.clear()
             self._dino_event = "locked" if dino_feat is not None else "disabled"
@@ -717,7 +750,9 @@ class PersonTracker:
         if not persons:
             with self._lock:
                 self._reset_reacquire()
-                self._pending_identity = None
+                if self._provisional is None:
+                    # A provisional target keeps its in-flight check through a dropout.
+                    self._pending_identity = None
                 self._verified_identity = None
                 self._identity_retry_until = {
                     key: value for key, value in self._identity_retry_until.items()
@@ -744,7 +779,11 @@ class PersonTracker:
                 key: value for key, value in self._identity_retry_state.items()
                 if key in visible_ids or key == current_id
             }
-            if self._pending_identity is not None and str(self._pending_identity["object"].get("id")) not in visible_ids:
+            if (
+                self._pending_identity is not None
+                and self._provisional is None
+                and str(self._pending_identity["object"].get("id")) not in visible_ids
+            ):
                 self._pending_identity = None
                 self._reset_reacquire()
             if self._verified_identity is not None and str(self._verified_identity["object"].get("id")) not in visible_ids:
@@ -1137,10 +1176,15 @@ class PersonTracker:
                     and retry_until is None
                     and score >= self._dino_min_similarity
                 ):
-                    self._pending_identity = None
+                    if self._provisional is None:
+                        self._pending_identity = None
                     self._reset_reacquire()
                     self._dino_similarity = score
-                    self._dino_event = "matched"
+                    if self._provisional is None:
+                        self._tracked_similarity = score if self._tracked_similarity is None else (
+                            0.8 * self._tracked_similarity + 0.2 * score
+                        )
+                    self._dino_event = "provisional" if self._provisional is not None else "matched"
                     self._reid_stats["dino_match"] += 1
                     return candidate
                 if (
@@ -1213,6 +1257,31 @@ class PersonTracker:
             "score": score,
         }
         self._reset_reacquire()
+        best_id = str(best.get("id") or "")
+        predicted = self._predict_position(_MOTION_PREDICT_DT)
+        position = self._get_pos(best)
+        if (
+            self._provisional_min_similarity is not None
+            and score >= max(self._provisional_min_similarity, self._dino_min_similarity)
+            and self._tracked_similarity is not None
+            and score >= self._tracked_similarity - self.PROVISIONAL_SIMILARITY_DROP
+            and best_id not in self._provisional_refused
+            and self._observation_context_valid
+            and math.hypot(position[0] - predicted[0], position[1] - predicted[1]) <= self.PROVISIONAL_RADIUS
+        ):
+            person = self._person
+            self._provisional = {
+                "id": best_id,
+                "restore": {
+                    "position": list(person.position), "last_raw_pos": person.last_raw_pos,
+                    "velocity": list(person.velocity), "last_seen": person.last_seen,
+                    "observation_ts": person.observation_ts, "confidence": person.confidence,
+                    "bbox": person.bbox, "obj_id": person.obj_id,
+                },
+            }
+            self._dino_event = "provisional"
+            self._reid_stats["provisional"] += 1
+            return best
         self._dino_event = "awaiting_identity_verification"
         return None
 
@@ -1244,14 +1313,17 @@ class PersonTracker:
             pending = self._pending_identity
             if pending is None or str(pending["object"].get("id")) != str(candidate_id) or self._get_observation_ts(pending["object"]) != source_ts:
                 return False
-            self._pending_identity = None
             self._reset_reacquire()
             if verdict == "MATCH":
+                self._pending_identity = None
+                self._provisional = None
                 self._identity_retry_until.pop(str(candidate_id), None)
                 self._identity_retry_state.pop(str(candidate_id), None)
                 self._verified_identity = pending
                 self._dino_event = "identity_verified"
                 return True
+            self._revoke_provisional()
+            self._pending_identity = None
             if source_ts is not None:
                 previous = self._identity_retry_state.get(str(candidate_id), {})
                 attempts = min(int(previous.get("attempts", 0)) + 1, 3)
@@ -1267,6 +1339,20 @@ class PersonTracker:
                 }
             self._dino_event = "identity_rejected" if verdict == "OTHER" else "identity_unknown"
             return False
+
+    def _revoke_provisional(self) -> None:
+        """Undo a provisional takeover; the caller's lost-target handling then stops motion."""
+        if self._provisional is None:
+            return
+        for name, value in self._provisional["restore"].items():
+            setattr(self._person, name, value)
+        self._provisional_refused.add(self._provisional["id"])
+        self._provisional = None
+        self._provisional_revoked = True
+        self._observation_accepted = False
+        self._observation_reason = "provisional_identity_revoked"
+        self._dino_event = "provisional_revoked"
+        self._reid_stats["provisional_revoked"] += 1
 
     def _motion_reacquire(self, candidates: list[tuple[float, dict]]) -> dict | None:
         """Without identity evidence, motion may only continue a recent, unambiguous ID break."""
@@ -1513,7 +1599,7 @@ class PersonTracker:
                         except Exception as exc:
                             logger.debug("OSNet update_tracked encode failed: %s", exc)
 
-                if self._dino_encoder is not None:
+                if self._dino_encoder is not None and self._provisional is None:
                     feature = self._dino_feature(rgb_frame, obj)
                     if feature is not None:
                         previous = self._person.dino_feat
@@ -1667,6 +1753,7 @@ class PersonTracker:
                 "appearance_backend": appearance_backend,
                 "dino_similarity": self._dino_similarity,
                 "dino_event": self._dino_event,
+                "identity_provisional": self._provisional is not None,
                 "identity_retry_until": dict(self._identity_retry_until),
                 "reid_stats": dict(self._reid_stats),
             }
@@ -1708,6 +1795,9 @@ class PersonTracker:
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
             self._co_visible_ids.clear()
+            self._provisional = None
+            self._provisional_refused.clear()
+            self._tracked_similarity = None
             self._dino_similarity = None
             self._dino_event = "ready" if self._dino_encoder is not None else "disabled"
 
@@ -1735,6 +1825,9 @@ class PersonTracker:
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
             self._co_visible_ids.clear()
+            self._provisional = None
+            self._provisional_refused.clear()
+            self._tracked_similarity = None
             self._dino_similarity = None
             self._dino_event = "context_changed"
             return True

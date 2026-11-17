@@ -145,6 +145,11 @@ def scenarios() -> list[Scenario]:
                  (Person("target", "target", _line((4.0, 0.0), (4.0, 5.0), 0, 5)),
                   Person("lookalike", "similar", _line((4.0, -5.0), (4.0, -0.5), 8, 14))),
                  _uniform(14)),
+        Scenario("lookalike_reentry", "target stays hidden; similar clothes emerges where it vanished",
+                 (Person("target", "target", _line((5.0, 2.0), (5.0, 0.0), 0, 7)),
+                  Person("occluder", "other_a", _line((3.0, 0.0), (3.0, 0.0), 0, 16)),
+                  Person("lookalike", "similar", _line((5.0, 0.0), (5.0, -2.0), 9, 16))),
+                 _uniform(16)),
         Scenario("dropped_frames", "side-by-side walkers under 5-20 Hz jitter and 0.8 s gaps",
                  (Person("target", "target", _line((4.0, 2.5), (4.0, -2.5), 0, 6)),
                   Person("companion", "other_a", _line((4.0, 3.2), (4.0, -1.8), 0, 6))),
@@ -288,6 +293,7 @@ VARIANTS = {
     "appearance-no-verifier": (True, False, 0.0),
     "appearance-oracle-0s": (True, True, 0.0),
     "appearance-oracle-7.9s": (True, True, 7.88),
+    "appearance-provisional-oracle-7.9s": (True, True, 7.88),
 }
 
 
@@ -304,6 +310,7 @@ def run_suite(dataset_dir: Path, results_dir: Path) -> dict[str, Any]:
                 dataset_dir / "panoramic_images" / scenario.name, truth, detections,
                 encoder=MarkerEncoder() if appearance else None,
                 verifier=oracle_verifier(truth) if oracle else None, verifier_latency_s=latency,
+                provisional_min_similarity=0.75 if method.startswith("appearance-provisional") else None,
             )
             out = results_dir / scenario.name
             out.mkdir(parents=True, exist_ok=True)
@@ -313,6 +320,7 @@ def run_suite(dataset_dir: Path, results_dir: Path) -> dict[str, Any]:
                 **identity_diagnostics(predictions, annotations, truth),
                 "selected_track_changes": diagnostics["selected_track_changes"],
                 "verifier_verdicts": diagnostics["verifier_verdicts"],
+                "provisional_revocations": diagnostics["provisional_revocations"],
             }
     return summary
 

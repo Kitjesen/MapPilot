@@ -127,6 +127,7 @@ class VisualServoModule(Module, layer=4):
         person_appearance_cpu_threads: int = 4,
         person_appearance_min_similarity: float = 0.65,
         person_appearance_margin: float = 0.03,
+        person_provisional_min_similarity: float | None = 0.75,
         vision_service_url: str = "",
         product_session_id: str = "",
         **kw,
@@ -139,6 +140,8 @@ class VisualServoModule(Module, layer=4):
             dino_min_similarity=person_appearance_min_similarity,
             dino_margin=person_appearance_margin,
         )
+        # Provisional following is enabled per tick, only while a VLM verifier exists.
+        self._provisional_min_similarity = person_provisional_min_similarity
         self._target_distance = float(target_distance)
         self._person_text_model_path = person_text_model_path
         self._person_text_device = person_text_device
@@ -1198,11 +1201,16 @@ class VisualServoModule(Module, layer=4):
             self._publish_status()
             return
 
+        self._person_tracker.set_provisional_min_similarity(
+            self._provisional_min_similarity if self._vision_client is not None else None
+        )
         # Track (BGR frame for CLIP/OSNet Re-ID) and emit follow waypoint.
         self._target_visible = selected_from_current_frame or self._person_tracker.update(
             scene_objects,
             matched_bgr,
         )
+        if self._person_tracker.consume_provisional_revocation():
+            self._cancel_navigation_goal("visual_servo_identity_revoked")
         if not self._target_visible:
             candidate = self._person_tracker.identity_candidate()
             if (
@@ -1216,6 +1224,11 @@ class VisualServoModule(Module, layer=4):
                 self._cancel_navigation_goal("visual_servo_target_lost")
             self._publish_status()
             return
+
+        # A provisionally followed return still owes the VLM its identity check.
+        candidate = self._person_tracker.identity_candidate()
+        if candidate is not None and self._vision_client is not None:
+            self._start_identity_verification(candidate)
 
         tracked = self._person_tracker.status()
         current_track_id = str((tracked or {}).get("id") or "")
@@ -1552,6 +1565,8 @@ class VisualServoModule(Module, layer=4):
                 ):
                     return
                 self._person_tracker.resolve_identity(candidate_id, source_ts, verdict)
+                if self._person_tracker.consume_provisional_revocation():
+                    self._cancel_navigation_goal("visual_servo_identity_revoked")
         except Exception:
             with self._state_lock:
                 if self._follow_verify_key != request_key:
@@ -1569,6 +1584,8 @@ class VisualServoModule(Module, layer=4):
                         source_ts,
                         "UNKNOWN",
                     )
+                    if self._person_tracker.consume_provisional_revocation():
+                        self._cancel_navigation_goal("visual_servo_identity_revoked")
         finally:
             with self._state_lock:
                 if self._follow_verify_key == request_key:
