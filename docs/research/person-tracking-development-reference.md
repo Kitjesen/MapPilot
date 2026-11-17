@@ -289,12 +289,14 @@ DEV-02/09 是确定性实现修复，不应包装为论文创新；DEV-04 的真
 
 | 缺口 | 代码或记录事实 | 对应项 |
 | --- | --- | --- |
-| 没有可复跑的评测基线 | 第 9 节 BENCH-01 未勾选；目前只有 MOT17 回放和抽样调用 | BENCH-01 |
+| 没有真实数据的可复跑基线 | [tpt_bench.py](../../tools/datasets/tpt_bench.py) 已实现官方指标（与官方脚本逐项一致）和回放；合成场景基线见 [person_scenarios.py](../../tools/datasets/person_scenarios.py)。TPT-Bench 数据仍未下载（本云环境网络策略拦截其托管站点） | BENCH-01 |
 | ReID 权重来源不明 | `reid.py:55-56` 加载 ImageNet 权重；BPU `.hbm` 的训练来源未知；[person-follow.md](person-follow.md) 记录当前 NX DINO 引擎未通过真实 crop 特征比对，之后没有新的 NX 证据 | DEV-06、REID-03 |
 | 预测不随真实时间推进 | `native_byte_tracker.py:57-65` 每次调用 `bbox += velocity`，速度按更新次数做 EMA | DEV-04 |
 | 仅凭运动换轨 | `person.py:1225` 只要唯一候选连续出现即可恢复 | DEV-05 |
 | 深度污染、丢失后搜索 | 未实施 | DEV-08、DEV-11 |
 | VLM 选人慢 | 2026-11-16 Kimi 抽样：中位 7.88 s，最长 38.05 s；一次 47.74 s 的初始序列会超过 30 s 截止时间 | 需要本地快速路径，VLM 只按事件触发 |
+| 身份确认等待期间阻塞恢复 | 外观模式下只要轨迹 ID 变化，就必须等 `resolve_identity`（VLM）；`person.py:1021` 在 `_pending_identity` 存在时直接返回，原轨迹 ID 回来也不接受，只有候选离开画面才清除（`person.py:741`）。合成基准中，0.2 s 遮挡后相似干扰者成为待确认候选；确认延迟 7.88 s 时，直到 12 s 场景结束都未恢复，0 s 时 0.1 s 恢复（[实验记录](person-follow.md#tpt-bench-harness-and-synthetic-identity-baseline-2026-11-17)） | DEV-05/07、新增 |
+| 相机自运动打碎 2D 轨迹 | 合成 ±0.6 rad/⅓ Hz 偏航：`NativeByteTracker` 在 116 帧中给目标 41 个 ID、84 次切换；最好 AO 0.113 | DEV-04、BoT-SORT CMC |
 | 跟随运动未验证 | `tracking` Product 默认 `local_planner: cmu`，20 Hz；VisualServo 按 2.5 Hz、0.25 m 死区、1.5 m 跟随距离下发目标。移动目标下是否走走停停未测；没有原生仿真或实机跟随证据；相机到机体的标定仍待完成 | 原生导航，不属于本文实施项 |
 
 DEV-03 的弱框入口问题只适用于 BPU 路径（`backends.py:33` 置信度 0.3、BPU detector 0.25、`bpu_tracker` 低阈值 0.1）。`tracking` Product 默认的 `yolo_trt` 在后处理中保留 ≥ `track_low_thresh`（0.1）的框再交给 `NativeByteTracker`（`yolo_trt.py:57-61`、`:175-177`），这条路径没有该问题。
