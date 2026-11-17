@@ -20,8 +20,8 @@
   转身由 SCAN 按连续样条在实时占据中检查。修后同组点对 building 30/30、plaza 30/30。
 - 同时修正：起终点吸附预筛选按量化高度对相邻格施加坡度，可在小吸附半径下清空候选，现由真实连接检查判定；
   起点、目标无可接入表面不再统一报 `empty_path`，恢复 `start_snap_exhausted` / `goal_snap_exhausted`。
-  公开验收清单由 2/6 变为 5/6；`building_stairs_geometry_only_rejected` 仍待“无显式 free 层的地图
-  能否作为全局输入”的产品决定，未改期望。
+  公开验收清单由 2/6 变为 5/6。同日用户决定：无显式 free 层的地图可以作为全局输入，该例改名
+  `building_stairs_geometry_only` 并期望成功，路线经 `verify_path` 复核，清单 6/6。
 - DimOS `5e0ebfd` 同体素同点对 60/60 返回路线，但用同半径单圆柱复核仅 3/60 通过，失败都在路线中段
   （机身占据或无地面）。这说明 DimOS 的“不失败”来自更少的三维约束，不能据此删除支撑、机身占据检查。
 - 记录：`build/global-pivot-20261117/README.md`。仅离线全局路线证据，未做 navd、MuJoCo 或实机验证。
