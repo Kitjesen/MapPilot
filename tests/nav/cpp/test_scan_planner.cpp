@@ -5988,6 +5988,60 @@ TEST(ScanReplanFsm, TrackingLagReplansFromMeasuredMotionWithSolverDelay) {
   }
 }
 
+TEST(ScanReplanFsm, MeasuredMotionRebuildRespectsThePlannedSpeedAndAccelerationBudget) {
+  using namespace nav_kernel::local::scan::upstream;
+  // Route following leaves preserve_boundary_ unset. A lag rebuild starts from
+  // measured motion and must stay inside the norm budget Follower executes.
+  for(const Eigen::Vector3d velocity : {Eigen::Vector3d(.45,0,0),Eigen::Vector3d(.3,.3,0),
+                                        Eigen::Vector3d(.1,.4,0)}) {
+    SCOPED_TRACE(velocity.transpose());
+    ScanAttemptFixture fixture;
+    ScanReplanParams params;
+    params.navigationMode=ScanNavigationMode::REFERENCE_PATH;
+    params.planningHorizon=3.5;
+    params.noReplanThreshold=.1;
+    params.replanThreshold=1;
+    PlannerFsm fsm(fixture.manager,params);
+    FsmInput input;
+    input.nowS=1;
+    input.odometry=FsmOdometry{};
+    input.odometry->position={0,0,.5};
+    input.referencePath=std::vector<Eigen::Vector3d>{{0,0,.5},{3,0,.5}};
+    ASSERT_TRUE(fsm.tick(input).targetAccepted);
+    input.referencePath.reset();
+    FsmOutput output;
+    for(int tick=0;tick<8 && !output.trajectory;++tick) {
+      input.nowS+=.01;
+      output=fsm.tick(input);
+    }
+    ASSERT_TRUE(output.trajectory);
+    const auto previous=fixture.manager.local_data_;
+    const double elapsed=.5*previous.duration_;
+    input.nowS=previous.start_time_+elapsed;
+    input.executingTrajectoryId=previous.traj_id_;
+    input.executionStartTimeS=previous.start_time_;
+    input.odometry->position=previous.position_traj_.evaluateDeBoorT(elapsed)-Eigen::Vector3d(.3,0,0);
+    input.odometry->velocity=velocity;
+    ASSERT_EQ(fsm.tick(input).state,ScanReplanState::REPLAN_TRAJ);
+    input.nowS+=.01;
+    output=fsm.tick(input);
+    ASSERT_TRUE(output.trajectory)<<fixture.manager.reboundDebug().reason;
+    const auto& next=fixture.manager.local_data_;
+    ASSERT_GT(next.traj_id_,previous.traj_id_);
+    const auto& plan=fixture.manager.pp_;
+    const Eigen::MatrixXd speed=next.velocity_traj_.getControlPoint();
+    double maxSpeed=std::max(next.velocity_traj_.evaluateDeBoorT(0).norm(),
+                             next.velocity_traj_.evaluateDeBoorT(next.duration_).norm());
+    for(Eigen::Index i=1;i+1<speed.cols();++i) maxSpeed=std::max(maxSpeed,speed.col(i).norm());
+    const double maxAcceleration=
+        next.acceleration_traj_.getControlPoint().colwise().norm().maxCoeff();
+    std::cout<<"MEASURED_REBUILD velocity="<<velocity.transpose()
+             <<" max_speed="<<maxSpeed<<" max_acceleration="<<maxAcceleration<<'\n';
+    EXPECT_LE(maxSpeed,plan.max_vel_+1e-9);
+    EXPECT_LE(maxAcceleration,plan.max_acc_+1e-9);
+  }
+}
+
 TEST(ScanReplanFsm, NewReferenceStillReplacesRetainedTrajectory) {
   using namespace nav_kernel::local::scan::upstream;
   ScanAttemptFixture fixture;

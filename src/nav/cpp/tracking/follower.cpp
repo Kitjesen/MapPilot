@@ -457,7 +457,8 @@ class SplineAlgorithm {
       hasMotionCommand_ = true;
     }
     if (!output.finished) {
-      if (!externalHold) {
+      // Upstream heading alignment publishes zero translation immediately.
+      if (!externalHold && !controlled.executionFrozen) {
         // Bound the physical XY velocity change in one world frame. Rotating
         // the body frame alone must not look like extra acceleration.
         const double c = std::cos(input.vehicleYawRelative);

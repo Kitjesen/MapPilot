@@ -1,5 +1,59 @@
 # SCAN-Planner upstream
 
+## 2026-11-17: tracking comparison and upstream control-law restoration
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`. Its
+`closed_loop_controller.cpp`, `scan_replan_fsm.cpp`, `planner_manager.cpp` and
+`launch/advanced_param.xml` were compared line by line with the native port.
+
+Restored to upstream in this change:
+
+- Heading alignment (`|yaw error| > heading_error_threshold`) outputs zero
+  translation immediately, as upstream `publishStop(vyaw_cmd)` does. The local
+  deceleration during alignment is removed; it let the robot coast up to
+  v²/(2a) (about 0.96 m from 1.2 m/s at 0.75 m/s²) past the frozen reference,
+  which the controller then pulled back toward after alignment. Yaw-rate
+  limiting and the command acceleration limit for normal tracking are unchanged.
+  This supersedes the alignment sentence in the 2026-11-08 entries below.
+- The alignment comparison uses the upstream threshold without the extra
+  0.002 rad band.
+- Body-axis limits clamp `vx` and `vy` independently after the total-speed
+  clamp, as upstream does. The local direction-preserving common scale is
+  removed.
+
+Changed relative to upstream, with reason:
+
+- Upstream `REFERENCE_PATH` always replans from the reference state and never
+  from odometry. LingTu additionally rebuilds from measured position/velocity
+  once the robot is more than one control-point spacing from the reference.
+  That rebuild previously used upstream's per-axis retiming (`limit * 1.5` per
+  axis, then `max_vel + velocity_tolerance`), which was designed for reference
+  boundaries. The rebuild now uses the same exact-boundary norm retiming as the
+  moving handoff. `ScanReplanFsm.MeasuredMotionRebuildRespectsThePlannedSpeedAndAccelerationBudget`
+  produced curves at 0.527-0.561 m/s against a 0.5 m/s limit before this change
+  and 0.463-0.479 m/s after it.
+
+Retained local differences and why:
+
+| Item | Upstream | LingTu | Reason |
+| --- | --- | --- | --- |
+| Command acceleration limit after the controller | none | Product `max_accel_mps2`, `max_yaw_accel_rad_s2` | Platform command limit; see 2026-11-06 acceleration trials |
+| Control gap above 0.2 s | dropped from reference time | advances reference | Planner shares the follower execution clock; see 2026-11-06 |
+| New trajectory clock | `exec_time = 0` on receipt | continues at physical time since spline start | Asynchronous future-boundary handoff |
+| Replan start | reference state at `t_cur` | future handoff boundary; odometry after separation | Asynchronous solve time; bounded tracking lag |
+| Planner per-axis optimizer cost and handoff-free retiming | per-axis box | unchanged | Upstream solver code |
+| Heading overrides / tangent feedforward | none | `desiredHeading`, `desiredYawRate`, inactive tangent feedforward when `time_forward <= 0` | Teleop, pose stages and stairs |
+
+Parameters (nav Product versus upstream defaults): `max_vel`/`max_vx`
+1.2 vs 0.75 m/s, `max_vy` 1.0 vs 0.35 m/s, `max_acc` 0.75 vs 0.5 m/s²,
+`kp_pos` 1.5 vs 0.8, `acceleration_tolerance` 1.2 vs 1.0. `time_forward`,
+`heading_error_threshold`, `kp_yaw`, `max_vyaw` and `finish_dist` match. The
+higher speeds and the paired position gain are retained as local tuning (see
+2026-11-08); they are not upstream defaults and are not field-qualified.
+
+Evidence is limited to native unit/component tests on Linux x64. No MuJoCo or
+physical motion run was made for this change.
+
 ## 2026-11-13: remove local minimum lateral target
 
 LingTu no longer carries the experimental `scan_follower.min_vy_mps` parameter
