@@ -480,7 +480,7 @@ def test_cmu_octoplanner_default_radius_keeps_the_width_contract(
     ("robot", "radius", "below", "above"),
     [
         ("unitree/go2", 0.25, 0.10, 0.25),
-        ("doso/thunder_v4", 0.32, 0.05, 0.35),
+        ("doso/thunder_v4", 0.43, 0.05, 0.35),
     ],
 )
 def test_scan_global_corridor_uses_robot_width_and_vertical_clearance(

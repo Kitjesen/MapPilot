@@ -317,6 +317,8 @@ void TestLiveFrame() {
 void TestMovingObstacleTrail() {
   for (const bool observe_old_positions : {true, false}) {
     RollingOccupancyConfig config;
+    // Isolate ray clearing; confidence aging has its own test below.
+    config.decay_after_ns = 0;
     config.auto_roll = false;
     RollingOccupancyGrid grid(config);
     grid.Reset("map", 0, 0, 0, 1);
@@ -762,6 +764,23 @@ void TestDecayAndOutOfOrderGate() {
   assert(rejected);
 }
 
+void TestVisibleHitsSurviveWhileOldHitsAgeToUnknown() {
+  auto config = TestConfig();
+  RollingOccupancyGrid grid(config);
+  grid.Reset("map", 0, 0, 0, 1);
+  const std::vector<float> old_hit{2.2F, .1F, .1F};
+  const std::vector<float> visible_hit{.1F, 2.2F, .1F};
+  grid.Update(Frame(old_hit, 1));
+  grid.Update(Frame(old_hit, 2));
+  for (std::int64_t second = 1; second <= 20; ++second) {
+    const auto stamp = second * 1000000000;
+    grid.Update(Frame(visible_hit, stamp));
+    grid.Decay(stamp + 100000000);
+    assert(grid.StateAt(.1F, 2.2F, .1F) == OccupancyState::kOccupied);
+  }
+  assert(grid.StateAt(2.2F, .1F, .1F) == OccupancyState::kUnknown);
+}
+
 void TestFrameMismatchFailsClosed() {
   RollingOccupancyGrid grid(TestConfig());
   grid.Reset("map", 0.0F, 0.0F, 0.0F, 1);
@@ -1114,6 +1133,7 @@ int main() {
   TestWindowRollClearsInflationFromEveryReusedCell();
   TestAutoRollAndCellMutationCommitOneGeneration();
   TestDecayAndOutOfOrderGate();
+  TestVisibleHitsSurviveWhileOldHitsAgeToUnknown();
   TestSaturatedHitRefreshesDecayClock();
   TestFrameMismatchFailsClosed();
   TestIncrementalInflationKeepsSharedCoverageUntilLastSourceClears();

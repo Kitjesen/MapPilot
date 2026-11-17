@@ -1,5 +1,38 @@
 # SCAN-Planner upstream
 
+## 2026-11-17: executable native timing and local occupancy aging
+
+Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.
+Native route planning now uses the existing boundary-preserving retiming path,
+including routes without a fixed body heading. The ordinary upstream tolerance
+path can accept a faster reference than the native follower's physical speed cap.
+In the Thunder box recording the sampled reference peaked near 0.746 m/s while
+execution was capped at 0.6 m/s; the matched rerun stayed near 0.600 m/s and removed
+the repeated `local_blocked` episode. Start/end derivatives are preserved rather
+than clamping spline velocities after planning.
+
+Mapd's local rolling occupancy now starts aging unobserved evidence after a
+quarter-second, using its existing confidence decay. This is local tuning, not a SCAN
+upstream default. It does not mark unobserved cells free or modify saved maps;
+visible hits refresh their evidence. The same Thunder pedestrian crossing failed
+to resume with decay disabled. One-second aging was timing-sensitive; quarter-second
+aging restored progress, but a torso-only footprint still allowed wheel contact.
+The delay starts decay; it is not an obstacle deletion deadline. Existing
+collision checks and the 1000-failure exit policy remain unchanged.
+
+Thunder's horizontal radius is now 0.43 m at offsets ±0.23 m. Recorded MJCF wheel
+poses need up to 0.379 m before the existing 5 cm allowance; the former 0.32 m
+torso-only fit missed the front-right wheel. With both fixes, the crossing reached
+the goal with zero actor contact. Vertical torso clearance is unchanged, and this
+does not qualify all postures, low obstacles or field operation.
+
+Evidence: `build/thunder-main/box/{run-current,run-speed-fix}` and
+`build/thunder-main/crossing/{run-current,run-decay-corrected,run-fast-decay}`;
+final geometry runs are `build/thunder-main/{box-fit,crossing-fit}/run-fixed`.
+These are MuJoCo truth-localized component runs, not field or full SLAM
+qualification. One intermediate box run exposed stale collision-input pauses;
+arrival alone is not a smoothness or real-time acceptance result.
+
 ## 2026-11-11: remove performance-based motion holds
 
 Pinned SCAN remains `348e8a590a50a5a6bbab8d8c6dcfd171f009be26`.

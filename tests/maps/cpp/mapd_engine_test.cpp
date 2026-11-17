@@ -30,6 +30,8 @@ std::int64_t WallTimeNs() {
 
 Config TestConfig() {
   Config config;
+  // Most engine tests isolate observation commits from the independent decay worker.
+  config.occupancy.decay_after_ns = 0;
   config.max_points_per_observation = 1000U;
   config.min_range_m = 0.0F;
   config.max_range_m = 50.0F;
@@ -761,9 +763,9 @@ void TestCollisionOnlyRuntimeSkipsExtendedLayers() {
   engine.Stop();
 }
 
-void TestDefaultOccupancyDoesNotDecayOutsideOfficialRayUpdates() {
+void TestLocalOccupancyAgesUnobservedHits() {
   Config config;
-  assert(config.occupancy.decay_after_ns == 0);
+  assert(config.occupancy.decay_after_ns == 250000000);
 }
 
 void TestOccupancyProjectionUsesPhysicalSensorHeight() {
@@ -1271,7 +1273,7 @@ int main() {
   TestCollisionSnapshotKeepsNearbyGroundInNearbyCells();
   TestRealtimeAndCompleteSnapshotsAreBuiltOnDemand();
   TestCollisionOnlyRuntimeSkipsExtendedLayers();
-  TestDefaultOccupancyDoesNotDecayOutsideOfficialRayUpdates();
+  TestLocalOccupancyAgesUnobservedHits();
   TestOccupancyProjectionUsesPhysicalSensorHeight();
   TestOccupancyKeepsDoublePrecisionThroughPoseTransform();
   return 0;

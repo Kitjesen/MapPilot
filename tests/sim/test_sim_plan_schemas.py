@@ -308,7 +308,7 @@ def test_checked_in_robot_package_selects_valid_twin_cylinders() -> None:
     schema = json.loads((SCHEMA_ROOT / "robot.v1.json").read_text(encoding="utf-8"))
     package = yaml.safe_load(THUNDER_ROBOT_PACKAGE.read_text(encoding="utf-8"))
 
-    assert package["navigation_geometry"]["collision_cylinder_radius_m"] == .32
+    assert package["navigation_geometry"]["collision_cylinder_radius_m"] == .43
     _validate(package, schema, schema)
 
     package["navigation_geometry"]["collision_cylinder_radius_m"] = 0

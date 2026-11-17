@@ -47,6 +47,14 @@ internal serialization magic. See the
 [maintained model design](../../../../../docs/design/navigation-body-model-and-motion-posture.md).
 
 `robot.package.yaml:navigation_geometry` describes distances from `base_link`,
+with a 0.43 m horizontal cylinder radius and 0.23 m fore/aft offset. Recorded
+Thunder MuJoCo locomotion poses require up to 0.379 m to cover the wheel/leg XY
+projection at that offset; 0.43 m retains the existing 5 cm allowance. The former
+0.32 m fit covered only the torso band and allowed a crossing actor to contact
+the front-right wheel. This fit is model-based, not a qualification of every gait
+or a low-obstacle clearance model; the vertical torso band remains separate.
+
+The vertical distances are measured from `base_link`,
 not half the robot's standing height. The fixed torso collision boxes span
 Z `[-0.00209, 0.224772] m` in that frame; the navigation envelope uses
 `0.05 m` below and `0.35 m` above. The lower envelope is one local-map cell,

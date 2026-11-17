@@ -19,8 +19,8 @@ visual:
 semantic:
   class: quadruped
 navigation_geometry:
-  # Matches the real RobotConfig; includes 5 cm XY allowance in the fitted body-height band.
-  collision_cylinder_radius_m: 0.32
+  # Recorded wheel/leg XY envelope needs 0.379 m; retain the existing 5 cm allowance.
+  collision_cylinder_radius_m: 0.43
   collision_cylinder_offset_m: 0.23
   # base_link is near the torso bottom, not at half the standing robot height.
   # Fixed collision geoms span Z [-0.00209, 0.224772]. One 5 cm cell below

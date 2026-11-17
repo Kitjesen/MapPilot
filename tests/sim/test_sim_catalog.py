@@ -376,7 +376,7 @@ def test_robot_navigation_cylinder_radius_must_be_positive(tmp_path: Path, radiu
     root, package_dir = _isolated_thunderv4_catalog(tmp_path)
     manifest = package_dir / "robot.package.yaml"
     source = manifest.read_text(encoding="utf-8")
-    source = source.replace("collision_cylinder_radius_m: 0.32", f"collision_cylinder_radius_m: {radius}")
+    source = source.replace("collision_cylinder_radius_m: 0.43", f"collision_cylinder_radius_m: {radius}")
     manifest.write_text(source, encoding="utf-8")
 
     with pytest.raises(CatalogError, match=r"navigation_geometry.collision_cylinder_radius_m"):
@@ -386,7 +386,7 @@ def test_robot_navigation_cylinder_radius_must_be_positive(tmp_path: Path, radiu
 def test_robot_navigation_cylinders_resolve_with_the_selected_physics_model() -> None:
     resolved = _resolver().resolve(THUNDER_CONTROLLED_HEADLESS_SESSION)
     robot = resolved.physics_plan["robots"][0]
-    assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .32
+    assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .43
     assert robot["navigation_geometry"]["collision_cylinder_offset_m"] == .23
     assert "body_file" not in robot["navigation_geometry"]
     assert robot["model"]["mjcf"] == "sim/packages/robots/doso/thunder_v4/mjcf/thunderv4.xml"

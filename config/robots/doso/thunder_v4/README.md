@@ -59,6 +59,12 @@ Fixed sensor extrinsics do not change merely because the robot stands taller.
 
 ## Navigation collision model
 
+The twin-cylinder radius is 0.43 m at offsets ±0.23 m, matching the simulation
+package's recorded wheel/leg horizontal envelope (0.379 m plus 5 cm allowance).
+This replaces the narrower torso-only fit. It remains a model-based estimate:
+field gait, load and posture qualification are pending; no hardware deployment
+is implied by this configuration change. Vertical torso clearances are unchanged.
+
 `Body` is the C++ navigation geometry container and `BODY2` is its internal
 serialization format. See the
 [maintained model design](../../../../docs/design/navigation-body-model-and-motion-posture.md).

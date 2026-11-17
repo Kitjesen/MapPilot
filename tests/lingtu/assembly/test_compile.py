@@ -81,16 +81,16 @@ def test_thunder_real_and_sim_share_twin_cylinder_geometry() -> None:
     )
     robot = plan.simulation["physics_plan"]["robots"][0]
     assert plan.env == "sim"
-    assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .32
+    assert robot["navigation_geometry"]["collision_cylinder_radius_m"] == .43
     assert "LINGTU_CONFIG_PATH" not in plan.native_process_environment
     assert RunPlan.from_dict(plan.as_dict()).native_process_environment == plan.native_process_environment
     real_plan = compile_run_plan("nav", "real", robot="doso/thunder_v4", local_planner="scan")
     for current in (plan, real_plan):
         environment = current.native_process_environment
         assert "LINGTU_NAV_BODY_FILE" not in environment
-        assert float(environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == .32
+        assert float(environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == .43
         assert float(environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"]) == .23
-        assert float(environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == .32
+        assert float(environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == .43
         assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]) == .05
         assert float(environment["LINGTU_MAPD_INFLATION_Z_UP_M"]) == .05
         assert float(environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"]) == .35
@@ -2155,14 +2155,14 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MIN"] == "0.12"
         assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_MAX"] == "0.98"
         assert float(plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_P_OCC"]) == 0.80
-        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0"
+        assert plan.native_process_environment["LINGTU_MAPD_OCCUPANCY_DECAY_AFTER_S"] == "0.25"
         assert float(plan.native_process_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == pytest.approx(
             float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
         )
         assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.05"
         assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.35"
         assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == pytest.approx(
-            .32
+            .43
         )
         assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.23"
         assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.05"

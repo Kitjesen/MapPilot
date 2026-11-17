@@ -24,8 +24,8 @@ maps:
     p_min: 0.12
     p_max: 0.98
     p_occ: 0.80
-    # Zero keeps cells until ray misses or a rolling-window update clears them.
-    decay_after_s: 0.0
+    # Age unobserved local occupancy toward unknown; visible hits refresh confidence.
+    decay_after_s: 0.25
     decay_ms: 250
     # Local update ranges are derived from half the configured window dimensions.
   inflation:
