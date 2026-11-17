@@ -38,6 +38,11 @@ PERSON_DEPTH_ANCHOR_X = 0.50
 PERSON_DEPTH_ANCHOR_Y = 0.35
 PERSON_DEPTH_PATCH_HALF_WIDTH = 0.12
 PERSON_DEPTH_PATCH_HALF_HEIGHT = 0.12
+# Head and shoulders are rarely covered by furniture standing in front of a
+# person; a torso depth layer must also appear there to count as the person.
+PERSON_DEPTH_SHOULDER_ANCHOR_Y = 0.15
+PERSON_DEPTH_SHOULDER_HALF_HEIGHT = 0.07
+PERSON_DEPTH_SHOULDER_MIN_FRACTION = 0.15
 
 
 @dataclass
@@ -146,41 +151,96 @@ def person_depth_sample(
     if x2 <= x1 or y2 <= y1:
         return None
 
-    anchor: tuple[float, float] | None = None
     if mask is not None:
         target = np.asarray(mask, dtype=bool)
         if target.shape != (h, w):
             return None
         local_vs, local_us = np.where(target[y1:y2, x1:x2])
-        vs = local_vs + y1
-        us = local_us + x1
-    else:
-        box_w = x2 - x1
-        box_h = y2 - y1
-        anchor_u = float(x1 + PERSON_DEPTH_ANCHOR_X * box_w)
-        anchor_v = float(y1 + PERSON_DEPTH_ANCHOR_Y * box_h)
-        half_width = max(2, int(round(box_w * PERSON_DEPTH_PATCH_HALF_WIDTH)))
-        half_height = max(2, int(round(box_h * PERSON_DEPTH_PATCH_HALF_HEIGHT)))
-        centre_u = int(round(anchor_u))
-        centre_v = int(round(anchor_v))
-        patch_x1 = max(0, centre_u - half_width)
-        patch_x2 = min(w, centre_u + half_width + 1)
-        patch_y1 = max(0, centre_v - half_height)
-        patch_y2 = min(h, centre_v + half_height + 1)
-        if patch_x2 <= patch_x1 or patch_y2 <= patch_y1:
+        selected = _person_layer_sample(
+            depth, local_us + x1, local_vs + y1, depth_scale, min_depth, max_depth,
+        )
+        if selected is None:
             return None
-        vs, us = np.mgrid[patch_y1:patch_y2, patch_x1:patch_x2]
-        vs = vs.reshape(-1)
-        us = us.reshape(-1)
-        anchor = (anchor_u, anchor_v)
+        us, vs, depths = selected
+        return float(np.median(us)), float(np.median(vs)), float(np.median(depths))
+
+    box_w = x2 - x1
+    box_h = y2 - y1
+    torso = _anchor_patch(x1, y1, box_w, box_h, h, w, PERSON_DEPTH_ANCHOR_Y, PERSON_DEPTH_PATCH_HALF_HEIGHT)
+    if torso is None:
+        return None
+    torso_anchor, torso_us, torso_vs = torso
+    shoulder = _anchor_patch(
+        x1, y1, box_w, box_h, h, w, PERSON_DEPTH_SHOULDER_ANCHOR_Y, PERSON_DEPTH_SHOULDER_HALF_HEIGHT,
+    )
+    shoulder_depths = None
+    if shoulder is not None:
+        _, shoulder_us, shoulder_vs = shoulder
+        values = depth[shoulder_vs, shoulder_us].astype(np.float64) * float(depth_scale)
+        shoulder_depths = values[np.isfinite(values) & (values >= min_depth) & (values <= max_depth)]
+        if len(shoulder_depths) < PERSON_DEPTH_MIN_PIXELS:
+            shoulder_depths = None
+
+    torso_layers = _person_layers(depth, torso_us, torso_vs, depth_scale, min_depth, max_depth)
+    if not torso_layers:
+        return None  # the fixed anchor has no depth; do not borrow another region
+    if shoulder_depths is None:
+        # No usable head/shoulder depth (cropped head, out of range): nearest torso layer.
+        return (*torso_anchor, float(np.median(torso_layers[0])))
+    shoulder_required = max(
+        PERSON_DEPTH_MIN_PIXELS // 2,
+        int(np.ceil(len(shoulder_depths) * PERSON_DEPTH_SHOULDER_MIN_FRACTION)),
+    )
+    for layer in torso_layers:
+        lo, hi = float(layer.min()) - PERSON_DEPTH_BIN_M, float(layer.max()) + PERSON_DEPTH_BIN_M
+        if int(np.count_nonzero((shoulder_depths >= lo) & (shoulder_depths <= hi))) >= shoulder_required:
+            return (*torso_anchor, float(np.median(layer)))
+    # The whole torso patch is an occluder: use the person's shoulder layer.
+    shoulder_layers = _person_layers(depth, shoulder_us, shoulder_vs, depth_scale, min_depth, max_depth)
+    if not shoulder_layers:
+        return None
+    return (*shoulder[0], float(np.median(shoulder_layers[0])))
+
+
+def _anchor_patch(
+    x1: int, y1: int, box_w: int, box_h: int, h: int, w: int, anchor_y: float, half_height: float,
+) -> tuple[tuple[float, float], np.ndarray, np.ndarray] | None:
+    anchor_u = float(x1 + PERSON_DEPTH_ANCHOR_X * box_w)
+    anchor_v = float(y1 + anchor_y * box_h)
+    half_w = max(2, int(round(box_w * PERSON_DEPTH_PATCH_HALF_WIDTH)))
+    half_h = max(2, int(round(box_h * half_height)))
+    centre_u = int(round(anchor_u))
+    centre_v = int(round(anchor_v))
+    patch_x1, patch_x2 = max(0, centre_u - half_w), min(w, centre_u + half_w + 1)
+    patch_y1, patch_y2 = max(0, centre_v - half_h), min(h, centre_v + half_h + 1)
+    if patch_x2 <= patch_x1 or patch_y2 <= patch_y1:
+        return None
+    vs, us = np.mgrid[patch_y1:patch_y2, patch_x1:patch_x2]
+    return (anchor_u, anchor_v), us.reshape(-1), vs.reshape(-1)
+
+
+def _person_layers(
+    depth: np.ndarray, us: np.ndarray, vs: np.ndarray, depth_scale: float, min_depth: float, max_depth: float,
+) -> list[np.ndarray]:
+    """Depth values of each supported layer, nearest first."""
+    selected = _person_layer_sample(depth, us, vs, depth_scale, min_depth, max_depth, all_layers=True)
+    return [] if selected is None else selected
+
+
+def _person_layer_sample(
+    depth: np.ndarray, us: np.ndarray, vs: np.ndarray, depth_scale: float, min_depth: float, max_depth: float,
+    *, all_layers: bool = False,
+):
+    """Nearest depth layer with enough pixel support, ignoring isolated near noise.
+
+    Returns ``(us, vs, depths)`` of the nearest layer, or with ``all_layers``
+    the depth values of every supported layer ordered nearest first.
+    """
     if len(vs) < PERSON_DEPTH_MIN_PIXELS:
         return None
-
     depths = depth[vs, us].astype(np.float64) * float(depth_scale)
     valid = np.isfinite(depths) & (depths >= min_depth) & (depths <= max_depth)
-    us = us[valid]
-    vs = vs[valid]
-    depths = depths[valid]
+    us, vs, depths = us[valid], vs[valid], depths[valid]
     if len(depths) < PERSON_DEPTH_MIN_PIXELS:
         return None
 
@@ -190,24 +250,25 @@ def person_depth_sample(
         PERSON_DEPTH_MIN_PIXELS,
         int(np.ceil(len(depths) * PERSON_DEPTH_MIN_FRACTION)),
     )
-
     # Three neighbouring bins tolerate normal RGB-D noise while still keeping
     # the foreground person separate from a wall metres behind them.
     support = np.convolve(counts, np.ones(3, dtype=np.int64), mode="same")
     candidates = np.flatnonzero(support >= required)
-    if candidates.size == 0:
-        return None
-    seed = int(candidates[0])
-    lo = edges[max(0, seed - 1)]
-    hi = edges[min(len(edges) - 1, seed + 2)]
-    layer = (depths >= lo) & (depths <= hi)
-    if int(np.count_nonzero(layer)) < required:
-        return None
-
-    sample_u, sample_v = (
-        anchor if anchor is not None else (float(np.median(us[layer])), float(np.median(vs[layer])))
-    )
-    return sample_u, sample_v, float(np.median(depths[layer]))
+    layers = []
+    previous = None
+    for seed in candidates.tolist():
+        if previous is not None and seed <= previous + 2:
+            continue  # same layer as the previous seed
+        previous = seed
+        lo = edges[max(0, seed - 1)]
+        hi = edges[min(len(edges) - 1, seed + 2)]
+        layer = (depths >= lo) & (depths <= hi)
+        if int(np.count_nonzero(layer)) < required:
+            continue
+        if not all_layers:
+            return us[layer], vs[layer], depths[layer]
+        layers.append(depths[layer])
+    return layers if all_layers and layers else None
 
 
 def person_depth_position(

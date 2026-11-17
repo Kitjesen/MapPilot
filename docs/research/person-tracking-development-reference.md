@@ -249,7 +249,7 @@ DEV-02/09 是确定性实现修复，不应包装为论文创新；DEV-04 的真
 - [x] DEV-04 相机自运动：同一 tracker 在收到图像时用相位相关估计整幅图像平移（检测框区域置均值），在关联前补偿预测框；相关峰值低于 0.3 时不补偿。合成纹理上 0–120 px/帧平移 450/450 正确；局部光流在 40 px 以上不可靠，因此未采用。
 - [x] DEV-05/DEV-10 换轨：[person.py](../../src/decision/vision/person.py) 记录与已接受目标同帧出现过的轨迹 ID（5 s 内），这些 ID 不能成为运动恢复、外观 ReID 或身份确认候选（同帧可见是可靠否定）。没有身份证据时，新 ID 只能在 ≤0.5 s 的检测断开、位于预测位置附近且唯一时立即续接；0.5–1 s 需 3 帧一致确认；超过 1 s 不再凭运动换人。
 - [x] 外观模式续接与等待：同样 ≤0.5 s、预测位置附近、DINO 达阈值、当前 ID 不可见且不在否定冷却中的新 ID 直接续接；长于此仍走 VLM 确认。确认等待期间，原轨迹 ID 在短间隔内回来可直接匹配并撤销待确认请求。
-- [ ] DEV-03：BPU 路径的弱框入口仍未修（`tracking` Product 默认的 `yolo_trt` 路径不受影响）。
+- [x] DEV-03：2026-11-17 第四批修复，见下。
 - [x] 长时间完全遮挡后的恢复：按用户决定改为 DINO 先放行、边跟边确认（第三批，见下）。
 
 验证：perception、decision、runtime、semantic 集成与 tools 测试同时在改动前后运行，改动后无新增失败；13 个新增/更新用例在旧代码上失败、新代码通过。其余 70 个失败与 24 个收集错误在两次运行中完全相同，来自本环境缺少 PIL/模型/LFS 资源。没有 NX、MuJoCo 或实机运行；相位相关耗时只在 x86 容器上测得约 0.6 ms（320×120 降采样图）。
@@ -269,6 +269,23 @@ DEV-02/09 是确定性实现修复，不应包装为论文创新；DEV-04 的真
 合成结果见 [person-follow.md](person-follow.md#provisional-dino-return-while-the-vlm-verifies-2026-11-17)：
 - 7.88 s 确认延迟下，平均 AO 从 0.812 提升到 0.855，跟错人帧数为 0；
 - 新增的 `lookalike_reentry` 场景中，仅用固定阈值会跟错人 47 帧，加上相对阈值后为 0。
+
+### 第四批代码修复记录：2026-11-17（DEV-03、DEV-08、跟随走走停停分析）
+
+- [x] DEV-03：BPU 路径的低分框入口。
+  - [BPUDetector](../../src/perception/detection/bpu_detector.py) 的 `detect` 增加 `min_confidence` 候选阈值。
+  - [BPUTracker](../../src/perception/tracking/bpu_tracker.py) 用 `track_low_thresh`（默认 0.1）向检测器取候选框，同时把建轨和高分匹配阈值提高到不低于检测器自身置信度。因此 0.1 到检测器阈值之间的弱框只能恢复已有轨迹，不能新建轨迹。
+  - 没有跟踪器时，原始检测仍按原阈值输出。
+  - 回归：`test_bpu_weak_boxes_recover_a_track_but_cannot_start_one`，旧代码失败。
+- [x] DEV-08：没有实例 mask 时的人物深度。
+  - [person_depth_sample](../../src/perception/tracking/projection.py) 除了躯干锚点窗口，还检查头肩窗口（框高 0.15 处）。躯干上的深度层只有在头肩窗口也出现时，才算作人。
+  - 躯干窗口全部被前景物体占据时，改用头肩窗口的人体层。
+  - 头肩窗口没有可用深度时（头部出画、超出量程），沿用原来"最近的有效层"；躯干锚点完全没有深度时仍返回空，不从别处借深度。
+  - 对应现场 follow-003 第 755 帧"椅背在人前、取到 2.275 m"的形态。回归：`test_person_depth_skips_a_foreground_object_covering_the_torso` 等两例，旧代码取到椅子深度。有实例 mask 的路径不变。
+- [ ] 跟随运动走走停停（只做了源码分析，没有实测）。
+  - VisualServo 每次目标变化都会提交一个新的导航任务（人移动超过 0.25 m，最快每 0.4 s 一次）。
+  - 原生端的替换流程是：新规划就绪后，旧任务以 `TerminalStopPolicy::kStop` 结束（`plan.cpp` 的 `deferActiveTerminalWithTicket`）；确认停稳后，才由 `activateDeferredReplacement` 启用新路径。人持续行走时，机器人就会反复"停车 → 启用 → 起步"。
+  - 要消除这一点，需要在原生目标生命周期里，为同一 Follow 任务的目标更新增加"不停车接续"的路径。这一改动属于导航安全链，需要 MuJoCo 验证，尚未实施。
 
 ## 10. 实验与开发记录要求
 

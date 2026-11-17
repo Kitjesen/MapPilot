@@ -349,12 +349,20 @@ class BPUDetector(DetectorBase):
                 logger.warning("Failed to load BPU vocabulary %s: %s", vocab_path, exc)
         return None
 
-    def detect(self, rgb: np.ndarray, text_prompt: str) -> list[Detection2D]:
+    @property
+    def confidence(self) -> float:
+        return self._conf_thr
+
+    def detect(
+        self, rgb: np.ndarray, text_prompt: str, *, min_confidence: float | None = None,
+    ) -> list[Detection2D]:
         """Run BPU inference and return filtered detections.
 
         Args:
             rgb: HxWx3 uint8 BGR image from perception_node.
             text_prompt: dot-separated labels such as "door . chair . person".
+            min_confidence: lower candidate threshold for a tracker that only
+                uses weak boxes to recover existing tracks (ByteTrack).
 
         Returns:
             Detection2D results matching the prompt and model classes.
@@ -371,10 +379,11 @@ class BPUDetector(DetectorBase):
 
         outputs = self._rt.run({"images_y": y_plane, "images_uv": uv_plane})[self._mname]
 
+        threshold = self._conf_thr if min_confidence is None else float(min_confidence)
         if self._is_yoloe:
-            return self._detect_yoloe(outputs, allowed, scale, pad_x, pad_y, h0, w0)
+            return self._detect_yoloe(outputs, allowed, scale, pad_x, pad_y, h0, w0, threshold)
 
-        raw, kept_mc = self._postprocess(outputs, scale, pad_x, pad_y, h0, w0)
+        raw, kept_mc = self._postprocess(outputs, scale, pad_x, pad_y, h0, w0, threshold)
         if not raw:
             return []
 
@@ -454,7 +463,7 @@ class BPUDetector(DetectorBase):
     # ================================================================
     # ================================================================
 
-    def _detect_yoloe(self, outputs, allowed, scale, pad_x, pad_y, h0, w0):
+    def _detect_yoloe(self, outputs, allowed, scale, pad_x, pad_y, h0, w0, threshold):
         """Decode YOLOE end-to-end output [1, 300, 38] into detections."""
         cv2 = _require_cv2()
         det_out = outputs[self._yoloe_det_name][0]  # (300, 38)
@@ -464,7 +473,7 @@ class BPUDetector(DetectorBase):
         for i in range(det_out.shape[0]):
             row = det_out[i]
             score = float(row[4])
-            if score < self._conf_thr:
+            if score < threshold:
                 continue
 
             cid = int(row[5])
@@ -609,7 +618,7 @@ class BPUDetector(DetectorBase):
     # ================================================================
     # ================================================================
 
-    def _postprocess(self, outputs, scale, pad_x, pad_y, orig_h, orig_w):
+    def _postprocess(self, outputs, scale, pad_x, pad_y, orig_h, orig_w, threshold):
         all_boxes = []
         all_scores = []
         all_classes = []
@@ -623,7 +632,7 @@ class BPUDetector(DetectorBase):
 
             cls_scores = 1.0 / (1.0 + np.exp(-cls_logits.astype(np.float32)))
             max_scores = cls_scores.max(axis=-1)
-            mask = max_scores > self._conf_thr
+            mask = max_scores > threshold
             if not mask.any():
                 continue
 

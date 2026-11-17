@@ -163,3 +163,30 @@ def test_rgbd_person_observation_uses_person_depth_path() -> None:
     assert len(result) == 1
     assert result[0].depth == pytest.approx(2.0)
     assert result[0].position[2] == pytest.approx(2.0)
+
+
+def _person_behind_chair() -> np.ndarray:
+    """Field frame 755 shape: a chair back covers the torso anchor of a person behind it."""
+    depth = np.full((100, 100), 4.0, dtype=np.float32)
+    depth[12:90, 30:70] = 2.5  # person
+    depth[32:60, 25:75] = 1.6  # chair back in front of the torso
+    return depth
+
+
+def test_person_depth_skips_a_foreground_object_covering_the_torso() -> None:
+    sample = person_depth_sample(_person_behind_chair(), np.array([10.0, 10.0, 90.0, 90.0]), depth_scale=1.0)
+
+    assert sample is not None
+    assert sample[2] == pytest.approx(2.5)
+
+
+def test_person_depth_prefers_the_torso_layer_confirmed_at_the_shoulders() -> None:
+    depth = _person_behind_chair()
+    depth[32:60, 30:70] = 2.5
+    depth[40:60, 30:50] = 1.6  # an object covering part of the torso anchor
+
+    sample = person_depth_sample(depth, np.array([10.0, 10.0, 90.0, 90.0]), depth_scale=1.0)
+
+    assert sample is not None
+    assert sample[:2] == pytest.approx((50.0, 38.0))
+    assert sample[2] == pytest.approx(2.5)

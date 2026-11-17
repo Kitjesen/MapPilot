@@ -195,3 +195,38 @@ def test_camera_motion_compensation_keeps_ids_while_the_image_pans() -> None:
 
     assert len(ids["compensated"]) == 1
     assert len(ids["uncompensated"]) > 1
+
+
+class _ThresholdedDetector:
+    """A BPU-like detector that filters at its own confidence unless asked lower."""
+
+    confidence = 0.3
+
+    def __init__(self) -> None:
+        self.scores: list[float] = []
+        self.requested: list[float | None] = []
+
+    def detect(self, _frame, _prompt, *, min_confidence=None):
+        self.requested.append(min_confidence)
+        threshold = self.confidence if min_confidence is None else min_confidence
+        return [
+            Detection2D(bbox=np.asarray([10, 10, 50, 110], dtype=np.float32), score=score,
+                        label="person", class_id=0)
+            for score in self.scores if score >= threshold
+        ]
+
+
+def test_bpu_weak_boxes_recover_a_track_but_cannot_start_one() -> None:
+    detector = _ThresholdedDetector()
+    tracker = BPUTracker(detector, tracker_type="native_bytetrack")
+    frame = np.zeros((120, 200, 3), dtype=np.uint8)
+
+    detector.scores = [0.2]
+    assert tracker.track(frame, "person") == []  # below the detector's own confidence
+    detector.scores = [0.9]
+    first = tracker.track(frame, "person")
+    detector.scores = [0.2]
+    recovered = tracker.track(frame, "person")
+
+    assert [item.track_id for item in recovered] == [first[0].track_id]
+    assert set(detector.requested) == {0.1}

@@ -158,6 +158,14 @@ class BPUTracker:
     ):
         self._detector = bpu_detector
         self._tracker_type = tracker_type.lower()
+        # ByteTrack recovers existing tracks from weak boxes, so the detector must
+        # return them; only boxes at the detector's own confidence may start tracks.
+        publish = getattr(bpu_detector, "confidence", None)
+        self._candidate_confidence: float | None = None
+        if publish is not None:
+            track_high_thresh = max(track_high_thresh, float(publish))
+            new_track_thresh = max(new_track_thresh, float(publish))
+            self._candidate_confidence = min(track_low_thresh, float(publish))
 
         args = _build_botsort_args(
             track_high_thresh=track_high_thresh,
@@ -232,7 +240,10 @@ class BPUTracker:
         """
         # 1. BPU 检测
         t0 = time.perf_counter()
-        dets: list[Detection2D] = self._detector.detect(bgr_frame, text_prompt)
+        if self._candidate_confidence is None:
+            dets: list[Detection2D] = self._detector.detect(bgr_frame, text_prompt)
+        else:
+            dets = self._detector.detect(bgr_frame, text_prompt, min_confidence=self._candidate_confidence)
         self.last_detect_ms = (time.perf_counter() - t0) * 1000.0
         self._last_dets = dets
 
