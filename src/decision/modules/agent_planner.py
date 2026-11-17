@@ -976,7 +976,7 @@ class AgentPlannerModule(Module, layer=4):
                 "Ask for clarification when the target or requested action is ambiguous. "
                 "For a bounded choice, use ask_user with 2 to 4 concise options; the UI provides Other input. "
                 "Do not ask duplicate permission questions: the tool approval controls already handle writes and motion. "
-                "Conversation can start a stored inspection route only through start_inspection_route; its result is submission acceptance, not arrival or inspection completion. Other motion tools remain owned motion tools. "
+                "Conversation can start native navigation through preview_navigation followed by start_navigation, then retain task_id and query get_navigation_status until native feedback reaches a terminal state. Use pause_navigation, resume_navigation, cancel_navigation or set_navigation_speed with that exact task_id instead of creating a replacement goal. Conversation can start a stored inspection route only through start_inspection_route; its result is submission acceptance, not arrival or inspection completion. Other motion tools remain owned motion tools. "
                 "History copied into a conversation branch is historical discussion, not current robot state or permission to replay actions. "
                 "When task_active is returned, keep the user's proposed change as a draft and explain "
                 "that the current task continues. Never claim execution complete without completion evidence. "
