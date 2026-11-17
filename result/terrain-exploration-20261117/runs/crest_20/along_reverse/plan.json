@@ -1,0 +1,221 @@
+{
+  "planner": "octoplanner3d",
+  "protocol_version": 1,
+  "ok": true,
+  "path": [
+    [
+      7.275,
+      0.025000000000000133,
+      0.685
+    ],
+    [
+      7.075,
+      0.07500000000000001,
+      0.785
+    ],
+    [
+      6.9750000000000005,
+      0.07500000000000001,
+      0.785
+    ],
+    [
+      6.875,
+      0.07500000000000001,
+      0.835
+    ],
+    [
+      6.675000000000001,
+      0.07500000000000001,
+      0.935
+    ],
+    [
+      6.575,
+      0.07500000000000001,
+      0.935
+    ],
+    [
+      6.375,
+      0.07500000000000001,
+      1.0350000000000001
+    ],
+    [
+      6.075,
+      0.07500000000000001,
+      1.135
+    ],
+    [
+      5.925000000000001,
+      0.07500000000000001,
+      1.185
+    ],
+    [
+      5.675000000000001,
+      0.07500000000000001,
+      1.2850000000000001
+    ],
+    [
+      5.525,
+      0.07500000000000001,
+      1.335
+    ],
+    [
+      5.275,
+      0.07500000000000001,
+      1.435
+    ],
+    [
+      5.125,
+      0.07500000000000001,
+      1.485
+    ],
+    [
+      4.825,
+      0.07500000000000001,
+      1.5850000000000002
+    ],
+    [
+      4.575,
+      0.07500000000000001,
+      1.685
+    ],
+    [
+      4.425,
+      0.07500000000000001,
+      1.735
+    ],
+    [
+      3.5250000000000004,
+      0.07500000000000001,
+      1.735
+    ],
+    [
+      3.2750000000000004,
+      0.07500000000000001,
+      1.6350000000000002
+    ],
+    [
+      3.0250000000000004,
+      0.07500000000000001,
+      1.5350000000000001
+    ],
+    [
+      2.7750000000000004,
+      0.07500000000000001,
+      1.435
+    ],
+    [
+      2.625,
+      0.07500000000000001,
+      1.385
+    ],
+    [
+      2.325,
+      0.07500000000000001,
+      1.2850000000000001
+    ],
+    [
+      2.075,
+      0.07500000000000001,
+      1.185
+    ],
+    [
+      1.925,
+      0.07500000000000001,
+      1.135
+    ],
+    [
+      1.675,
+      0.07500000000000001,
+      1.0350000000000001
+    ],
+    [
+      1.5750000000000002,
+      0.07500000000000001,
+      0.9850000000000001
+    ],
+    [
+      1.475,
+      0.07500000000000001,
+      0.9850000000000001
+    ],
+    [
+      1.2750000000000001,
+      0.07500000000000001,
+      0.885
+    ],
+    [
+      1.175,
+      0.07500000000000001,
+      0.885
+    ],
+    [
+      1.075,
+      0.07500000000000001,
+      0.835
+    ],
+    [
+      0.875,
+      0.07500000000000001,
+      0.7350000000000001
+    ],
+    [
+      0.775,
+      0.025000000000000133,
+      0.7350000000000001
+    ]
+  ],
+  "reached_goal": true,
+  "diagnostics": {
+    "source": "octoplanner3d_headless",
+    "ros2_required": false,
+    "pcd_conversion": false,
+    "octomap_file": true,
+    "path_points": 32,
+    "used_surface_graph": true,
+    "used_rust_graph": true,
+    "rust_fallback": false,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_query_failures": 0,
+    "rust_geometry_rejections": 0,
+    "rust_other_failures": 0,
+    "goal_error_m": 0,
+    "goal_xy_error_m": 0,
+    "goal_z_error_m": 0,
+    "elapsed_ms": 510.0295,
+    "constraints": {
+      "robot_radius": 0.32,
+      "body_offset_m": 0.23,
+      "body_clearance_below_m": 0.05,
+      "body_clearance_above_m": 0.35,
+      "max_iterations": 500000,
+      "snap_search_radius_cells": 24,
+      "ground_support": true,
+      "direct_support_only": false,
+      "support_depth_cells": 2,
+      "search_resolution_m": 0.1,
+      "surface_closing_radius_m": 0.2,
+      "surface_max_hole_area_m2": 0.16,
+      "surface_max_slope": 0.7,
+      "support_height_m": 0.435,
+      "support_height_tolerance_m": 0.1,
+      "support_patch_radius_cells": 0,
+      "support_patch_min_samples": 0,
+      "enable_preblocked_costmap": false,
+      "preblocked_costmap_radius_cells": 3,
+      "preblocked_costmap_weight": 0,
+      "lowest_traversable_only": false,
+      "floor_change_penalty": 0,
+      "max_step_height": 0.45,
+      "max_slope": 0.5773502691896257,
+      "same_floor_preference": false,
+      "same_floor_z_tolerance": 0.75,
+      "obstacle_clearance_radius_cells": 8,
+      "obstacle_clearance_weight": 2,
+      "terminal_goal_tolerance_m": 0.15,
+      "terminal_goal_xy_tolerance_m": 0.15,
+      "terminal_goal_z_tolerance_m": 0.15
+    }
+  },
+  "returncode": 0
+}

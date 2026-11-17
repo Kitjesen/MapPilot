@@ -1,0 +1,162 @@
+[
+  {
+    "angle_deg": 46,
+    "request": "nominal_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 1.037059999999883
+  },
+  {
+    "angle_deg": 46,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.7536391999999523
+  },
+  {
+    "angle_deg": 46,
+    "request": "nominal_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.7810578000000987
+  },
+  {
+    "angle_deg": 46,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.7836531000000377
+  },
+  {
+    "angle_deg": 48,
+    "request": "nominal_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.7970374000001357
+  },
+  {
+    "angle_deg": 48,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.7837974999999915
+  },
+  {
+    "angle_deg": 48,
+    "request": "nominal_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.8136738999999125
+  },
+  {
+    "angle_deg": 48,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.764600499999915
+  },
+  {
+    "angle_deg": 50,
+    "request": "nominal_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.8095633999998881
+  },
+  {
+    "angle_deg": 50,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.7729300999999396
+  },
+  {
+    "angle_deg": 50,
+    "request": "nominal_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.802866799999947
+  },
+  {
+    "angle_deg": 50,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.797401900000068
+  },
+  {
+    "angle_deg": 52,
+    "request": "nominal_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.7856021000000055
+  },
+  {
+    "angle_deg": 52,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.83901660000015
+  },
+  {
+    "angle_deg": 52,
+    "request": "nominal_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 66,
+    "elapsed_s": 0.8675639999999021
+  },
+  {
+    "angle_deg": 52,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.8273225000000366
+  }
+]

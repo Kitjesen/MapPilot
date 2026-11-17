@@ -91,7 +91,7 @@ native_nav:
     terminal_xy_tolerance_m: 0.15
     terminal_z_tolerance_m: 0.15
   local_planner: scan
-  local_planners: [cmu, scan]
+  local_planners: [scan]
   use_traversability_cost: false
   path_follower_max_speed_mps: 1.0
   follower:

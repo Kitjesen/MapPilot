@@ -1,0 +1,1 @@
+{"route_valid":false,"route_reason":"point_occupied_body","valid":false,"reason":"point_occupied_body","point_index":1,"segment_index":0,"checked_points":1,"checked_segments":0,"resolution":0.05,"planning_z_resolution":0.05,"sweep_valid":false,"motion_diagnostic_valid":false,"max_step_height_m":0.45,"max_slope":0.57735,"sweep_failures":[],"motion_failures":[]}

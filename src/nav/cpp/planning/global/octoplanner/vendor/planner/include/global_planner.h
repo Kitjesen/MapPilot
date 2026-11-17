@@ -196,6 +196,11 @@ public:
     bool rust_fallback{false};
     std::string rust_failure_kind{"none"};
     std::string rust_failure{};
+    std::string rust_failure_stage{"none"};
+    std::int32_t rust_failure_segment{-1};
+    std::int32_t rust_failure_cell_x{0};
+    std::int32_t rust_failure_cell_y{0};
+    std::int32_t rust_failure_cell_z{0};
     // Counts are per route request. They make a fallback report useful when a
     // caller retries a request without parsing the human-readable message.
     std::uint32_t rust_query_failures{0};

@@ -161,6 +161,20 @@ int main() try {
     return std::optional<double>(p.x<.5?.35:.55);
   },[&]{return transition_cancelled;}).empty(),"terrain rejection skipped a pending cancellation");
 
+  const std::vector<PointPose> voxel_backtrack{
+      {0,0,.35},{.1,0,.35},{.05,0,.35},{.15,0,.45},
+      {.1,0,.45},{.2,0,.45},{.25,0,.5}};
+  const BodyHeight stepped_surface=[](const auto &p) -> std::optional<double> {
+    return std::optional<double>(p.x<.12?.35:p.x<.21?.45:.5);
+  };
+  const auto backtrack_result=smoothRoute(voxel_backtrack,flat_clear,stepped_surface);
+  check(voxel_backtrack,backtrack_result,flat_clear);
+  for (std::size_t i=1;i<backtrack_result.size();++i)
+    require(backtrack_result[i].x>=backtrack_result[i-1].x-1e-8,
+            "surface shortcut kept a horizontal backtrack");
+  require(length(backtrack_result)<length(voxel_backtrack)-.05,
+          "surface shortcut did not shorten the voxel backtrack");
+
   std::vector<PointPose> eight_steps{{2,0,.435},{3.9,0,.435}};
   for(int step=0;step<8;++step) {
     const double x=4+step*.5, z=.435+(step+1)*.1;

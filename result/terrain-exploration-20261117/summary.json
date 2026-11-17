@@ -1,0 +1,24 @@
+{
+  "suite": "terrain-exploration-20261117",
+  "generated_from": "build/terrain-exploration-20261117",
+  "scene_count": 36,
+  "request_count": 86,
+  "route_found_count": 72,
+  "no_route_count": 14,
+  "expected_block_count": 6,
+  "unexpected_no_route_count": 8,
+  "expected_outcome_count": 78,
+  "status_counts": {
+    "rust_pass": 72,
+    "no_route": 14
+  },
+  "expected_counts": {
+    "probe": 76,
+    "blocked": 6,
+    "route": 4
+  },
+  "failure_diagnostic_counts": {
+    "query": 14
+  },
+  "note": "rust_failure_kind=query and rust_failure=Rust surface route exhausted are the only public failure diagnostics for the 14 no-route requests; the current binary does not distinguish attachment, support, edge, geometry, or budget exhaustion."
+}

@@ -1,0 +1,15 @@
+{
+  "scenes": 31,
+  "requests": 117,
+  "figures": 122,
+  "formats": [
+    "PDF",
+    "SVG",
+    "PNG"
+  ],
+  "png_dpi": 600,
+  "atlas_pages": 122,
+  "embedded_pdf_fonts": true,
+  "svg_text_editable": true,
+  "csv_points_checked": 3382
+}

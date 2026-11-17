@@ -1,0 +1,1 @@
+{"schema_version":"map.build.status","action":"get_build_status","success":true,"has_build":true,"running":false,"map_id":"same_source_map","build_id":"OCTOMAP_ARTIFACT_18275854154","artifact_type":"OCTOMAP_ARTIFACT","status":"SUCCEEDED","progress":1.000000,"message":"octomap artifact built","timestamp_ms":"1794910529691"}

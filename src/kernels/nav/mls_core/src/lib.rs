@@ -808,9 +808,21 @@ pub struct LtMlsPoseBuffer {
     pub ptr: *mut LtMlsPose,
     pub len: u64,
     pub cap: u64,
+    pub failure_stage: u32,
+    pub failure_segment: i32,
+    pub failure_cell: LtMlsCell,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 10;
+pub const LT_MLS_QUERY_NONE: u32 = 0;
+pub const LT_MLS_QUERY_GOAL_ATTACH: u32 = 1;
+pub const LT_MLS_QUERY_START_ATTACH: u32 = 2;
+pub const LT_MLS_QUERY_ENDPOINT_ATTACH: u32 = 3;
+pub const LT_MLS_QUERY_EDGE_SEARCH: u32 = 4;
+pub const LT_MLS_QUERY_ROUTE_GEOMETRY: u32 = 5;
+pub const LT_MLS_QUERY_BUDGET: u32 = 6;
+pub const LT_MLS_QUERY_CANCELLED: u32 = 7;
+
+pub const LT_MLS_ABI_VERSION: u32 = 11;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {
@@ -2197,14 +2209,32 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     let config = geometry.config;
     let output = &mut *route;
     lt_mls_free_pose_buffer(output);
+    let mut set_failure = |stage: u32, segment: i32, cell: SurfaceCell| {
+        output.failure_stage = stage;
+        output.failure_segment = segment;
+        output.failure_cell = LtMlsCell {
+            x: cell.x,
+            y: cell.y,
+            z: cell.z,
+        };
+    };
     let mut budget = query::Budget {
         remaining: max_iterations as usize,
     };
     let goal = match checker.resolve_goal(start, goal, max_snap_cells, &mut budget) {
         Ok(goal) => goal,
-        Err(query::QueryError::Exhausted) => return 1,
-        Err(query::QueryError::Budget) => return 2,
-        Err(query::QueryError::Cancelled) => return 3,
+        Err(query::QueryError::Exhausted) => {
+            set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, SurfaceCell::new(0, 0, 0));
+            return 1;
+        }
+        Err(query::QueryError::Budget) => {
+            set_failure(LT_MLS_QUERY_BUDGET, -1, SurfaceCell::new(0, 0, 0));
+            return 2;
+        }
+        Err(query::QueryError::Cancelled) => {
+            set_failure(LT_MLS_QUERY_CANCELLED, -1, SurfaceCell::new(0, 0, 0));
+            return 3;
+        }
     };
     let cell = |pose: LtMlsPose| {
         SurfaceCell::new(
@@ -2247,13 +2277,15 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
         |cell: SurfaceCell| goal_attachment == Some(cell) && same_xy(goal.point, pose(cell).point);
     let mut rejected = HashSet::<(SurfaceCell, SurfaceCell, u32)>::new();
     loop {
-        let path = match query::plan_budgeted(
+        let mut query_stage = query::QueryStage::None;
+        let path = match query::plan_budgeted_with_stage(
             &(*handle).state,
             start_cell,
             goal_cell,
             max_snap_cells,
             &mut budget,
             true,
+            &mut query_stage,
             |a, b, kind| {
                 if geometry
                     .cancel
@@ -2288,9 +2320,24 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
             },
         ) {
             Ok(path) => path,
-            Err(query::QueryError::Exhausted) => return 1,
-            Err(query::QueryError::Budget) => return 2,
-            Err(query::QueryError::Cancelled) => return 3,
+            Err(query::QueryError::Exhausted) => {
+                let stage = match query_stage {
+                    query::QueryStage::StartAttach => LT_MLS_QUERY_START_ATTACH,
+                    query::QueryStage::GoalAttach => LT_MLS_QUERY_GOAL_ATTACH,
+                    query::QueryStage::EndpointAttach => LT_MLS_QUERY_ENDPOINT_ATTACH,
+                    _ => LT_MLS_QUERY_EDGE_SEARCH,
+                };
+                set_failure(stage, -1, start_cell);
+                return 1;
+            }
+            Err(query::QueryError::Budget) => {
+                set_failure(LT_MLS_QUERY_BUDGET, -1, start_cell);
+                return 2;
+            }
+            Err(query::QueryError::Cancelled) => {
+                set_failure(LT_MLS_QUERY_CANCELLED, -1, start_cell);
+                return 3;
+            }
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
         poses.push(start);
@@ -2317,8 +2364,26 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
                 .map_or(-3, |_| 0);
         }
         if checked.failure_kind == route_check::CANCELLED {
+            set_failure(
+                LT_MLS_QUERY_CANCELLED,
+                checked.failed_segment,
+                SurfaceCell::new(
+                    checked.failed_cell.x,
+                    checked.failed_cell.y,
+                    checked.failed_cell.z,
+                ),
+            );
             return 3;
         }
+        set_failure(
+            LT_MLS_QUERY_ROUTE_GEOMETRY,
+            checked.failed_segment,
+            SurfaceCell::new(
+                checked.failed_cell.x,
+                checked.failed_cell.y,
+                checked.failed_cell.z,
+            ),
+        );
         let index = checked.failed_segment.max(0) as usize;
         let edge = keys[index];
         if !rejected.insert(edge) {

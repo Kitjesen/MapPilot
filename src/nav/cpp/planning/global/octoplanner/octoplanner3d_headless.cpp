@@ -601,6 +601,10 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result,
             << (result.rust_fallback ? "true" : "false") << ','
             << "\"rust_failure_kind\":\"" << result.rust_failure_kind << "\","
             << "\"rust_failure\":\"" << result.rust_failure << "\","
+            << "\"rust_failure_stage\":\"" << result.rust_failure_stage << "\","
+            << "\"rust_failure_segment\":" << result.rust_failure_segment << ','
+            << "\"rust_failure_cell\":[" << result.rust_failure_cell_x << ','
+            << result.rust_failure_cell_y << ',' << result.rust_failure_cell_z << "],"
             << "\"rust_query_failures\":" << result.rust_query_failures << ','
             << "\"rust_geometry_rejections\":" << result.rust_geometry_rejections << ','
             << "\"rust_other_failures\":" << result.rust_other_failures << ','

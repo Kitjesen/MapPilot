@@ -1,0 +1,301 @@
+{
+  "planner": "octoplanner3d",
+  "protocol_version": 1,
+  "ok": true,
+  "path": [
+    [
+      0.775,
+      0.025000000000000133,
+      0.835
+    ],
+    [
+      1.2750000000000001,
+      -0.025,
+      0.785
+    ],
+    [
+      1.375,
+      -0.025,
+      0.785
+    ],
+    [
+      1.475,
+      -0.025,
+      0.7350000000000001
+    ],
+    [
+      1.5750000000000002,
+      -0.025,
+      0.685
+    ],
+    [
+      1.675,
+      -0.025,
+      0.635
+    ],
+    [
+      1.7750000000000001,
+      -0.025,
+      0.585
+    ],
+    [
+      1.875,
+      -0.025,
+      0.535
+    ],
+    [
+      1.8250000000000002,
+      -0.025,
+      0.535
+    ],
+    [
+      1.925,
+      -0.025,
+      0.485
+    ],
+    [
+      2.025,
+      -0.025,
+      0.435
+    ],
+    [
+      1.975,
+      -0.025,
+      0.435
+    ],
+    [
+      2.075,
+      -0.025,
+      0.385
+    ],
+    [
+      2.1750000000000003,
+      -0.025,
+      0.33499999999999996
+    ],
+    [
+      2.275,
+      -0.025,
+      0.285
+    ],
+    [
+      2.375,
+      -0.025,
+      0.235
+    ],
+    [
+      2.475,
+      -0.025,
+      0.185
+    ],
+    [
+      2.575,
+      -0.025,
+      0.13499999999999995
+    ],
+    [
+      3.475,
+      -0.025,
+      0.13499999999999995
+    ],
+    [
+      3.575,
+      -0.025,
+      0.185
+    ],
+    [
+      3.6750000000000003,
+      -0.025,
+      0.235
+    ],
+    [
+      3.7750000000000004,
+      -0.025,
+      0.285
+    ],
+    [
+      3.875,
+      -0.025,
+      0.33499999999999996
+    ],
+    [
+      3.825,
+      -0.025,
+      0.33499999999999996
+    ],
+    [
+      3.9250000000000003,
+      -0.025,
+      0.385
+    ],
+    [
+      4.025,
+      -0.025,
+      0.435
+    ],
+    [
+      3.975,
+      -0.025,
+      0.435
+    ],
+    [
+      4.075,
+      -0.025,
+      0.485
+    ],
+    [
+      4.175,
+      -0.025,
+      0.535
+    ],
+    [
+      4.275,
+      -0.025,
+      0.585
+    ],
+    [
+      4.375,
+      -0.025,
+      0.635
+    ],
+    [
+      4.4750000000000005,
+      -0.025,
+      0.685
+    ],
+    [
+      5.575,
+      -0.025,
+      0.685
+    ],
+    [
+      5.675000000000001,
+      -0.025,
+      0.635
+    ],
+    [
+      5.775,
+      -0.025,
+      0.585
+    ],
+    [
+      5.875,
+      -0.025,
+      0.535
+    ],
+    [
+      5.825,
+      -0.025,
+      0.535
+    ],
+    [
+      5.925000000000001,
+      -0.025,
+      0.485
+    ],
+    [
+      6.025,
+      -0.025,
+      0.435
+    ],
+    [
+      5.9750000000000005,
+      -0.025,
+      0.435
+    ],
+    [
+      6.075,
+      -0.025,
+      0.385
+    ],
+    [
+      6.175000000000001,
+      -0.025,
+      0.33499999999999996
+    ],
+    [
+      6.275,
+      -0.025,
+      0.285
+    ],
+    [
+      6.375,
+      -0.025,
+      0.235
+    ],
+    [
+      6.4750000000000005,
+      -0.025,
+      0.185
+    ],
+    [
+      6.575,
+      -0.025,
+      0.13499999999999995
+    ],
+    [
+      6.775,
+      -0.025,
+      0.034999999999999976
+    ],
+    [
+      7.275,
+      0.025000000000000133,
+      0.08499999999999996
+    ]
+  ],
+  "reached_goal": true,
+  "diagnostics": {
+    "source": "octoplanner3d_headless",
+    "ros2_required": false,
+    "pcd_conversion": false,
+    "octomap_file": true,
+    "path_points": 48,
+    "used_surface_graph": true,
+    "used_rust_graph": true,
+    "rust_fallback": false,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_query_failures": 0,
+    "rust_geometry_rejections": 0,
+    "rust_other_failures": 0,
+    "goal_error_m": 0,
+    "goal_xy_error_m": 0,
+    "goal_z_error_m": 0,
+    "elapsed_ms": 404.0745,
+    "constraints": {
+      "robot_radius": 0.32,
+      "body_offset_m": 0.23,
+      "body_clearance_below_m": 0.05,
+      "body_clearance_above_m": 0.35,
+      "max_iterations": 500000,
+      "snap_search_radius_cells": 24,
+      "ground_support": true,
+      "direct_support_only": false,
+      "support_depth_cells": 2,
+      "search_resolution_m": 0.1,
+      "surface_closing_radius_m": 0.2,
+      "surface_max_hole_area_m2": 0.16,
+      "surface_max_slope": 0.7,
+      "support_height_m": 0.435,
+      "support_height_tolerance_m": 0.1,
+      "support_patch_radius_cells": 0,
+      "support_patch_min_samples": 0,
+      "enable_preblocked_costmap": false,
+      "preblocked_costmap_radius_cells": 3,
+      "preblocked_costmap_weight": 0,
+      "lowest_traversable_only": false,
+      "floor_change_penalty": 0,
+      "max_step_height": 0.45,
+      "max_slope": 0.5773502691896257,
+      "same_floor_preference": false,
+      "same_floor_z_tolerance": 0.75,
+      "obstacle_clearance_radius_cells": 8,
+      "obstacle_clearance_weight": 2,
+      "terminal_goal_tolerance_m": 0.15,
+      "terminal_goal_xy_tolerance_m": 0.15,
+      "terminal_goal_z_tolerance_m": 0.15
+    }
+  },
+  "returncode": 0
+}

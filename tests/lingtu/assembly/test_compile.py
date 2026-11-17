@@ -855,11 +855,11 @@ def test_real_cmu_override_selects_go2_path_library() -> None:
     assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
 
 
-def test_navigation_prepares_selectable_planner_assets_without_changing_default() -> None:
+def test_navigation_exposes_scan_only_without_cmu_assets() -> None:
     plan = _compile_real("nav")
     assert plan.native_nav["local_planner"] == "scan"
-    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "cmu,scan"
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == "share/lingtu/cmu_paths/go2"
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     inspection = _compile_real("inspection")
     assert inspection.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in inspection.native_process_environment
@@ -876,7 +876,7 @@ def test_field_product_compiles_module_graph_and_processes_together() -> None:
     assert product.has_process("maps")
     assert product.has_process("nav")
     assert product.has_process("driver")
-    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "1.4142135623731"
+    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "1"
     assert product.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert "maps.service" not in product.modules
     assert not {

@@ -1,0 +1,98 @@
+[
+  {
+    "name": "patch_1_min_0",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 939.4354
+  },
+  {
+    "name": "patch_1_min_1",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 875.8033
+  },
+  {
+    "name": "patch_1_min_2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 852.6544
+  },
+  {
+    "name": "patch_1_min_4",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 877.436
+  },
+  {
+    "name": "patch_2_min_0",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 772.7648
+  },
+  {
+    "name": "patch_2_min_1",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 844.0689
+  },
+  {
+    "name": "patch_2_min_2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 841.7395
+  },
+  {
+    "name": "patch_2_min_4",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 876.9115
+  },
+  {
+    "name": "patch_3_min_0",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 764.2192
+  },
+  {
+    "name": "patch_3_min_1",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 741.3861
+  },
+  {
+    "name": "patch_3_min_2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 853.4648
+  },
+  {
+    "name": "patch_3_min_4",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 780.4183
+  }
+]

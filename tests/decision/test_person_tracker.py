@@ -17,6 +17,21 @@ def _person_obj(x: float, y: float, z: float = 0.0, conf: float = 0.9, label: st
 
 
 class TestPersonTrackerUpdate:
+    def test_strong_dino_reacquire_does_not_wait_for_remote_identity(self):
+        tracker = PersonTracker()
+        tracker.set_dino_encoder(type("Dino", (), {"encode": staticmethod(lambda _crop: np.array([1.0, 0.0]))})())
+        tracker.lock_target({"id": "original", "label": "person", "position": [4.0, 0.0, 0.0],
+                             "bbox": [0, 0, 16, 16], "ts": 1.0}, np.ones((16, 16, 3), dtype=np.uint8))
+        candidate = {"id": "new-track", "label": "person", "position": [4.1, 0.0, 0.0],
+                     "bbox": [0, 0, 16, 16]}
+        for timestamp in (2.0, 3.0, 4.0):
+            candidate["ts"] = timestamp
+            accepted = tracker.update([candidate], np.ones((16, 16, 3), dtype=np.uint8))
+            assert accepted is (timestamp == 4.0)
+        assert tracker.status()["id"] == "new-track"
+        assert tracker.status()["dino_event"] == "matched_local"
+        assert tracker.identity_candidate() is None
+
     def test_update_finds_person(self):
         """Test update finds person."""
         tracker = PersonTracker()

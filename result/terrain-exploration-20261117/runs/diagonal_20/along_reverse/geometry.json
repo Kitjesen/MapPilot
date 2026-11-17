@@ -1,0 +1,19 @@
+{
+  "route_valid": true,
+  "route_reason": "ok",
+  "valid": true,
+  "reason": "ok",
+  "point_index": 0,
+  "segment_index": 0,
+  "checked_points": 40,
+  "checked_segments": 39,
+  "resolution": 0.05,
+  "planning_z_resolution": 0.05,
+  "sweep_valid": true,
+  "motion_diagnostic_valid": true,
+  "max_step_height_m": 0.45,
+  "max_slope": 0.57735,
+  "sweep_failures": [],
+  "motion_failures": [],
+  "returncode": 0
+}

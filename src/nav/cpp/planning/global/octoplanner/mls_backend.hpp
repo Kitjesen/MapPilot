@@ -155,6 +155,9 @@ public:
   struct MetricQueryResult {
     QueryStatus status;
     std::vector<PointPose> poses;
+    std::uint32_t failure_stage{0};
+    std::int32_t failure_segment{-1};
+    SurfaceCell failure_cell{};
   };
   using SegmentCheck = std::function<int(SurfaceCell, SurfaceCell, std::uint32_t)>;
   PreparedArtifactHandle() = default;

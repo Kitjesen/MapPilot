@@ -43,6 +43,59 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
     for(std::size_t i=first+1;i<=last;++i) total+=cost(points[i-1],points[i]);
     return total;
   };
+  const auto route_length=[](const auto &points) {
+    double total=0;
+    for (std::size_t i=1;i<points.size();++i) total+=distance(points[i-1],points[i]);
+    return total;
+  };
+  const auto has_backtrack=[&](std::size_t first,std::size_t last) {
+    const auto &origin=result[first], &target=result[last];
+    const double dx=target.x-origin.x,dy=target.y-origin.y;
+    const double length_xy=std::hypot(dx,dy);
+    if (length_xy<=1e-7) return false;
+    const double ux=dx/length_xy,uy=dy/length_xy;
+    double previous=0.0;
+    for (std::size_t i=first+1;i<=last;++i) {
+      const double progress=(result[i].x-origin.x)*ux+(result[i].y-origin.y)*uy;
+      if (progress<previous-1e-6) return true;
+      previous=progress;
+    }
+    return false;
+  };
+  const auto surface_shortcut=[&](std::size_t first,std::size_t last) {
+    if (!height || !has_backtrack(first,last)) return std::vector<PointPose>{};
+    const auto &a=result[first], &b=result[last];
+    const double horizontal=std::hypot(b.x-a.x,b.y-a.y);
+    const int samples=std::max(1,static_cast<int>(std::ceil(horizontal/.1)));
+    std::vector<PointPose> candidate{a};
+    candidate.reserve(static_cast<std::size_t>(samples)+1);
+    for (int i=1;i<samples;++i) {
+      if (cancel && cancel()) return std::vector<PointPose>{};
+      const double t=static_cast<double>(i)/samples;
+      const auto source=first+static_cast<std::size_t>(std::llround(
+          t*static_cast<double>(last-first)));
+      PointPose point{a.x+t*(b.x-a.x),a.y+t*(b.y-a.y),result[source].z};
+      const auto z=height(point);
+      if (!z) return std::vector<PointPose>{};
+      point.z=*z;
+      point.yaw.reset();
+      candidate.push_back(point);
+    }
+    candidate.push_back(b);
+    for (std::size_t i=1;i<candidate.size();++i)
+      if (!valid(candidate[i-1],candidate[i])) return std::vector<PointPose>{};
+    double baseline_length=0;
+    for (std::size_t i=first+1;i<=last;++i) baseline_length+=distance(result[i-1],result[i]);
+    if (route_length(candidate)>baseline_length+1e-8) return std::vector<PointPose>{};
+    if (cost) {
+      double candidate_cost=0;
+      for (std::size_t i=1;i<candidate.size();++i)
+        candidate_cost+=cost(candidate[i-1],candidate[i]);
+      if (candidate_cost>path_cost(result,first,last)+1e-8)
+        return std::vector<PointPose>{};
+    }
+    return candidate;
+  };
   for (std::size_t first=0;first+2<result.size();++first) {
     for (std::size_t last=result.size()-1;last>first+1;--last) {
       if (cancel && cancel()) return {};
@@ -72,6 +125,14 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
         result.erase(result.begin()+first+1,result.begin()+last);
         break;
       }
+      // Surface-following shortcut removes voxel-scale horizontal backtracks
+      // without relaxing the existing edge, support, or clearance checks.
+      auto candidate=surface_shortcut(first,last);
+      if (!candidate.empty()) {
+        result.erase(result.begin()+first+1,result.begin()+last);
+        result.insert(result.begin()+first+1,candidate.begin()+1,candidate.end()-1);
+        break;
+      }
     }
   }
   std::vector<PointPose> dense{result.front()};
@@ -93,12 +154,7 @@ std::vector<PointPose> smoothRoute(const std::vector<PointPose> &route,
     if (dense.empty()) break;
   }
   if (!dense.empty()) {
-    const auto length=[](const auto &points) {
-      double total=0;
-      for (std::size_t i=1;i<points.size();++i) total+=distance(points[i-1],points[i]);
-      return total;
-    };
-    if (length(dense)<=length(result)+1e-8 && checkRoute(dense,valid,cancel) &&
+    if (route_length(dense)<=route_length(result)+1e-8 && checkRoute(dense,valid,cancel) &&
         (!cost || path_cost(dense,0,dense.size()-1)<=path_cost(result,0,result.size()-1)+1e-8))
       result=std::move(dense);
   }

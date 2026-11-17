@@ -1,0 +1,15 @@
+﻿category,scene,scene_title,request,expected,surface_angle_deg,feature,public_reason,interpretation,next_diagnostic_needed
+expected_rejection,wave_gap,波浪途中 0.5 m 全宽断口,along_forward,blocked,21.4048,gap,full_width_gap,预设负例：波浪地面中间有 0.5 m 全宽断口，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+expected_rejection,wave_gap,波浪途中 0.5 m 全宽断口,along_reverse,blocked,21.4048,gap,full_width_gap,预设负例：波浪地面中间有 0.5 m 全宽断口，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+expected_rejection,wave_ceiling,波浪局部低顶棚,along_forward,blocked,8.9113,ceiling,low_clearance,预设负例：局部顶棚净空不足，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+expected_rejection,wave_ceiling,波浪局部低顶棚,along_reverse,blocked,8.9113,ceiling,low_clearance,预设负例：局部顶棚净空不足，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+expected_rejection,wave_upper,波浪下层与无连接上层,upper_forward,blocked,8.9113,upper,unconnected_upper_surface,预设负例：上下层表面没有可行连接，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+expected_rejection,wave_upper,波浪下层与无连接上层,upper_reverse,blocked,8.9113,upper,unconnected_upper_surface,预设负例：上下层表面没有可行连接，路线应拒绝。,已知设计结果；仍应保留更细 reason 供 UI 展示。
+unexpected_no_route,cross_55,横坡 55°：沿等高线行走,along_forward,probe,55.0,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,cross_55,横坡 55°：沿等高线行走,along_reverse,probe,55.0,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,cross_65,横坡 65°：沿等高线行走,along_forward,probe,65.0,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,cross_65,横坡 65°：沿等高线行走,along_reverse,probe,65.0,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,wave_35_120,短波深起伏：振幅 0.35 m / 波长 1.2 m,along_forward,probe,60.8944,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,wave_35_120,短波深起伏：振幅 0.35 m / 波长 1.2 m,along_reverse,probe,60.8944,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,wave_50_200,大起伏：振幅 0.50 m / 波长 2.0 m,along_forward,probe,57.3311,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。
+unexpected_no_route,wave_50_200,大起伏：振幅 0.50 m / 波长 2.0 m,along_reverse,probe,57.3311,,surface_route_exhausted,当前公开诊断只报告 Rust surface route exhausted；不能据此断定是起点、终点、支撑、边几何、机体碰撞还是搜索预算。,需要在 start_attach、goal_attach、connector、edge_search、route_geometry、budget 阶段记录首个失败原因。

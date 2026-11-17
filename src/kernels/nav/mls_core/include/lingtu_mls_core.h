@@ -146,7 +146,21 @@ typedef struct LtMlsPoseBuffer {
   LtMlsPose* ptr;
   uint64_t len;
   uint64_t cap;
+  uint32_t failure_stage;
+  int32_t failure_segment;
+  LtMlsCell failure_cell;
 } LtMlsPoseBuffer;
+
+enum {
+  LT_MLS_QUERY_NONE = 0,
+  LT_MLS_QUERY_GOAL_ATTACH = 1,
+  LT_MLS_QUERY_START_ATTACH = 2,
+  LT_MLS_QUERY_ENDPOINT_ATTACH = 3,
+  LT_MLS_QUERY_EDGE_SEARCH = 4,
+  LT_MLS_QUERY_ROUTE_GEOMETRY = 5,
+  LT_MLS_QUERY_BUDGET = 6,
+  LT_MLS_QUERY_CANCELLED = 7
+};
 
 typedef struct LtMlsMetricConfig {
   double resolution;

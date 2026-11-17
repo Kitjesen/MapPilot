@@ -1,0 +1,710 @@
+{
+  "allow_kinematic_ltlio_acceptance": false,
+  "clock_profile": "sim_hardware",
+  "cmd_vel": {
+    "accepted_sequence": 0,
+    "binary": "D:\\inovxio\\brain\\lingtu\\build\\windows-native-dds-adapter\\Release\\lingtu_mujoco_driver_bridge.exe",
+    "bridge_boot_id": "eca8b8f2170b176fcf588dca3b0ac012",
+    "controller_boot_id": "7b32d0337116c23a70f1b3b6f9cf027f",
+    "dds_topic": "rt/nav/cmd_vel",
+    "driver_ready": false,
+    "driver_ready_observed": true,
+    "failed_before_close": false,
+    "fault": "",
+    "forward_linear_samples": 0,
+    "heartbeat_refreshes": 13,
+    "last_command": {
+      "vx": 0.0,
+      "vy": 0.0,
+      "wz": 0.0
+    },
+    "last_physical_step_seq": 9002,
+    "lateral_linear_samples": 0,
+    "linux_pid": null,
+    "nonzero_samples": 0,
+    "owned_pid": 12784,
+    "parse_errors": 0,
+    "process_cleanup": {
+      "alive_after_cleanup": false,
+      "alive_before_cleanup": false,
+      "clean": true,
+      "errors": [],
+      "kill_sent": false,
+      "owned_pid": true,
+      "pid": 12784,
+      "process_kind": "local",
+      "term_sent": false
+    },
+    "process_kind": "local",
+    "process_returncode": 0,
+    "reverse_linear_samples": 0,
+    "samples": 2477,
+    "stderr_tail": [
+      "lingtu_mujoco_driver_bridge: domain=226 cmd_topic=rt/nav/cmd_vel state_topic=rt/driver/control_state command_timeout=500ms heartbeat_timeout=10000ms apply_timeout=30000ms"
+    ],
+    "stopped_evidence": {
+      "applied_step_seq": 9002,
+      "bridge_boot_id": "eca8b8f2170b176fcf588dca3b0ac012",
+      "bridge_command_seq": 2480,
+      "controller_boot_id": "7b32d0337116c23a70f1b3b6f9cf027f",
+      "kind": "deactivate_zero"
+    },
+    "terminated_by_parent": false,
+    "topic": "/nav/cmd_vel",
+    "transport": "cpp_typed_dds_physical_bridge_v2",
+    "transport_ready": true
+  },
+  "cmd_vel_sent_to_hardware": false,
+  "command_source": "dds",
+  "domain_id": 226,
+  "drive_duration_s": 45.0,
+  "drive_mode": "policy",
+  "drive_profile": "arc",
+  "drive_ramp_s": 0.0,
+  "duration_s": 45.0,
+  "effective_publish_hz": {
+    "/imu/raw": 155.84444444442684,
+    "/lidar/raw_frame": 4.999999999999435,
+    "/slam/odom_prior": 160.84444444442627,
+    "/slam/registered_cloud": 4.999999999999435
+  },
+  "entity_contacts": {
+    "contact_steps": 0,
+    "coverage": "every visible simulation step; excludes self contact and floor support",
+    "first_contact": null,
+    "first_contact_geom": "",
+    "first_support_normal_disagreement": null,
+    "observation_steps": 9002,
+    "support_normal_disagreements": 0
+  },
+  "error": "",
+  "external_arm": {
+    "acknowledged": true,
+    "anchored_before_arm": true,
+    "arm_observed_sim_time_s": 1.0000000000000007,
+    "domain_id": 226,
+    "duration_clock": "sim",
+    "enabled": true,
+    "last_error": "",
+    "observations": 1,
+    "read_failures": 0,
+    "scenario": "mujoco_nav_3d_course:motion:226",
+    "schema": "lingtu.mujoco.external_arm_status.v1",
+    "sensor_publication_before_arm": true,
+    "state": "armed",
+    "status_write_failures": 0,
+    "timeout_s": 60.0,
+    "wait_elapsed_wall_s": 0.15600000000085856
+  },
+  "goal_reached_early": false,
+  "imu_acc_axis_scale": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "imu_acc_axis_scale_source": "auto_identity",
+  "imu_acc_conditioner": {
+    "conditioned_dynamic_max_mps2": 1.5,
+    "dynamic_clipped_count": 1,
+    "enabled": true,
+    "lowpass_hz": 5.0,
+    "max_dynamic_accel_mps2": 1.5,
+    "max_slew_rate_mps3": 30.0,
+    "raw_dynamic_max_mps2": 5.327941146469073,
+    "sample_count": 7013,
+    "slew_limited_count": 0
+  },
+  "imu_acc_conditioning": "realistic",
+  "imu_acc_mode": "sensor",
+  "imu_gyro_axis_scale": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "imu_timestamp_clock": "sim_hardware",
+  "lidar_backend": {
+    "angle_noise_model": "pre_raycast_gaussian",
+    "angle_noise_std_rad": 0.0017453292519943296,
+    "backend": "mujoco_lidar",
+    "body_name": "lidar1_link",
+    "distance_dropout_prob_at_max": 0.0,
+    "error": "",
+    "exclude_body_name": "base_link",
+    "fields": [
+      "x",
+      "y",
+      "z",
+      "intensity"
+    ],
+    "intensity_model": "distance_proxy_not_material_calibrated",
+    "mujoco_lidar_backend": "cpu",
+    "multi_return_model": "single_return",
+    "noise_std_m": 0.02,
+    "pattern_path": "D:\\inovxio\\brain\\lingtu\\sim\\packages\\sensors\\livox\\mid360\\assets\\mid360.npy",
+    "pixel_dropout_prob": 0.0,
+    "product_backend": true,
+    "product_lidar_backend_verified": true,
+    "range_max_m": 40.0,
+    "range_min_m": 0.1,
+    "range_noise_far_std_m": 0.02,
+    "range_noise_model": "radial_piecewise_gaussian",
+    "range_noise_near_std_m": 0.03,
+    "requested_backend": "mujoco_lidar",
+    "require_product_backend": true,
+    "samples_per_frame": 2000,
+    "self_collision_geom_group": 3,
+    "self_geom_group": 5,
+    "self_geoms": 59,
+    "self_occlusion_filter_backend": "mujoco_mj_multiRay_cpu",
+    "self_occlusion_geometry": "visual_mesh_with_collision_only_body_fallback",
+    "self_occlusion_mode": "optical_first_hit_filter",
+    "self_optical_geoms": 20,
+    "self_shadowed_returns": 93275,
+    "sensor_housing_excluded_geoms": [
+      80
+    ],
+    "sensor_name": "lidar_mid360",
+    "site_name": "lidar1_link_site"
+  },
+  "lidar_timestamp_clock": "sim_hardware",
+  "localization_runtime_expected": "slamd",
+  "mocap_motion": {
+    "enabled": false
+  },
+  "motion": {
+    "available": true,
+    "max_slam_motion_ratio": 1.6,
+    "max_slam_yaw_error_rad": 0.15,
+    "min_sim_motion_for_odom_check_m": 0.5,
+    "min_sim_yaw_for_odom_check_rad": 0.2,
+    "min_slam_motion_ratio": 0.5,
+    "sim_abs_yaw_delta_rad": 0.13476876709279764,
+    "sim_delta_xyz": [
+      -0.05705889128998698,
+      0.006365799806787642,
+      0.026104844443930686
+    ],
+    "sim_end_xyz": [
+      1.9429457191799926,
+      5.656332545702171,
+      0.44057517743456
+    ],
+    "sim_path_length_xy_m": 0.09212380886360368,
+    "sim_start_xyz": [
+      2.0000046104699796,
+      5.649966745895384,
+      0.4144703329906293
+    ],
+    "sim_xy_m": 0.05741289473996804,
+    "sim_yaw_delta_rad": -0.012284842266139618,
+    "slam_map_pose": null,
+    "slam_map_xy_error_m": null,
+    "slam_map_yaw_error_rad": null,
+    "slam_odom_xy_m": 0.0,
+    "slam_odom_yaw_rad": 0.0,
+    "slam_to_sim_xy_ratio": 0.0,
+    "slam_to_sim_yaw_error_rad": 0.012284842266139618,
+    "track_against_map": {}
+  },
+  "motion_interval_completed": true,
+  "motion_log": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-motion\\motion\\motion.jsonl",
+  "motion_log_hz": 10.0,
+  "motion_log_lidar_points": 640,
+  "motion_log_lidar_presentation": {
+    "local_radius_m": 4.0,
+    "local_share": 0.75,
+    "max_z_above_robot_m": 1.8,
+    "sample_after_vertical_filter": true
+  },
+  "motion_log_samples": 451,
+  "motion_log_writer": {
+    "dropped": 0,
+    "failures": 0,
+    "max_pending": 1,
+    "submitted": 451,
+    "written": 451
+  },
+  "motion_started_sim_s": 1.0000000000000007,
+  "mujoco_truth_velocity": {
+    "max_speed_mps": 0.025580870727262908,
+    "max_velocity_mps": [
+      0.023772173082757184,
+      -0.0060704898899482385,
+      -0.00723974354410483
+    ],
+    "max_velocity_stamp_s": 1794903921.5732841,
+    "max_xy_speed_mps": 0.024584883519187185,
+    "max_xy_velocity_mps": [
+      0.023851496781191302,
+      -0.00596008380384225,
+      -0.007043181194026755
+    ],
+    "max_xy_velocity_stamp_s": 1794903921.5632842,
+    "sample_count": 21,
+    "source": "robust_pose_window",
+    "valid": true,
+    "velocity_mps": [
+      -0.0010491916356196796,
+      0.00012840431893327173,
+      0.0004269979698077909
+    ],
+    "window_s": 0.1
+  },
+  "native_clock_alignment": {
+    "native_minus_local_s": 0.0,
+    "rtt_ms": 0.0,
+    "sample_count": 1,
+    "source": "shared_local_wall_clock",
+    "uncertainty_ms": 0.0
+  },
+  "native_sensor_publisher": "D:\\inovxio\\brain\\lingtu\\build\\windows-native-dds-adapter\\Release\\lingtu_mujoco_sensor_publisher.exe",
+  "native_sensor_publisher_process": {
+    "alive_after_cleanup": false,
+    "alive_before_cleanup": false,
+    "async_writer": {
+      "joined_after_terminate": false,
+      "queue": {
+        "batch_sequence_lag": 0,
+        "cleanup_reason": "shutdown",
+        "current_batches": 0,
+        "current_bytes": 0,
+        "current_records": 0,
+        "enqueued_batch_sequence": 7013,
+        "enqueued_record_sequence": 21714,
+        "fatal_reason": "",
+        "max_batches": 3,
+        "max_bytes": 84180,
+        "max_records": 12,
+        "oldest_age_s": 0.0,
+        "record_sequence_lag": 0,
+        "undrained_batches": 0,
+        "undrained_bytes": 0,
+        "undrained_records": 0,
+        "writer_alive": false,
+        "written_batch_sequence": 7013,
+        "written_record_sequence": 21714
+      },
+      "termination": null,
+      "timed_out": false,
+      "timeout_stats": null
+    },
+    "clean": true,
+    "errors": [],
+    "exit_context": "stdin_eof_exit",
+    "failed_before_cleanup": false,
+    "kill_sent": false,
+    "owned_pid": true,
+    "pid": 58124,
+    "pid_file": "",
+    "process_kind": "local",
+    "ready_file": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-motion\\motion\\mujoco_sensor_publisher_33120.ready.json",
+    "returncode": 0,
+    "returncode_before_cleanup": null,
+    "term_sent": false,
+    "terminated_by_parent": false
+  },
+  "navigation_fixture": true,
+  "navigation_fixture_cloud_points": 4000,
+  "navigation_fixture_ground_coverage": {
+    "enabled": true,
+    "max_points": 4000,
+    "published_points": 1910,
+    "raw_body_points": 1468,
+    "raw_context_overlay_points": 550,
+    "raw_obstacle_overlay_points": 918,
+    "raw_overlay_enabled": true,
+    "raw_overlay_points": 1468,
+    "resolution_m": 0.2,
+    "synthetic_ground_points": 442,
+    "x_max_m": 4.0,
+    "x_min_m": -1.0,
+    "y_half_m": 1.6,
+    "z_m": -0.4404896945085634
+  },
+  "no_python_slam": true,
+  "observed_slam_outputs": {},
+  "odom_prior_velocity": {
+    "max_speed_mps": 0.025580870727262908,
+    "max_velocity_mps": [
+      0.023772173082757184,
+      -0.0060704898899482385,
+      -0.00723974354410483
+    ],
+    "max_velocity_stamp_s": 1794903921.5732841,
+    "max_xy_speed_mps": 0.024584883519187185,
+    "max_xy_velocity_mps": [
+      0.023851496781191302,
+      -0.00596008380384225,
+      -0.007043181194026755
+    ],
+    "max_xy_velocity_stamp_s": 1794903921.5632842,
+    "sample_count": 21,
+    "source": "robust_pose_window",
+    "valid": true,
+    "velocity_mps": [
+      -0.0010491916356196796,
+      0.00012840431893327173,
+      0.0004269979698077909
+    ],
+    "window_s": 0.1
+  },
+  "odom_prior_velocity_source": "robust_pose_window",
+  "odom_prior_velocity_window_s": 0.1,
+  "ok": false,
+  "physical_rolling_sample_mode": "subscan",
+  "physics_integrator": "euler",
+  "physics_integrator_requested": "euler",
+  "physics_timestep_requested_s": 0.005,
+  "physics_timestep_s": 0.005,
+  "planner_debug_log": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-motion\\motion\\motion_planner_debug.jsonl",
+  "planner_debug_samples": 106,
+  "planner_debug_writer": {
+    "dropped": 0,
+    "failures": 0,
+    "max_pending": 1,
+    "submitted": 106,
+    "written": 106
+  },
+  "policy_loaded": true,
+  "policy_path": "D:\\inovxio\\brain\\lingtu\\sim\\packages\\controllers\\doso\\thunder_v4\\cts_moe\\policy\\policy_cts_moe_v39_61128.onnx",
+  "policy_runtime": {
+    "active_cpu_threads": 1,
+    "active_interop_threads": 1,
+    "backend": "onnxruntime",
+    "requested_cpu_threads": 1
+  },
+  "publish_odom_prior": true,
+  "published": {
+    "/imu/raw": 7013,
+    "/lidar/raw_frame": 225,
+    "/slam/odom_prior": 7238,
+    "/slam/registered_cloud": 225
+  },
+  "python_role": "mujoco_sensor_dds_adapter_only",
+  "real_robot_motion": false,
+  "remaining_gaps": [
+    "native_cmd_vel_nonzero_missing"
+  ],
+  "require_slam_output": false,
+  "required_slam_output_topics": [
+    "/slam/odometry",
+    "/slam/map_cloud",
+    "/slam/localization_health"
+  ],
+  "runtime_stage_timing": {
+    "slow_events": [
+      {
+        "elapsed_s": 0.125,
+        "sim_time_s": 25.044999999999302,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.10899999999855936,
+        "sim_time_s": 39.48500000000175,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.07899999999972351,
+        "sim_time_s": 7.844999999999855,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.07899999999972351,
+        "sim_time_s": 40.515000000002274,
+        "stage": "loop_total"
+      },
+      {
+        "elapsed_s": 0.07799999999951979,
+        "sim_time_s": 44.6650000000044,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 1.0999999999999985,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 5.624999999999902,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 13.845000000000764,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 14.855000000000922,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 19.660000000000373,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 20.860000000000134,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 21.445000000000018,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 23.24999999999966,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 27.46999999999882,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 28.66999999999858,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 34.869999999999386,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 35.85999999999989,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 36.6600000000003,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 40.51000000000227,
+        "stage": "command_input"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 42.86500000000348,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 43.450000000003776,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06300000000010186,
+        "sim_time_s": 45.2550000000047,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 2.6499999999999657,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 3.0449999999999573,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 5.24499999999991,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 6.644999999999881,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 8.649999999999952,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 21.864999999999934,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 22.44499999999982,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 22.64499999999978,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 26.044999999999103,
+        "stage": "lidar_scan"
+      },
+      {
+        "elapsed_s": 0.06199999999989814,
+        "sim_time_s": 27.049999999998903,
+        "stage": "lidar_scan"
+      }
+    ],
+    "slow_threshold_s": 0.05,
+    "stages": {
+      "catch_up_bookkeeping": {
+        "count": 1987,
+        "max_s": 0.01599999999962165,
+        "max_sim_time_s": 1.6649999999999865,
+        "mean_s": 3.170608958142067e-05,
+        "total_s": 0.06299999999828287
+      },
+      "command_input": {
+        "count": 9000,
+        "max_s": 0.06300000000010186,
+        "max_sim_time_s": 40.51000000000227,
+        "mean_s": 6.822222222257956e-05,
+        "total_s": 0.614000000003216
+      },
+      "goal_status_check": {
+        "count": 433,
+        "max_s": 0.030999999999039574,
+        "max_sim_time_s": 14.740000000000904,
+        "mean_s": 0.0022702078522070014,
+        "total_s": 0.9830000000056316
+      },
+      "imu_prior_publish": {
+        "count": 7013,
+        "max_s": 0.030999999999039574,
+        "max_sim_time_s": 20.370000000000232,
+        "mean_s": 0.00161500071295581,
+        "total_s": 11.325999999959095
+      },
+      "inter_loop_gap": {
+        "count": 9000,
+        "max_s": 0.046999999998661224,
+        "max_sim_time_s": 44.210000000004165,
+        "mean_s": 3.155555555531464e-05,
+        "total_s": 0.28399999999783176
+      },
+      "lidar_frame_publish": {
+        "count": 225,
+        "max_s": 0.01600000000144064,
+        "max_sim_time_s": 35.64499999999978,
+        "mean_s": 0.0018799999999787864,
+        "total_s": 0.42299999999522697
+      },
+      "lidar_scan": {
+        "count": 225,
+        "max_s": 0.125,
+        "max_sim_time_s": 25.044999999999302,
+        "mean_s": 0.04576444444447083,
+        "total_s": 10.297000000005937
+      },
+      "loop_total": {
+        "count": 9000,
+        "max_s": 0.07899999999972351,
+        "max_sim_time_s": 40.515000000002274,
+        "mean_s": 0.004956333333333532,
+        "total_s": 44.60700000000179
+      },
+      "motion_log": {
+        "count": 451,
+        "max_s": 0.01600000000144064,
+        "max_sim_time_s": 1.8999999999999815,
+        "mean_s": 0.003292682926834592,
+        "total_s": 1.485000000002401
+      },
+      "pacing_sleep": {
+        "count": 7013,
+        "max_s": 0.0319999999992433,
+        "max_sim_time_s": 10.770000000000284,
+        "mean_s": 0.00047925281619885996,
+        "total_s": 3.361000000002605
+      },
+      "physics_step": {
+        "count": 9000,
+        "max_s": 0.0319999999992433,
+        "max_sim_time_s": 7.804999999999856,
+        "mean_s": 0.0026907777777816794,
+        "total_s": 24.217000000035114
+      },
+      "publisher_flush": {
+        "count": 7013,
+        "max_s": 0.01600000000144064,
+        "max_sim_time_s": 8.659999999999954,
+        "mean_s": 0.0001530015685156595,
+        "total_s": 1.0730000000003201
+      }
+    }
+  },
+  "scan_time_profile": "instantaneous",
+  "schema_version": "lingtu.mujoco_native_dds_sensors.v1",
+  "sensor_topics": {
+    "/imu/raw": {
+      "dds_topic": "rt/imu/raw",
+      "frame_id": "imu_link"
+    },
+    "/lidar/raw_frame": {
+      "dds_topic": "rt/lidar/raw_frame",
+      "frame_id": "lidar_link"
+    },
+    "/slam/odom_prior": {
+      "dds_topic": "rt/slam/odom_prior",
+      "frame_id": "odom"
+    }
+  },
+  "settle_s": 1.0,
+  "sim_elapsed_s": 45.00000000000508,
+  "sim_hardware_pacing": {
+    "catch_up_events": 859,
+    "catch_up_yields": 0,
+    "dropped_imu_ticks": 1987,
+    "dropped_lidar_frames": 0,
+    "dropped_lidar_subscan_ticks": 0,
+    "dynamic_catch_up_ticks": 1987,
+    "enabled": true,
+    "fast_static_clock_ticks": 0,
+    "final_lag_s": 0.04699999999539983,
+    "forced_lidar_observations": 85,
+    "forced_sensor_observations": 85,
+    "max_consecutive_steps": 37,
+    "max_lag_observed_s": 0.193000000001339,
+    "max_lag_s": 0.05,
+    "strategy": "small_step_dynamics_preserve_lidar_deadlines",
+    "yield_every_steps": 40
+  },
+  "sim_hardware_realtime_factor": 1.0,
+  "sim_hardware_sensor_model": "mujoco_accelerometer_conditioned_imu",
+  "simulation_only": true,
+  "slam_status": {},
+  "snapshot_lidar": {
+    "busy_drops": 0,
+    "enabled": true,
+    "shutdown_drops": 1
+  },
+  "start_anchor": "warmup",
+  "start_anchor_xyz": [
+    2.0,
+    5.65,
+    0.41444061838724955
+  ],
+  "start_anchor_yaw_deg": 0.0,
+  "timestamp_clock": "sim_hardware",
+  "viewer": {
+    "closed_early": false,
+    "control_authority": "none_presentation_only",
+    "enabled": false,
+    "navigation_overlay": {
+      "global_segments": 0,
+      "local_segments": 0,
+      "point_count": 0
+    },
+    "refresh_hz": 30.0
+  },
+  "warmup_s": 20.0
+}

@@ -23,6 +23,19 @@ namespace global_planner
         constexpr double kMetricToleranceEpsilonM = 1e-6;
         constexpr double kPi = 3.14159265358979323846;
 
+        const char *queryStageName(std::uint32_t stage) {
+            switch (stage) {
+                case LT_MLS_QUERY_GOAL_ATTACH: return "goal_attach";
+                case LT_MLS_QUERY_START_ATTACH: return "start_attach";
+                case LT_MLS_QUERY_ENDPOINT_ATTACH: return "endpoint_attach";
+                case LT_MLS_QUERY_EDGE_SEARCH: return "edge_search";
+                case LT_MLS_QUERY_ROUTE_GEOMETRY: return "route_geometry";
+                case LT_MLS_QUERY_BUDGET: return "budget";
+                case LT_MLS_QUERY_CANCELLED: return "cancelled";
+                default: return "none";
+            }
+        }
+
         double heading(const PointPose &from, const PointPose &to) {
             return std::hypot(to.x-from.x, to.y-from.y)>1e-9
                 ? std::atan2(to.y-from.y, to.x-from.x) : from.yaw.value_or(to.yaw.value_or(0.0));
@@ -587,18 +600,26 @@ namespace global_planner
                 auto query = artifact_->rust_graph->metricQuery(
                     start_point_,goal_point_,snap_search_radius_cells_,max_iterations_,geometry);
                 using QueryStatus = mls::PreparedArtifactHandle::QueryStatus;
+                search_info_.rust_failure_stage = queryStageName(query.failure_stage);
+                search_info_.rust_failure_segment = query.failure_segment;
+                search_info_.rust_failure_cell_x = query.failure_cell.x;
+                search_info_.rust_failure_cell_y = query.failure_cell.y;
+                search_info_.rust_failure_cell_z = query.failure_cell.z;
                 if (query.status == QueryStatus::Cancelled) {
                     search_info_.outcome = SearchInfo::Outcome::Cancelled;
                     return false;
                 }
                 if (query.status == QueryStatus::Budget) {
                     search_info_.outcome = SearchInfo::Outcome::IterationLimit;
+                    search_info_.rust_failure_kind = "query";
+                    search_info_.rust_failure = "Rust surface route budget exhausted";
                     return false;
                 }
                 if (query.status == QueryStatus::Exhausted) {
                     search_info_.outcome = SearchInfo::Outcome::Exhausted;
                     search_info_.rust_failure_kind = "query";
-                    search_info_.rust_failure = "Rust surface route exhausted";
+                    search_info_.rust_failure = std::string("Rust surface route exhausted at ") +
+                        search_info_.rust_failure_stage;
                     ++search_info_.rust_query_failures;
                     // Keep the public blocked-start diagnosis without launching another planner.
                     metric.actual_start = 0;

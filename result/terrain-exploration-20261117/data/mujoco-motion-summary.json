@@ -1,0 +1,56 @@
+{
+  "preflight_ok": true,
+  "motion_ok": false,
+  "acceptance_scope": "diagnostic_component",
+  "planner_failure": {
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "cell": [
+      10,
+      28,
+      0
+    ],
+    "direct_map": "mujoco-motion/prepared_assets/same_source_map/octomap.ot"
+  },
+  "chain_state": {
+    "mapd_ready": true,
+    "sensor_registered_clouds": null,
+    "global_path_points": 0,
+    "local_path_points": 0,
+    "cmd_vel_published": 0,
+    "terminal_stop_ok": true
+  },
+  "motion_evidence": {
+    "net_displacement_xy_m": 0.05741289473996804,
+    "peak_xy_speed_mps": 0.024584883519187185,
+    "goal_distance_reduction_m": -0.05446988176968759,
+    "native_goal_reached": false
+  },
+  "diagnostic_variants": {
+    "same_map_ground_support_false": "route found (148 points)",
+    "same_map_robot_radius_0.20": "route found (8 points)",
+    "same_map_robot_radius_0.28": "route found",
+    "same_map_robot_radius_0.30": "no route",
+    "same_map_robot_radius_0.32": "no route",
+    "same_map_max_slope_1.0": "no route"
+  },
+  "blockers": [
+    "octoplanner3d_plan_not_accepted",
+    "global_path_too_short",
+    "local_planner_path_not_found",
+    "local_path_too_short",
+    "embedded_path_follower_command_missing",
+    "native_endpoint_did_not_publish_cmd_vel",
+    "mujoco_policy_received_too_few_nonzero_cmd_vel_samples",
+    "mujoco_truth_peak_xy_speed_below_threshold",
+    "signed_linear_command_evidence_missing",
+    "forward_linear_command_fraction_below_threshold",
+    "input_gate_ready_fraction_below_threshold",
+    "thunderv4_motion_below_threshold",
+    "net_displacement_below_threshold",
+    "goal_distance_did_not_decrease",
+    "final_goal_error_above_threshold",
+    "native_goal_not_reached",
+    "sensor_or_slam_acceptance_failed"
+  ]
+}
