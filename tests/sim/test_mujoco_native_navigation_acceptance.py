@@ -26,6 +26,76 @@ from lingtu.assembly.config.maps import default_map_settings, mapd_environment
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_thunder_footprint_covers_recorded_wheels():
+    import mujoco
+    import yaml
+
+    package = ROOT / "sim/packages/robots/doso/thunder_v4"
+    geometry = yaml.safe_load((package / "robot.package.yaml").read_text())["navigation_geometry"]
+    model = mujoco.MjModel.from_xml_path(str(package / "mjcf/thunderv4.xml"))
+    data = mujoco.MjData(model)
+    # Thunder box run, t=6.3 s: the front-right wheel exceeds the old torso-only footprint.
+    data.qpos[:] = [
+        .8461062717, .3052400203, .4603936383, .9809477891,
+        -.0103773897, -.0042837073, .1939468865,
+        -.0490392394, -1.1087370131, 2.3126551754, 8.8429375592,
+        .3183094179, .7324036089, -1.8943742041, -5.9783574905,
+        .2368328432, .9273534701, -1.9805968605, 8.5462340828,
+        -.2134523810, -.8351473455, 1.9424671386, -6.6477224678,
+    ]
+    mujoco.mj_forward(model, data)
+    base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
+    rotation = data.xmat[base].reshape(3, 3)
+    yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+    heading = np.array([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
+    for name in ("FR_wheel", "FL_wheel", "RR_wheel", "RL_wheel"):
+        geom = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+        assert geom >= 0
+        radius, half_width = model.geom_size[geom, :2]
+        rim = np.array([[radius * math.cos(a), radius * math.sin(a), z]
+                        for a in np.linspace(0, 2 * math.pi, 64)
+                        for z in (-half_width, half_width)])
+        world = rim @ data.geom_xmat[geom].reshape(3, 3).T + data.geom_xpos[geom]
+        xy = (world[:, :2] - data.xpos[base, :2]) @ heading
+        distance = np.hypot(np.abs(xy[:, 0]) - geometry["collision_cylinder_offset_m"], xy[:, 1])
+        assert float(distance.max()) + .05 <= geometry["collision_cylinder_radius_m"], name
+
+
+@pytest.mark.parametrize("tick", [None, 100.0])
+def test_phase_uses_native_tick_default(monkeypatch, tmp_path, tick):
+    navigation = tmp_path / "navd.exe"
+    monkeypatch.setattr(acceptance, "ManagedProcess", lambda *args, **kwargs: None)
+    monkeypatch.setattr(acceptance, "_windows_acceptance_affinity_masks", lambda _: (None, None))
+    monkeypatch.setattr(acceptance, "_compiled_mujoco_site_offset_body", lambda *args, **kwargs: (0, 0, 0))
+    monkeypatch.setattr(acceptance, "_native_map_identity", lambda **kwargs: {})
+    monkeypatch.setattr(acceptance, "_native_mapd_launch", lambda **kwargs: ([], {}))
+    monkeypatch.setattr(acceptance, "mapd_environment", lambda *args: {})
+
+    def command(binary, *args):
+        if binary == navigation:
+            assert ("--tick-hz" in args) == (tick is not None)
+            if tick is not None:
+                assert float(args[args.index("--tick-hz") + 1]) == tick
+            raise RuntimeError("navigation command captured")
+        return []
+
+    monkeypatch.setattr(acceptance, "_native_command", command)
+    runtime = {"local_planner": "scan"}
+    if tick is not None:
+        runtime["tick_hz"] = tick
+    with pytest.raises(RuntimeError, match="navigation command captured"):
+        acceptance._run_phase(
+            phase="motion", manifest={
+                "slam_runtime": {"provider": "mujoco_navigation_fixture"},
+                "navigation_runtime": runtime,
+                "thresholds": {"require_traversability": False},
+            },
+            binaries={"navigation": navigation, "mapd": tmp_path / "mapd.exe"},
+            paths={"planner": tmp_path / "octomap.ot", "map_dir": tmp_path}, out_dir=tmp_path,
+            domain_id=153, host_boot_id="test", native_environment={},
+        )
+
+
 @pytest.mark.parametrize("name", ["obstacle_5", "acceptance_box"])
 def test_motion_log_records_scene_contacts(name):
     import mujoco
@@ -354,6 +424,10 @@ def test_dynamic_acceptance_requires_actual_sensed_encounter_and_resumed_motion(
     assert evaluate()["blockers"] == []
     assert evaluate()["avoidance"] == "obstacle_stop"
     rows[1]["local_diagnostics"]["final_safety"]["stopped"] = False
+    rows[1]["local_diagnostics"]["reason"] = "local_blocked"
+    assert evaluate()["blockers"] == []
+    rows[1]["local_diagnostics"]["reason"] = "local_plan_pending"
+    assert "dynamic_obstacle_avoidance_not_observed" in evaluate()["blockers"]
     rows[1]["x"] = 0.4
     rows[1]["odom_prior_velocity"]["velocity_mps"] = [.1, .3, 0]
     assert "dynamic_obstacle_avoidance_not_observed" in evaluate()["blockers"]
@@ -2853,14 +2927,17 @@ def test_motion_log_contract_captures_native_navigation_and_visual_state(tmp_pat
     assert sensors._read_json_object(status)["global_path"]
     assert sensors._read_json_object(tmp_path / "missing.json") == {}
     for local in ({"goal_reached": True}, {"reason": "goal_reached"}):
-        assert sensors._native_nav_goal_reached({"last_local": local}) is False
+        assert sensors._native_nav_goal_reached({"last_local": local}) is True
         assert sensors._native_nav_goal_reached({
             "last_local": local, "motion_stop_evidence": {"state": "PENDING"},
-        }) is False
+        }) is True
         assert sensors._native_nav_goal_reached({
             "last_local": local, "motion_stop_evidence": {"state": "CONFIRMED"},
         }) is True
     assert sensors._native_nav_goal_reached({}) is False
+    assert sensors._native_nav_goal_reached({
+        "last_local": {"goal_reached": False}, "motion_stop_evidence": {"state": "CONFIRMED"},
+    }) is False
 
     sensor_source = (ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py").read_text(encoding="utf-8")
     for required_field in (

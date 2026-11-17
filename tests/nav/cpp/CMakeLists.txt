@@ -1,5 +1,11 @@
 # Test and benchmark targets are owned by this directory.
 if(LINGTU_NAV_CPP_BUILD_TESTS)
+  add_executable(test_scan_limits "${LINGTU_NAV_TESTS_DIR}/test_scan_limits.cpp")
+  target_link_libraries(test_scan_limits PRIVATE lingtu_nav_local_planner)
+  target_compile_options(test_scan_limits PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-UNDEBUG>)
+  add_test(NAME test_scan_limits COMMAND test_scan_limits)
   add_executable(test_body_contact "${LINGTU_NAV_TESTS_DIR}/test_body_contact.cpp")
   target_link_libraries(test_body_contact PRIVATE lingtu_nav_body)
   add_test(NAME test_body_contact COMMAND test_body_contact)

@@ -364,7 +364,8 @@ class Backend::Impl {
         std::max(0.0, input.maxLinearSpeedMps) *
             std::clamp(intent->speedNormalized, 0.0, 1.0) > 0.5)
       plan.max_acc_ = std::max(plan.max_acc_, 4.0);
-    plan.preserve_boundary_ = input.bodyHeading.has_value();
+    // Native execution clamps physical speed; optimizer tolerances cannot advance its reference faster.
+    plan.preserve_boundary_ = true;
     plan.body_yaw_ = input.bodyHeading;
     // Intent keeps its independent collision/yaw policy. Use the observed
     // body frame only for velocity capacity; this is not a prediction of

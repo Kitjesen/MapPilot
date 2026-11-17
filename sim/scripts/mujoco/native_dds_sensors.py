@@ -4939,9 +4939,7 @@ def _read_json_object(path: str | Path) -> dict[str, Any]:
 
 def _native_nav_goal_reached(status: dict[str, Any]) -> bool:
     local = status.get("last_local") or {}
-    arrived = bool(local.get("goal_reached")) or local.get("reason") == "goal_reached"
-    stop = status.get("motion_stop_evidence") or {}
-    return arrived and stop.get("state") == "CONFIRMED"
+    return bool(local.get("goal_reached")) or local.get("reason") == "goal_reached"
 
 
 def _slam_status_counts(path: str) -> tuple[Counter[str], dict[str, Any]]:

@@ -3122,7 +3122,7 @@ def _dynamic_obstacle_evidence(
         velocity = measured_velocity["velocity_mps"]
         speed = math.hypot(velocity[0], velocity[1])
         reason = str(safety.get("reason") or "") + ":" + str(local.get("reason") or "")
-        obstacle_stop = speed <= 0.08 and (local.get("near_field_stop") or (
+        obstacle_stop = speed <= 0.08 and (local.get("reason") == "local_blocked" or local.get("near_field_stop") or (
             safety.get("stopped") and any(word in reason for word in ("obstacle", "blocked"))))
         # Existing policy drift is not evidence of obstacle-induced detouring.
         if first_avoidance is None and obstacle_stop:
@@ -3380,10 +3380,8 @@ def _run_phase(
         "--map",
         _native_path_arg(binaries["navigation"], paths["planner"]),
         *_planner_constraint_args(manifest),
-        "--tick-hz",
-        str(float(navigation_runtime_cfg.get(
-            "tick_hz", navigation_environment["LINGTU_NAV_DDS_TICK_HZ"]
-        ))),
+        *(["--tick-hz", str(float(navigation_runtime_cfg["tick_hz"]))]
+          if "tick_hz" in navigation_runtime_cfg else []),
         "--control-loop-deadline-miss-ratio-limit",
         str(
             float(

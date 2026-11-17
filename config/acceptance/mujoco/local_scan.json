@@ -15,7 +15,7 @@
     "local_planner": "scan",
     "path_follower_lookahead_m": 0.35,
     "path_follower_max_accel_mps2": 1.0,
-    "path_follower_max_speed_mps": 0.6,
+    "path_follower_max_speed_mps": 1.0,
     "path_follower_min_speed_mps": 0.0,
     "path_follower_max_yaw_rate_rad_s": 0.8,
     "path_follower_heading_align_enter_rad": 1.0,
