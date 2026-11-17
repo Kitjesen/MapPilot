@@ -283,6 +283,7 @@ def test_build_and_ci_use_the_canonical_navigation_cpp_root() -> None:
     assert "rm -rf" not in endpoint_builder
     assert "lingtu_cmu_paths" not in _read("src/nav/cpp/endpoint/CMakeLists.txt")
     assert "cmu_paths" not in endpoint_builder
+    assert "cmu_paths" not in native_ci
     assert native_ci.count("src/nav/cpp/**") == 2
     assert "-S src/nav/cpp" in portable_ci
 
