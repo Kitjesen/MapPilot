@@ -62,9 +62,9 @@ are selected through the supported RobotConfig and RunPlan for each real
 platform; do not hard-code one robot model as the product target. The native
 field runtime uses the declared Linux/CycloneDDS platform contract. Python owns
 the Host framework and semantic/API layer; C++ owns field LiDAR, SLAM, maps,
-terrain, navigation, and driver processes and hot paths. Rust kernels under
-`src/kernels/` are dependency-free libraries behind a C ABI, linked into the
-owning C++ process; they never own a process, DDS endpoint, or lifecycle.
+terrain, navigation, and driver processes and hot paths. Compute kernels under
+`src/kernels/` (Rust or C++) sit behind a C ABI and are called by the process
+that owns them; a kernel never owns a process, DDS endpoint, or lifecycle.
 
 Productization currently prioritizes the shared mapping -> map save/reload ->
 localization -> autonomous navigation workflow, including safe task termination.
