@@ -12,8 +12,8 @@ import time
 import uuid
 from typing import Any
 
+from decision.vision.candidates import PersonReviewCache, candidate_geometry, review_person_candidates
 from decision.vision.follow_tasks import FollowTaskLedger
-from decision.vision.candidates import review_person_candidates
 from decision.vision.person import PersonTracker, verify_candidate
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
@@ -58,6 +58,8 @@ _FOLLOW_TASK_SCHEMA = {
         "product_session_id": {"type": "string"},
         "state": {"type": "string"},
         "phase": {"type": "string"},
+        "confirmation_required": {"type": "boolean"},
+        "confirmed_target_id": {"type": "string"},
         "terminal": {"type": "boolean", "description": "True only after the domain task reaches a terminal state."},
         "result": {"type": ["string", "null"], "description": "Terminal outcome, or null while pending."},
         "children": {"type": "object", "description": "Owned native navigation tasks and their feedback."},
@@ -155,6 +157,8 @@ class VisualServoModule(Module, layer=4):
         self._robot_pose: tuple = (0.0, 0.0, 0.0)  # (x, y, yaw)
         self._robot_ground_z = 0.0
         self._latest_detections: list[Detection3D] = []
+        self._latest_observation: SemanticObservation | None = None
+        self._person_reviews = PersonReviewCache(max_gap_s=self._lost_timeout)
         self._latest_detection_ts = 0.0
         self._observation_boundary: tuple[int, str, int] | None = None
         self._latest_observation_sequence = 0
@@ -183,6 +187,7 @@ class VisualServoModule(Module, layer=4):
         self._follow_tasks = FollowTaskLedger()
         self._follow_selection: dict | None = None
         self._follow_selection_future = None
+        self._follow_selection_evidence = {}
         self._goals = None
 
         # Person-following target selection (description-based "person in red")
@@ -241,7 +246,7 @@ class VisualServoModule(Module, layer=4):
             return None
         people = [
             detection
-            for detection in self._latest_detections
+            for detection in self._person_reviews.filter(self._latest_detections)
             if (detection.label or "").lower() in self._PERSON_LABELS
         ]
         if len(people) != 1 or not people[0].id:
@@ -352,6 +357,8 @@ class VisualServoModule(Module, layer=4):
                 self._latest_detection_ts = 0.0
                 self._motion_observation_ready = False
                 self._observation_reason = "visual_servo_perception_stale"
+                self._latest_observation = None
+                self._person_reviews.clear()
                 if self._mode == MODE_FOLLOW:
                     if self._person_tracker.has_identity_reference:
                         self._person_tracker.invalidate_reacquisition()
@@ -399,6 +406,8 @@ class VisualServoModule(Module, layer=4):
                     self._reset_tracking_state()
                     self._finish_follow_cancel()
         self._observation_boundary = boundary
+        self._latest_observation = None
+        self._person_reviews.clear()
         self._latest_observation_source_ts = 0.0
         self._latest_detections = []
         self._latest_detection_ts = 0.0
@@ -433,6 +442,8 @@ class VisualServoModule(Module, layer=4):
                 self._target_visible = False
                 self._motion_observation_ready = False
                 self._observation_reason = observation.reason or status
+                self._latest_observation = None
+                self._person_reviews.clear()
                 self._cancel_navigation_goal(
                     observation.reason or "visual_observation_unavailable"
                 )
@@ -467,14 +478,16 @@ class VisualServoModule(Module, layer=4):
                 for detection in observation.detections
                 if isinstance(detection, Detection3D)
             ]
-            current_single_id = self._single_person_id()
-            single_person_confirmed = (
-                current_single_id is not None
-                and current_single_id == previous_single_id
-            )
             self._latest_detection_ts = (
                 source_ts if self._latest_detections else 0.0
             )
+            self._latest_observation = observation
+            self._person_reviews.update(
+                self._latest_detections, self._latest_bgr, source_ts,
+                map_valid=bool(observation.map_id), now=time.monotonic(),
+            )
+            current_single_id = self._single_person_id()
+            single_person_confirmed = current_single_id is not None and current_single_id == previous_single_id
             pose = observation.robot_pose
             pose_valid = bool(
                 pose is not None and pose.frame_id == VISUAL_SERVO_MAP_FRAME_ID
@@ -602,7 +615,7 @@ class VisualServoModule(Module, layer=4):
             if not description and not target_id:
                 return self._follow_receipt(False, request_id, "follow_target_required")
             reference = description.casefold().strip(" \t\r\n.,!?;:，。！？；：")
-            if not target_id and reference in self._UNBOUND_PERSON_REFERENCES:
+            if not require_confirmation and not target_id and reference in self._UNBOUND_PERSON_REFERENCES:
                 return self._follow_receipt(False, request_id, "follow_target_ambiguous")
             if self._goals is not None and not self._goals.visual_tasks_ready:
                 return self._follow_receipt(False, request_id, "recovering_visual_tasks")
@@ -676,7 +689,7 @@ class VisualServoModule(Module, layer=4):
                 height, width = self._latest_bgr.shape[:2]
                 candidates = []
                 for obj in self._scene_objects_from_detections(self._latest_detections):
-                    if obj["label"].lower() not in self._PERSON_LABELS or not obj["id"]:
+                    if obj["label"].lower() not in self._PERSON_LABELS or not obj["id"] or len(obj["bbox"]) != 4:
                         continue
                     x1, y1, x2, y2 = obj["bbox"]
                     if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
@@ -685,27 +698,34 @@ class VisualServoModule(Module, layer=4):
                            max(0, min(width, x2)), max(0, min(height, y2))]
                     if box[2] <= box[0] or box[3] <= box[1]:
                         continue
-                    candidates.append({"target_id": str(obj["id"]), "bbox": box})
+                    candidate = {"target_id": str(obj["id"]), "bbox": box,
+                                 "geometry": candidate_geometry(self._latest_observation, box, obj["position"])}
+                    cached = self._person_reviews.verdict(candidate["target_id"])
+                    if cached is not None:
+                        candidate.update(cached)
+                    candidates.append(candidate)
                 if not candidates:
                     return {"found": True, "confirmation_required": True, "reason": "target_not_visible"}
                 ok, encoded = cv2.imencode(".jpg", self._latest_bgr, [cv2.IMWRITE_JPEG_QUALITY, 82])
                 if not ok:
                     return {"found": True, "confirmation_required": True, "reason": "selection_image_unavailable"}
                 person = self._person_tracker.status() or {}
+                self._follow_selection_evidence = self._person_reviews.capture()
+                unreviewed = [candidate for candidate in candidates if candidate.get("kind") != "non_person"]
                 self._follow_selection = {
                     "generation": self._intent_generation,
                     "observation_sequence": self._latest_observation_sequence,
                     "source_ts": self._latest_bgr_ts, "width": width, "height": height,
                     "image": "data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii"),
                     "candidates": candidates, "suggested_target_id": str(person.get("id") or ""),
-                    "review_state": "unavailable",
+                    "review_state": "unavailable" if unreviewed else "ready",
                 }
                 loop = getattr(self._llm_module, "_loop", None)
-                if self._vision_client is not None and loop is not None and loop.is_running():
+                if unreviewed and self._vision_client is not None and loop is not None and loop.is_running():
                     self._follow_selection["review_state"] = "reviewing"
                     self._follow_selection_future = asyncio.run_coroutine_threadsafe(
                         asyncio.wait_for(review_person_candidates(
-                            self._follow_selection["image"], candidates, self._vlm_chat,
+                            self._follow_selection["image"], unreviewed, self._vlm_chat,
                         ), timeout=self._llm_module._timeout_sec), loop,
                     )
             future = self._follow_selection_future
@@ -714,7 +734,9 @@ class VisualServoModule(Module, layer=4):
                 try:
                     reviewed = future.result()
                     for candidate in self._follow_selection["candidates"]:
-                        candidate.update(reviewed[candidate["target_id"]])
+                        if candidate["target_id"] in reviewed:
+                            candidate.update(reviewed[candidate["target_id"]], review_source="model")
+                    self._person_reviews.remember(reviewed, self._follow_selection_evidence, now=time.monotonic())
                     self._follow_selection["review_state"] = "ready"
                 except Exception as exc:
                     logger.warning("Follow candidate review failed: %s", exc)
@@ -732,7 +754,7 @@ class VisualServoModule(Module, layer=4):
             preview = self._follow_selection
             if not task.get("found"):
                 reason = task.get("reason", "follow_task_not_found")
-            elif task["terminal"] or follow_task_id != self._follow_task_id:
+            elif task["state"] != "running" or task["terminal"] or follow_task_id != self._follow_task_id:
                 reason = "follow_task_not_active"
             elif not task.get("confirmation_required"):
                 same = task.get("confirmed_target_id") == target_id
@@ -752,7 +774,7 @@ class VisualServoModule(Module, layer=4):
                   or not self._selection_image_matches()):
                 reason = "waiting_selection_image"
             elif not any(str(obj.id) == target_id and (obj.label or "").lower() in self._PERSON_LABELS
-                         for obj in self._latest_detections):
+                         for obj in self._person_reviews.filter(self._latest_detections)):
                 reason = "target_not_visible"
             if reason:
                 return self._follow_receipt(False, request_id, reason)
@@ -767,6 +789,7 @@ class VisualServoModule(Module, layer=4):
             self._follow_select_method = ""
             self._follow_tasks[follow_task_id].update(confirmation_required=False, confirmed_target_id=target_id)
             self._follow_selection = None
+            self._follow_selection_evidence = {}
         self._process_follow_frame()
         return self._follow_receipt(True, request_id, "target_confirmed", self._follow_tasks[follow_task_id])
 
@@ -1026,6 +1049,11 @@ class VisualServoModule(Module, layer=4):
         with self._state_lock:
             if self._mode != MODE_FOLLOW:
                 return
+            task = self._follow_tasks.get(self._follow_task_id)
+            if task is not None and task.get("confirmation_required"):
+                # The operator card owns selection; do not run a second VLM chooser.
+                self._publish_status()
+                return
             if self._follow_select_running:
                 self._target_visible = False
                 self._publish_status()
@@ -1033,7 +1061,7 @@ class VisualServoModule(Module, layer=4):
             generation = self._intent_generation
             sequence = self._latest_observation_sequence
             tracker = self._person_tracker
-            scene_objects = self._scene_objects_from_detections(self._latest_detections)
+            scene_objects = self._scene_objects_from_detections(self._person_reviews.filter(self._latest_detections))
             frame = self._latest_bgr if self._selection_image_matches() else None
             description = self._target_label if self._follow_select_pending and self._target_id is None else None
         prepared = tracker.prepare_observation(scene_objects, frame, description=description)
@@ -1053,7 +1081,7 @@ class VisualServoModule(Module, layer=4):
     ) -> None:
         """Tick follow."""
         if scene_objects is None:
-            scene_objects = self._scene_objects_from_detections(self._latest_detections)
+            scene_objects = self._scene_objects_from_detections(self._person_reviews.filter(self._latest_detections))
         matched_bgr = self._latest_bgr if self._selection_image_matches() else None
         selected_from_current_frame = False
 
@@ -1539,6 +1567,7 @@ class VisualServoModule(Module, layer=4):
             self._follow_selection_future = None
         self._follow_selection = None
         self._mode = MODE_IDLE
+        self._follow_selection_evidence = {}
         self._target_label = ""
         self._target_id = None
         self._follow_select_pending = False
@@ -1749,7 +1778,7 @@ class VisualServoModule(Module, layer=4):
             return "target_selection_unavailable"
         if not self._person_tracker.target_selected:
             people = [
-                detection for detection in self._latest_detections
+                detection for detection in self._person_reviews.filter(self._latest_detections)
                 if (detection.label or "").lower() in self._PERSON_LABELS
                 and (self._target_id is None or str(detection.id) == self._target_id)
             ]

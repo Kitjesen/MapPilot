@@ -437,19 +437,25 @@ PreparedArtifactHandle::QueryResult PreparedArtifactHandle::checkedQuery(
 }
 
 
-PreparedArtifactHandle::QueryResult PreparedArtifactHandle::metricQuery(
+PreparedArtifactHandle::MetricQueryResult PreparedArtifactHandle::metricQuery(
     const PointPose& start, const PointPose& goal, std::int32_t max_snap_cells,
     std::int32_t max_iterations, const MetricGeometry& geometry) const {
   MetricInput input(geometry);
-  LtMlsBuffer output{};
+  LtMlsPoseBuffer output{};
   const auto status = lt_mls_artifact_query_metric(
       handle_, metricPose(start), metricPose(goal), max_snap_cells, max_iterations,
       &input.raw, &output);
-  auto cells = copyCells(output);
-  lt_mls_free_buffer(&output);
+  std::vector<PointPose> poses;
+  poses.reserve(output.len);
+  for (std::uint64_t i = 0; i < output.len; ++i) {
+    const auto& pose = output.ptr[i];
+    poses.push_back({pose.point.x,pose.point.y,pose.point.z,
+        pose.has_yaw ? std::optional<double>(pose.yaw) : std::nullopt});
+  }
+  lt_mls_free_pose_buffer(&output);
   if (input.error) std::rethrow_exception(input.error);
   switch (status) {
-    case 0: return {QueryStatus::Found, std::move(cells)};
+    case 0: return {QueryStatus::Found, std::move(poses)};
     case 1: return {QueryStatus::Exhausted, {}};
     case 2: return {QueryStatus::Budget, {}};
     case 3: return {QueryStatus::Cancelled, {}};

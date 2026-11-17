@@ -66,12 +66,13 @@ export function conversationDependency(name: string) {
     runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('.css') ? {} : require(dependency) })
     return exports
   }
-  if (name.endsWith('/agentConversation/PlanCard.tsx')) {
+  if (name.endsWith('/agentConversation/PlanCard.tsx') || name.endsWith('/agentConversation/DecisionInbox.tsx') || name.endsWith('/FollowSelectionCard')) {
     const exports: Record<string, unknown> = {}
-    const code = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/PlanCard.tsx', import.meta.url), 'utf8'), {
+    const file = name.split('/').at(-1)!.replace(/\.tsx$/, '')
+    const code = ts.transpileModule(readFileSync(new URL(`../src/components/agentConversation/${file}.tsx`, import.meta.url), 'utf8'), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     }).outputText
-    runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('.css')
+    runInNewContext(code, { exports, require: (dependency: string) => dependency.endsWith('/services/api') ? {} : dependency.endsWith('.css')
       ? { default: new Proxy({}, { get: (_target, key) => key }) } : require(dependency) })
     return exports
   }
@@ -143,6 +144,7 @@ export function conversationDependency(name: string) {
     runInNewContext(source, { exports, require: (dependency: string) => {
       if (dependency.endsWith('/ObservationCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/LiveCameraCard')) return conversationDependency(dependency)
+      if (dependency.endsWith('/FollowSelectionCard')) return conversationDependency(dependency)
       if (dependency.endsWith('/ComputerProgressCard')) return { ComputerProgressCard: () => null }
       if (dependency.endsWith('/SavedMapCard')) return conversationDependency(dependency)
       if (dependency.includes('/stageshow/motion/')) return conversationDependency(dependency)

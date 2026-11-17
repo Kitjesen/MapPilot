@@ -1712,7 +1712,7 @@ def _check_nav_goal(
         criteria["goal_world"] = expected_goals[-1].get("goal_world", criteria["goal"])
     blockers, error = navigation._product_goal_blockers(
         criteria, motion, contacts, scenario.get("goal_status", {}),
-        stopped, float(scenario.get("ready_fraction", 0)),
+        stopped, float(scenario.get("ready_fraction", 0)), legs,
     )
     if blockers:
         raise RuntimeError("nav goal evidence: " + ", ".join(blockers))

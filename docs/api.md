@@ -358,7 +358,47 @@ Later turns use `get_agent_status` to query the same Follow through `navigation`
 or `cancel_agent_task(run_id)` to cancel it. Ordinary conversation leaves it
 running. The direct phrases `跟随状态`, `停止跟随`, and `stop following` also work.
 Existing conversation permissions and Gateway motion admission still apply.
-This integration uses the existing conversation routes, not a second execution API.
+The conversation creates the existing Follow with `require_confirmation=true`.
+No follow waypoint may be dispatched until the operator confirms a person,
+including in Full access mode. Read-only chat cannot prepare this task; default
+chat uses the person-confirmation card instead of a second generic approval.
+
+`GET /api/v1/follow/{follow_task_id}/selection?product_session_id=...` returns a
+retained JPEG frame, its dimensions, observation sequence and candidate boxes.
+`refresh=true` captures a new matching observation and invalidates the old one.
+The configured vision LLM reviews the complete scene once per retained frame.
+Candidate `kind` is `person`, `non_person` or `unknown`; non-person boxes are
+hidden, while unknown/unreviewed candidates cannot be confirmed. Missing model
+access, timeout or malformed output never implies a positive verdict. This is
+semantic filtering, not a single-frame liveness guarantee.
+
+Each candidate now includes `geometry`: `position_m` in the map frame,
+`camera_position_m`, `distance_m`, and sampled `depth` evidence. Coordinates
+without a known map/camera transform remain null. The depth record includes
+valid-pixel fraction, median and 10th/90th percentiles, surrounding-ring median,
+foreground gap and calibrated 3D plane RMS. It uses the RGB-D pair and resolved
+depth scale/range carried by that same `SemanticObservation`; missing units or
+misaligned images produce unavailable evidence. Box statistics may include
+background or occluders; neither planar geometry nor missing depth is itself a
+non-person classification.
+
+Negative model verdicts may be reused for up to 30 seconds on a continuously
+observed detector ID. Disappearance, unavailable/stale perception, camera/map
+context change, over 0.3 m drift from the reviewed map position, box IoU below
+0.5, or mean 8×8 RGB crop change over 0.1 invalidates reuse. These are conservative
+cache-invalidation defaults, not a liveness classifier or field-validated identity
+guarantee. Delayed results are applied only to still-matching track evidence.
+Cached negatives are excluded from local Follow matching and omitted from a new
+model review; raw perception remains available. Positive and unknown verdicts
+are not reused as permission to track. Explicit person confirmation still applies.
+
+`POST /api/v1/follow/{follow_task_id}/confirm` takes `follow_task_id`,
+`product_session_id`, `target_id`, `observation_sequence`, `request_id` and
+`client_id`. The route applies the existing motion guard and command journal;
+VisualServo checks the exact task, retained frame, review verdict and current
+observation before binding the chosen target. The method is not an Agent/MCP
+skill: the model cannot approve its own recommendation. Existing direct Follow
+callers retain their behavior unless they request confirmation.
 Model-driven execution currently uses the Agents SDK providers, including Kimi.
 The Codex App Server and ACP branches do not yet forward LingTu tool definitions
 or handlers. The explicit query/cancel phrases are handled before model dispatch.

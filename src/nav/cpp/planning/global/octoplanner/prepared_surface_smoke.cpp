@@ -220,6 +220,23 @@ int main() try {
   require(planner.validateRoute(route).valid,
           "Rust route failed the final OctoMap geometry check");
 
+  for (const PointPose target : {PointPose{.125, -.075, .325}, PointPose{.975, .025, .41}}) {
+    planner.makePlan(start, target);
+    planner.getPlannerResults(route);
+    require(!route.empty() && planner.searchInfo().used_rust_graph,
+            "Rust rejected an in-tolerance terminal");
+    const auto &end = route.back();
+    require(std::hypot(end.x-target.x, end.y-target.y, end.z-target.z) <=
+                config.terminal_goal_tolerance_m + 1e-6 &&
+            std::hypot(end.x-target.x, end.y-target.y) <=
+                config.terminal_goal_xy_tolerance_m + 1e-6 &&
+            std::abs(end.z-target.z) <= config.terminal_goal_z_tolerance_m + 1e-6,
+            "Rust terminal exceeded the configured goal region");
+    require(planner.validateRoute(route).valid, "goal adjustment bypassed route geometry");
+    if (target.z == .41)
+      require(std::abs(end.z-.4) < 1e-6, "goal adjustment lost the finer height spacing");
+  }
+
   planner.setCancelCheck([] { return true; });
   planner.makePlan(start, goal);
   planner.getPlannerResults(route);
@@ -233,6 +250,9 @@ int main() try {
   planner.makePlan(start, goal);
   planner.getPlannerResults(route);
   require(route.empty(), "closed wall was crossed by the global route");
+  require(!planner.searchInfo().rust_fallback && planner.searchInfo().outcome ==
+              OctoPlanner3D::SearchInfo::Outcome::Exhausted,
+          "Rust exhaustion triggered a second planning backend");
 
   std::cout << "Prepared Rust surface integration passed\n";
   return 0;

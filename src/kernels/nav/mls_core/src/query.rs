@@ -16,7 +16,7 @@ pub(crate) struct Budget {
 }
 
 impl Budget {
-    fn spend(&mut self) -> Result<(), QueryError> {
+    pub(crate) fn spend(&mut self) -> Result<(), QueryError> {
         if self.remaining == 0 {
             return Err(QueryError::Budget);
         }

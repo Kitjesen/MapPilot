@@ -79,6 +79,9 @@ pub struct LtMlsMetricConfig {
     pub body_offset: f64,
     pub start: LtMlsPose,
     pub start_exemption: u8,
+    pub goal_tolerance: f64,
+    pub goal_xy_tolerance: f64,
+    pub goal_z_tolerance: f64,
 }
 
 pub(crate) struct Index {
@@ -133,6 +136,87 @@ pub(crate) struct Checker<'a> {
 }
 
 impl Checker<'_> {
+    pub(crate) fn resolve_goal(
+        &self,
+        start: LtMlsPose,
+        goal: LtMlsPose,
+        snap: i32,
+        budget: &mut crate::query::Budget,
+    ) -> Result<LtMlsPose, crate::query::QueryError> {
+        use crate::query::QueryError;
+        let c = self.config;
+        let allowed = |pose: LtMlsPose| {
+            // Without a requested heading, the connector decides body orientation.
+            if c.body_offset > 0.0 && pose.has_yaw == 0 {
+                self.base_query(pose.point.native(), c.ground_support != 0) == ROUTE_OK
+            } else {
+                self.oriented_query(pose.point.native(), pose.yaw, c.ground_support != 0, true)
+                    == ROUTE_OK
+            }
+        };
+        if self.cancelled() {
+            return Err(QueryError::Cancelled);
+        }
+        if allowed(goal) {
+            return Ok(goal);
+        }
+        // Keep the existing map-spaced, actual-start-anchored terminal lattice.
+        let r = c.resolution;
+        let rz = if c.support_height > 0.0 && c.max_slope > 0.0 {
+            r / (1.0 / c.max_slope).ceil().max(1.0)
+        } else {
+            r
+        };
+        let seed = LtMlsPoint {
+            x: start.point.x + ((goal.point.x - start.point.x) / r).round() * r,
+            y: start.point.y + ((goal.point.y - start.point.y) / r).round() * r,
+            z: start.point.z + ((goal.point.z - start.point.z) / rz).round() * rz,
+        };
+        let radius = snap.min(((c.goal_tolerance / r).ceil() as i32).saturating_add(1));
+        let vertical = ((radius as f64 * r / rz).ceil() as i32)
+            .min(((c.goal_z_tolerance / rz).ceil() as i32).saturating_add(1));
+        let mut candidates = Vec::new();
+        for x in -radius..=radius {
+            if self.cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            for y in -radius..=radius {
+                for z in -vertical..=vertical {
+                    let point = LtMlsPoint {
+                        x: seed.x + x as f64 * r,
+                        y: seed.y + y as f64 * r,
+                        z: seed.z + z as f64 * rz,
+                    }
+                    .native();
+                    let xy = (point.x - goal.point.x).hypot(point.y - goal.point.y);
+                    let dz = (point.z - goal.point.z).abs();
+                    let distance = xy.hypot(dz);
+                    if distance <= c.goal_tolerance + EPSILON
+                        && xy <= c.goal_xy_tolerance + EPSILON
+                        && dz <= c.goal_z_tolerance + EPSILON
+                    {
+                        candidates.push((distance, xy, z, x, y, LtMlsPose { point, ..goal }));
+                    }
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            a.0.total_cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then((a.2, a.3, a.4).cmp(&(b.2, b.3, b.4)))
+        });
+        for (_, _, _, _, _, candidate) in candidates {
+            if self.cancelled() {
+                return Err(QueryError::Cancelled);
+            }
+            budget.spend()?;
+            if allowed(candidate) {
+                return Ok(candidate);
+            }
+        }
+        Err(QueryError::Exhausted)
+    }
+
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
         let Some(levels) = self.occupied_columns.get(&(x, y)) else {
             return &[];
@@ -245,21 +329,41 @@ impl Checker<'_> {
     }
 
     fn floor(&self, point: LtMlsPoint) -> Option<i32> {
+        if self.config.direct_support_only != 0 {
+            return self.observed_floor(point);
+        }
         let cell = self.cell(point);
         let (low, high) = self.support_range(point);
-        if self.config.direct_support_only == 0 {
-            let z = self
-                .surface
-                .get(&(cell.x, cell.y))?
-                .iter()
-                .copied()
-                .filter(|&z| z <= cell.z)
-                .max()?;
-            return (z >= cell.z - high && z <= cell.z - low).then_some(z);
-        }
+        let z = self
+            .surface
+            .get(&(cell.x, cell.y))?
+            .iter()
+            .copied()
+            .filter(|&z| z <= cell.z)
+            .max()?;
+        (z >= cell.z - high && z <= cell.z - low).then_some(z)
+    }
+
+    pub(crate) fn observed_floor(&self, point: LtMlsPoint) -> Option<i32> {
+        let cell = self.cell(point);
+        let (low, high) = self.support_range(point);
         (low..=high)
             .map(|depth| cell.z - depth)
             .find(|&z| self.observed_support(SurfaceCell::new(cell.x, cell.y, z)))
+    }
+
+    pub(crate) fn attachment(&self, point: LtMlsPoint) -> Option<SurfaceCell> {
+        let cell = self.cell(point);
+        if let Some(z) = self.floor(point) {
+            return Some(SurfaceCell::new(cell.x, cell.y, z));
+        }
+        if self.config.direct_support_only != 0 {
+            return None;
+        }
+        let (low, high) = self.support_range(point);
+        (low..=high)
+            .map(|depth| SurfaceCell::new(cell.x, cell.y, cell.z - depth))
+            .find(|surface| self.inferred.contains(surface))
     }
 
     fn supported(&self, point: LtMlsPoint) -> bool {
@@ -569,7 +673,7 @@ impl Checker<'_> {
         &self,
         from: LtMlsPoint,
         to: LtMlsPoint,
-        support: bool,
+        start_yaw: Option<f64>,
         yaw: f64,
     ) -> Option<(u32, LtMlsPoint)> {
         let c = self.config;
@@ -608,16 +712,32 @@ impl Checker<'_> {
             let failure = self.oriented_query(
                 point,
                 yaw,
-                support && c.ground_support != 0,
+                c.ground_support != 0,
                 !self.preblocked.is_empty(),
             );
             if failure == ROUTE_OK {
                 continue;
             }
-            if failure != ROUTE_UNSUPPORTED
-                || (to.z - from.z).abs() < 1e-7
-                || self.oriented_query(point, yaw, false, !self.preblocked.is_empty()) != ROUTE_OK
-            {
+            if failure != ROUTE_UNSUPPORTED {
+                return Some((failure, point));
+            }
+            let clearance = self.oriented_query(point, yaw, false, !self.preblocked.is_empty());
+            if clearance != ROUTE_OK {
+                return Some((clearance, point));
+            }
+            // Missing observations under the initial body are not a measured drop.
+            let cell = self.cell(point);
+            let departure = start_yaw.is_some_and(|yaw| {
+                self.occupied_z(cell.x, cell.y, i32::MIN, cell.z).is_empty()
+                    && self.offsets().any(|offset| {
+                        let center = shifted(from, offset, yaw);
+                        (point.x - center.x).hypot(point.y - center.y) <= c.robot_radius
+                    })
+            });
+            if departure {
+                continue;
+            }
+            if (to.z - from.z).abs() < 1e-7 {
                 return Some((failure, point));
             }
             let lower = from.z.min(to.z);
@@ -943,6 +1063,13 @@ pub(crate) fn prepare<'a>(
         && config.support_patch_radius_cells >= 0
         && config.support_patch_min_samples >= 0
         && config.start.point.finite()
+        && [
+            config.goal_tolerance,
+            config.goal_xy_tolerance,
+            config.goal_z_tolerance,
+        ]
+        .iter()
+        .all(|v| !v.is_nan() && *v >= 0.0)
         && (config.start.has_yaw == 0 || config.start.yaw.is_finite())
         && regions.iter().all(|r| {
             r.min.finite()
@@ -1082,7 +1209,9 @@ impl Checker<'_> {
             if failure != ROUTE_OK {
                 return route_failure(failure, index as i32, self.cell(to));
             }
-            if let Some((failure, point)) = self.sweep(from, to, true, heading) {
+            if let Some((failure, point)) =
+                self.sweep(from, to, actual_start.then_some(incoming), heading)
+            {
                 return route_failure(failure, index as i32, self.cell(point));
             }
             previous_heading = Some(heading);
@@ -1149,6 +1278,81 @@ mod tests {
         let state = state((0..6).map(|x| SurfaceCell::new(x, 0, 0)).collect());
         let route = [point(0.1, 0.1, 0.45), point(0.9, 0.1, 0.45)];
         assert_eq!(check(&state, &route, config(), &[]).valid, 1);
+    }
+
+    #[test]
+    fn observed_stance() {
+        let mut map = state(vec![SurfaceCell::new(0, 0, 0)]);
+        map.artifact
+            .surface
+            .inferred
+            .extend([SurfaceCell::new(0, 0, 1), SurfaceCell::new(2, 0, 0)]);
+        let c = LtMlsMetricConfig {
+            resolution: 0.1,
+            support_tolerance: 0.1,
+            direct_support_only: 0,
+            ..config()
+        };
+        let checker = prepare(&map, c, &[], &[], None, std::ptr::null_mut()).unwrap();
+        let actual = point(0.05, 0.05, 0.45);
+        assert_eq!(checker.attachment(actual).unwrap().z, 1);
+        assert_eq!(checker.observed_floor(actual), Some(0));
+        let inferred = point(0.25, 0.05, 0.45);
+        assert!(checker.attachment(inferred).is_some());
+        assert_eq!(checker.observed_floor(inferred), None);
+    }
+
+    #[test]
+    fn goal_region() {
+        use crate::query::{Budget, QueryError};
+        let mut cells: Vec<_> = (0..6).map(|x| SurfaceCell::new(x, 0, 0)).collect();
+        cells.push(SurfaceCell::new(2, 0, 2));
+        let state = state(cells);
+        let start = pose(point(0.1, 0.1, 0.45), None);
+        let goal = pose(point(0.5, 0.1, 0.45), None);
+        let c = LtMlsMetricConfig {
+            goal_tolerance: 0.21,
+            goal_xy_tolerance: 0.21,
+            goal_z_tolerance: 0.01,
+            ..config()
+        };
+        let checker = prepare(&state, c, &[], &[], None, std::ptr::null_mut()).unwrap();
+        let resolve = |checker: &Checker<'_>, target| {
+            checker.resolve_goal(start, target, 4, &mut Budget { remaining: 100 })
+        };
+        assert_eq!(resolve(&checker, start).unwrap().point, start.point);
+        let terminal = resolve(&checker, goal).unwrap();
+        assert!((terminal.point.x - goal.point.x).abs() <= 0.21);
+        assert_eq!(checker.check_connection(start, terminal, true).valid, 1);
+        for limits in [
+            LtMlsMetricConfig {
+                goal_tolerance: 0.19,
+                ..c
+            },
+            LtMlsMetricConfig {
+                goal_xy_tolerance: 0.19,
+                ..c
+            },
+        ] {
+            let checker = prepare(&state, limits, &[], &[], None, std::ptr::null_mut()).unwrap();
+            assert!(matches!(
+                resolve(&checker, goal),
+                Err(QueryError::Exhausted)
+            ));
+        }
+        let region = [LtMlsMetricRegion {
+            min: point(0.0, 0.0, 0.2),
+            max: point(1.2, 0.2, 1.0),
+        }];
+        let checker = prepare(&state, c, &region, &[], None, std::ptr::null_mut()).unwrap();
+        assert!(matches!(
+            resolve(&checker, goal),
+            Err(QueryError::Exhausted)
+        ));
+        assert!(matches!(
+            checker.resolve_goal(start, goal, 4, &mut Budget { remaining: 0 }),
+            Err(QueryError::Budget)
+        ));
     }
 
     #[test]
@@ -1419,6 +1623,51 @@ mod tests {
     }
 
     #[test]
+    fn departure() {
+        let cells: Vec<_> = (3..20).map(|x| SurfaceCell::new(x, 0, 0)).collect();
+        let c = LtMlsMetricConfig {
+            resolution: 0.1,
+            robot_radius: 0.32,
+            body_offset: 0.23,
+            actual_start: 1,
+            ..config()
+        };
+        let start = pose(point(0.05, 0.05, 0.45), Some(0.0));
+        let end = pose(point(1.05, 0.05, 0.45), None);
+        let map = state(cells.clone());
+        let checker = prepare(&map, c, &[], &[], None, std::ptr::null_mut()).unwrap();
+        assert_eq!(checker.check_poses(&[start, end]).valid, 1);
+        assert_eq!(
+            checker.check_connection(start, end, false).failure_kind,
+            ROUTE_UNSUPPORTED
+        );
+        let sideways = pose(start.point, Some(std::f64::consts::FRAC_PI_2));
+        assert_eq!(
+            checker.check_poses(&[sideways, end]).failure_kind,
+            ROUTE_UNSUPPORTED
+        );
+        assert_eq!(
+            checker.check_poses(&[start, end, start]).failure_kind,
+            ROUTE_UNSUPPORTED
+        );
+        let blocked = [SurfaceCell::new(2, 0, 4)];
+        let checker = prepare(&map, c, &[], &blocked, None, std::ptr::null_mut()).unwrap();
+        assert_eq!(checker.check_poses(&[start, end]).failure_kind, ROUTE_NO_GO);
+        let mut measured_drop = cells.clone();
+        measured_drop.extend((0..3).map(|x| SurfaceCell::new(x, 0, -5)));
+        let map = state(measured_drop);
+        assert_eq!(
+            check(&map, &[start.point, end.point], c, &[]).failure_kind,
+            ROUTE_UNSUPPORTED
+        );
+        let map = state(cells.into_iter().filter(|cell| cell.x >= 8).collect());
+        assert_eq!(
+            check(&map, &[start.point, end.point], c, &[]).failure_kind,
+            ROUTE_UNSUPPORTED
+        );
+    }
+
+    #[test]
     fn geometry_index_reuse() {
         let mut state = state(Vec::new());
         let mut c = config();
@@ -1439,6 +1688,20 @@ mod tests {
         state.update_region(crate::RegionBounds::new(3, 3, 0, 0, 4, 4), &[], &[]);
         assert!(state.geometry_index.get().is_none());
         assert_eq!(check(&state, &route, c, &[]).valid, 1);
+    }
+
+    #[test]
+    fn attachment_uses_standing_band() {
+        let state = state(vec![SurfaceCell::new(0, 0, 0), SurfaceCell::new(0, 0, 10)]);
+        let checker = prepare(&state, config(), &[], &[], None, std::ptr::null_mut()).unwrap();
+        for z in [0.45, 0.53] {
+            assert_eq!(
+                checker.attachment(point(0.1, 0.1, z)),
+                Some(SurfaceCell::new(0, 0, 0))
+            );
+        }
+        assert_eq!(checker.attachment(point(0.1, 0.1, 0.7)), None);
+        assert_eq!(checker.attachment(point(0.3, 0.1, 0.45)), None);
     }
 
     fn column_fixture() -> PlannerState {

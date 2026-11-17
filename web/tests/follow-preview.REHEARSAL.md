@@ -1,26 +1,33 @@
 # Follow conversation preview
 
-Reference: Stageshow `ai-chat` question / tool / reply rhythm. The rendering uses
-LingTu's existing AgentConversation and InstructionTaskBar instead of copied UI.
+Open `http://127.0.0.1:47685/tests/follow-preview.html` with the web Vite server.
+The preview renders the production `AgentConversation` and `FollowSelectionCard`.
+All fetches are answered by fixtures or rejected: no Host, model or robot is contacted.
 
-Scope: preview files only; the production components are unchanged. All fetches
-are answered by fixture data or rejected. No Host, model or robot is contacted.
-The status and stop controls use the existing task presentation code.
+## In-chat flow
 
-Beats: selecting, following, lost, cancellation pending, cancelled. Playback is
-15 seconds, once, with an explicit replay button; stages can also be selected.
-The final cancellation changes the task bar, not the historical chat reply.
+- Switch between original proposals (8) and the reviewed result (7) on one frozen frame.
+- Open exclusion reasons and click candidate 8 to locate the advertising portrait in the original image.
+- Candidate numbering stays unchanged. Original proposals, rejected candidates and unknown candidates cannot authorize following.
+- Select a retained person and confirm in the card. Use chat messages `跟随状态`, `模拟目标丢失`, `停止跟随` and `重新选人` for the remaining simulated stages.
+- Click the conversation title to rename it; Enter saves, Escape cancels. A failed save retains the draft for retry.
+- The Bot menu uses a fixed 32 px avatar lane and compact text. Bot naming remains under `Bot 名称与外观`.
 
-Checks: Chrome at 1000×920 and 390×844; selection, stop, confirmation, replay,
-console errors, outbound requests, and horizontal overflow. Recording and stills
-are in `build/follow-preview/`; `build/check-follow-preview.mjs` repeats the check.
-The screenshot revealed narrow-screen stage labels wrapping; the controls now
-use a separate row and keep each label whole. TypeScript checks include this
-preview entry and its imported production components.
+The image is MOT17-09 frame 0. `fixtures/follow-review.json` contains the saved
+real Kimi K3 response: candidates 1–7 retained, candidate 8 rejected as an
+advertising portrait. The call took 25.41 seconds. The preview translates that
+exclusion reason into Chinese for display; the original response is retained.
+Control receipts and lifecycle changes are simulated. This frame has no measured
+RGB-D data; do not interpret the model's wording about depth as sensor evidence.
 
-Stageshow gate: film.mjs does not recognize this ordinary product-component tree
-as a Stage (`no visible stages`). It did not produce a passing gate; the custom
-browser capture supplies the interaction evidence instead.
+## Checks
 
-Not checked: real model interpretation, live perception, robot movement or NX
-deployment. Proactive loss notifications are not simulated as implemented.
+`tests/followSelectionUi.test.ts` checks stable numbering, shared image/box
+geometry, and confirmation gates in original, reviewed, unknown and terminal states.
+`build/check-follow-selection.mjs` exercises the real browser at 1100×1120 and
+390×920: comparison, exclusion lookup, title cancel/save/failure retry, compact Bot
+menu, person confirmation, in-chat loss/cancel, network isolation and overflow.
+Screenshots, recording and results are in `build/follow-preview/`.
+
+Not checked: current live perception, robot movement or NX deployment. A single
+reviewed frame does not establish general detection accuracy or liveness.

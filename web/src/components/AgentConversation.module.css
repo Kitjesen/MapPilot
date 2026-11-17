@@ -1,9 +1,11 @@
 :global(.global-task-slot) { max-height: calc(100dvh - 40px); }
 .conversation { --chat-link: #2563eb; --chat-primary: #2563eb; --chat-primary-hover: #1d4ed8; --chat-success: #2e7d5b; --chat-warning: #996116; --chat-danger: #b84049; --chat-strong: var(--text); position: relative; order: 1; display: flex; flex-direction: column; flex: 0 1 auto; width: 100%; min-width: 0; min-height: 0; max-height: calc(100dvh - 40px); border-radius: 20px; background: var(--bg-layer-1); box-shadow: 0 12px 40px #0000000d, 0 2px 8px #00000005; color: var(--text); font-size: 14px; }
 .history { position: relative; animation: conversationReveal 240ms cubic-bezier(.2,.8,.2,1); transform-origin: bottom center; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; max-height: min(60dvh, 520px); border: 0; border-radius: 20px 20px 0 0; background: transparent; overflow: hidden; }
+.history:has([data-follow-review]) { max-height: min(76dvh, 840px); }
 .heading { display: flex; align-items: center; flex-shrink: 0; gap: 8px; min-height: 40px; padding: 4px 8px 0 16px; font-size: 12px; font-weight: 500; color: var(--text-dim); }
 .heading .iconButton { margin-left: 0; }
 .heading .conversationTitle { flex: 1; }
+.heading .renameForm { flex: 1; min-width: 0; }
 .conversationTitle { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 32px; padding: 0 2px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .conversationTitle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversationTitle > svg { flex-shrink: 0; }
@@ -217,10 +219,11 @@
 .botSwitcher > summary::-webkit-details-marker { display: none; }
 .botSwitcher > summary > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .botSwitcher > summary:hover { background: var(--bg-layer-2); }
-.botSwitcherPanel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; display: flex; flex-direction: column; gap: 2px; width: min(240px, calc(100vw - 32px)); padding: 5px; border: 1px solid color-mix(in srgb, var(--text) 9%, transparent); border-radius: 13px; background: var(--bg-layer-1); box-shadow: 0 12px 32px #00000012, 0 2px 6px #00000006; }
+.botSwitcherPanel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 5; display: flex; flex-direction: column; gap: 2px; width: min(208px, calc(100vw - 32px)); padding: 5px; border: 1px solid color-mix(in srgb, var(--text) 9%, transparent); border-radius: 13px; background: var(--bg-layer-1); box-shadow: 0 12px 32px #00000012, 0 2px 6px #00000006; }
 .botSwitcherPanel button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 5px 7px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .botSwitcherPanel button:hover, .botSwitcherPanel button:focus-visible { background: color-mix(in srgb, var(--text) 5%, transparent); }
-.botSwitcherPanel button > span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.botSwitcherPanel .botOptionText { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.botOptionText strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .botSwitcherPanel button strong { font-weight: 550; }
 .botSwitcherPanel button small { overflow: hidden; color: var(--text-dim); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .botSwitcherEdit { margin-top: 3px; border-top: 1px solid color-mix(in srgb, var(--text) 7%, transparent) !important; border-radius: 0 0 9px 9px !important; color: var(--text-dim) !important; }

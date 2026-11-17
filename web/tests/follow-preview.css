@@ -1,28 +1,9 @@
-.follow-demo { max-width: 740px; margin: 28px auto; padding: 0 22px 22px; }
-.follow-demo-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 22px; font-size: 13px; }
-.follow-demo-heading > div { display: flex; gap: 12px; align-items: center; }
-.follow-demo-heading strong { font-size: 18px; font-weight: 600; }
-.follow-demo-heading span { color: var(--text-dim); }
+.follow-demo { max-width: 920px; margin: 20px auto; padding: 0 20px 20px; }
+.follow-demo-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; color: var(--text-dim); font-size: 12px; }
 .follow-demo-badge { padding: 5px 9px; background: #f3f5f8; border-radius: 7px; font-size: 11px; }
-.follow-demo-steps { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 20px; }
-.follow-demo-steps > div { display: flex; gap: 3px; }
-.follow-demo-steps button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 7px 9px; color: #667085; font: inherit; font-size: 12px; border: 0; border-radius: 9px; background: transparent; cursor: pointer; transition: background 180ms, color 180ms; }
-.follow-demo-steps button > span { font-size: 10px; opacity: .7; }
-.follow-demo-steps button:hover { background: #f3f5f8; color: #303845; }
-.follow-demo-steps button[aria-pressed="true"] { background: #edf3ff; color: #2461c8; }
-.follow-demo-steps button:focus-visible { outline: 2px solid #789ee9; outline-offset: 3px; }
-.follow-demo-steps .follow-demo-play { color: #2461c8; background: #f3f6fc; white-space: nowrap; }
-.follow-demo-stage { display: flex; flex-direction: column; gap: 14px; }
-.follow-demo-stage > * { flex-shrink: 0; }
-.follow-demo footer { color: #7b8593; font-size: 11px; text-align: center; margin: 18px 0 0; }
+.follow-demo > footer { color: #7b8593; font-size: 11px; text-align: center; margin: 14px 0 0; }
 @media (max-width: 600px) {
-  .follow-demo { margin: 18px auto; padding: 0 12px 18px; }
-  .follow-demo-heading { flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
-  .follow-demo-steps { flex-wrap: wrap; margin-bottom: 14px; }
-  .follow-demo-steps > div { flex: 1 0 100%; justify-content: space-between; }
-  .follow-demo-steps button { padding: 7px; min-height: 40px; }
-  .follow-demo-steps .follow-demo-play { margin-left: auto; }
+  .follow-demo { margin: 12px auto; padding: 0 10px 16px; }
+  .follow-demo-heading { flex-wrap: wrap; gap: 8px; }
 }
-@media (prefers-reduced-motion: reduce) { .follow-demo-steps button { transition: none; } }
-.follow-demo-steps button { white-space: nowrap; }
 html:has(.follow-demo), body:has(.follow-demo), #root:has(.follow-demo) { height: auto; min-height: 100%; overflow: visible; }

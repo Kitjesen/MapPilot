@@ -117,6 +117,14 @@ test('an empty history stays compact through background refresh', () => {
   assert.match(html({ loading: true, snapshot: null }), /读取中/)
 })
 
+test('conversation title editing is separate from history and Bot naming', () => {
+  const markup = html({ snapshot: { conversation_id: 'follow', metadata: { title: '人员跟随' },
+    messages: [{ id: 'one', seq: 1, role: 'user', turn_id: 'turn', text: '跟随' }], turns: [] } })
+  assert.match(markup, /aria-label="修改会话标题"[^>]*>[\s\S]*?人员跟随/)
+  assert.match(markup, /aria-label="会话历史"/)
+  assert.match(markup, /Bot 名称与外观/)
+})
+
 test('a quote is rendered beside a clean question draft and linked from sent history', () => {
   const answer = { id: 'answer', seq: 1, role: 'assistant', turn_id: 'one', text: '**地图查看完成。**\n\n[查看使用指南](https://example.com/guide)' }
   const markup = html({ draft: '补面具体怎么做？', replyTo: 'answer', snapshot: { messages: [answer], turns: [] } })
@@ -247,7 +255,7 @@ test('sending and uploading are processing while connection failures stop activi
 test('suggestions fill the draft without submitting a message', () => {
   const drafts: string[] = []
   let sends = 0
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useEffect() {}, useLayoutEffect() {} })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect() {}, useLayoutEffect() {} })
   const tree = render({ locale: 'zh', controller: controller({ setDraft: (value: string) => drafts.push(value), send: () => { sends++ } }) })
   type Element = { type?: string; props?: { children?: unknown; onClick?: () => void } }
   function elements(node: unknown): Element[] {
@@ -427,7 +435,7 @@ test('composer offers an add menu and keeps history in the header', () => {
   assert.doesNotMatch(addMenu, /Bot 形象与角色|更多机器人设置/)
   const header = markup.match(/<header[^>]*>([\s\S]*?)<\/header>/)![1]
   assert.match(header, /aria-label="会话历史"/)
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
+  assert.match(header, /aria-label="切换 Bot"/)
   assert.doesNotMatch(markup, /aria-label="会话记录"/)
 })
 
@@ -538,8 +546,8 @@ test('the header keeps Bot beside an icon-only share entry and waits for session
   const share = header.match(/<button[^>]*aria-label="分享对话"[^>]*>([\s\S]*?)<\/button>/)![1]
   assert.match(share, /<svg/)
   assert.equal(share.replace(/<[^>]*>/g, '').trim(), '')
-  assert.match(header, /aria-label="打开 Bot 形象与角色"/)
-  assert.ok(header.indexOf('打开 Bot 形象与角色') < header.indexOf('aria-label="分享对话"'))
+  assert.match(header, /aria-label="切换 Bot"/)
+  assert.ok(header.indexOf('切换 Bot') < header.indexOf('aria-label="分享对话"'))
   const waiting = html({ sessionBusy: 'two', snapshot: { ...snapshot, metadata: { ...snapshot.metadata, archived: true } } })
   assert.match(waiting, /aria-label="分享对话"[^>]*disabled=""/)
 })
@@ -681,7 +689,7 @@ test('a loaded search target receives focus and does not resume following new me
 test('only pending approvals show actions and decisions retain the approval identity', () => {
   const effects: Array<() => void> = []
   const decisions: unknown[][] = []
-  const render = component({ useRef: () => ({ current: null }), useState: () => [false, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
+  const render = component({ useRef: () => ({ current: null }), useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {}, useEffect: (effect: () => void) => effects.push(effect) })
   const tree = render({ locale: 'zh', controller: controller({
     decideApproval: (...args: unknown[]) => decisions.push(args),
     snapshot: { messages: [], turns: [], approvals: [
@@ -882,7 +890,7 @@ test('new sensor monitor tool results open once without replaying history or fai
   let effects: Array<() => void> = []
   const render = component({
     useRef: (initial: unknown) => refIndex++ === 0 ? seen : { current: initial },
-    useState: () => [false, () => {}], useLayoutEffect() {},
+    useState: (initial: unknown) => [typeof initial === 'function' ? initial() : initial, () => {}], useLayoutEffect() {},
     useEffect: (effect: () => void) => effects.push(effect),
   }, {
     '../hooks/useSensorMonitor.ts': { useSensorMonitor: () => (view: string) => opened.push(view) },

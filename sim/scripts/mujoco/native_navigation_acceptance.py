@@ -4414,7 +4414,7 @@ def _product_goal_state(status):
     return state.upper() if isinstance(state, str) else NavigationGoalState(state).name
 
 
-def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_fraction):
+def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_fraction, legs=()):
     """Evaluate physical evidence separately from command acceptance."""
     limits = manifest["thresholds"]
     blockers = []
@@ -4430,7 +4430,14 @@ def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_frac
             blockers.append("goal_height_error")
     if motion.get("path_length_xy_m", 0) < limits["min_motion_m"]:
         blockers.append("insufficient_motion")
-    if motion.get("net_displacement_xy_m", 0) < limits["min_net_displacement_m"]:
+    if manifest.get("goals"):
+        if len(legs) != len(manifest["goals"]):
+            blockers.append("leg_motion_evidence_missing")
+        for index, leg in enumerate(legs):
+            errors = leg.get("evidence", {}).get("physical_goal_error_m", [])
+            if not errors or errors[0] - errors[-1] < limits["min_net_displacement_m"]:
+                blockers.append(f"leg_{index}_insufficient_displacement")
+    elif motion.get("net_displacement_xy_m", 0) < limits["min_net_displacement_m"]:
         blockers.append("insufficient_displacement")
     if live.get("complete") is not True or live.get("entity_contact_steps") != 0:
         blockers.append("entity_collision_or_missing_evidence")
@@ -4439,6 +4446,10 @@ def _product_goal_blockers(manifest, motion, live, goal_status, stop, ready_frac
     if stop.get("terminal_ack") is not True or stop.get("outcome") != "zero_applied":
         blockers.append("terminal_zero_not_confirmed")
     return blockers, error
+
+
+def _stop_request_satisfied(evidence):
+    return evidence.get("state") in {"NOT_REQUESTED", "CONFIRMED"}
 
 
 def _product_runtime_sample(root, product_session_id, max_age, localization="ltlio"):
@@ -4472,7 +4483,7 @@ def _product_runtime_sample(root, product_session_id, max_age, localization="ltl
 
 
 def _stair_leg_evidence(leg, samples, profile_report, task_id, initial_profile, limits):
-    """Require physical floor arrival and actual model restoration for a stair leg."""
+    """Require floor arrival and any explicitly requested model restoration."""
     events = [event for event in profile_report.get("events", []) if event.get("task_id") == task_id]
     ready = [event for event in events if event.get("phase") == "ready"
              and event.get("active_profile") == event.get("requested_profile")
@@ -4480,12 +4491,12 @@ def _stair_leg_evidence(leg, samples, profile_report, task_id, initial_profile, 
     requirements = [event.get("requirement") for event in ready]
     expected = leg.get("profile_sequence", [])
     blockers = []
-    if requirements != expected:
+    if expected and requirements != expected:
         blockers.append("profile_sequence_incomplete")
     if expected and (not ready or ready[-1].get("active_profile") != initial_profile):
         blockers.append("original_model_not_restored")
-    if any(event.get("active_profile") == initial_profile for event in ready
-           if event.get("requirement") in {"stairs_up", "stairs_down"}):
+    if expected and any(event.get("active_profile") == initial_profile for event in ready
+                        if event.get("requirement") in {"stairs_up", "stairs_down"}):
         blockers.append("stair_model_did_not_change")
     positions = [sample["live"]["position_m"] for sample in samples
                  if len((sample.get("live") or {}).get("position_m", [])) >= 3]
@@ -4498,7 +4509,7 @@ def _stair_leg_evidence(leg, samples, profile_report, task_id, initial_profile, 
 
 
 def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
-    """Exercise the Gateway click route on an already active LTLIO nav Product."""
+    """Exercise Gateway map goals on an already active navigation Product."""
     from urllib.parse import quote
 
     from sim.scripts.mujoco.product_acceptance import _uses_mujoco_truth_localization
@@ -4606,8 +4617,7 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
                             stop_sample = _product_runtime_sample(root, product_session_id, max_age,
                                                                   report["localization"])
                             evidence = stop_sample["nav"].get("motion_stop_evidence") or {}
-                            if (evidence.get("state") == "CONFIRMED" or
-                                    evidence.get("confirmation_state") == "confirmed"):
+                            if _stop_request_satisfied(evidence):
                                 leg_report["samples"].append({**stop_sample, "goal": goal,
                                                                "physical_goal_error_m": None,
                                                                "input_ready": bool((stop_sample["nav"].get("input_gate") or {}).get("ready")),
@@ -4628,7 +4638,7 @@ def run_attached_goal(plan, run_plan_path, product_session_id, manifest, out):
                 "terminal_stop_evidence": leg_report["samples"][-1].get("stop_evidence", {})
                 if leg_report["samples"] else {},
             }
-            if leg.get("profile_sequence"):
+            if leg.get("profile_sequence") or "max_goal_height_error_m" in limits:
                 profiles = _load_json(root / "mujoco_feeder.profiles.json")
                 if profiles.get("product_session_id") != product_session_id:
                     profiles = {}

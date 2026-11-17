@@ -33,3 +33,6 @@ def test_tracking_conversation_uses_visual_servo_without_semantic_planner(env, r
     assert "SemanticPlannerModule" not in names
     assert plan.host_config["enable_conversation"] is True
     assert names == list(plan.modules)
+    assert plan.host_config["llm_timeout_sec"] == 30.0
+    llm = next(entry for entry in host_builder_from_run_plan(plan)._entries if entry.name == "LLMModule")
+    assert llm.config["timeout_sec"] == 30.0

@@ -571,6 +571,9 @@ namespace global_planner
                 metric.start={ {start_point_.x,start_point_.y,start_point_.z},
                     start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
                 metric.start_exemption=static_cast<bool>(start_exemption_);
+                metric.goal_tolerance=terminal_goal_tolerance_m_;
+                metric.goal_xy_tolerance=terminal_goal_xy_tolerance_m_;
+                metric.goal_z_tolerance=terminal_goal_z_tolerance_m_;
                 if(no_go_regions_)for(const auto &region:*no_go_regions_)
                     geometry.regions.push_back({{region.min[0],region.min[1],region.min[2]},
                         {region.max[0],region.max[1],region.max[2]}});
@@ -581,13 +584,7 @@ namespace global_planner
                     metric.actual_start=a.x==start_point_.x && a.y==start_point_.y && a.z==start_point_.z;
                     return artifact_->rust_graph->checkMetricRoute({a,b},geometry).valid;
                 };
-                const auto world = [&](mls::SurfaceCell cell) {
-                    return PointPose{(cell.x + .5) * resolution,
-                                     (cell.y + .5) * resolution,
-                                     (cell.z + 1.0) * resolution + support_height_m_,
-                                     std::nullopt};
-                };
-                const auto query = artifact_->rust_graph->metricQuery(
+                auto query = artifact_->rust_graph->metricQuery(
                     start_point_,goal_point_,snap_search_radius_cells_,max_iterations_,geometry);
                 using QueryStatus = mls::PreparedArtifactHandle::QueryStatus;
                 if (query.status == QueryStatus::Cancelled) {
@@ -599,30 +596,26 @@ namespace global_planner
                     return false;
                 }
                 if (query.status == QueryStatus::Exhausted) {
-                    throw std::runtime_error("Rust surface route exhausted");
-                }
-                const auto &cells = query.cells;
-                if (cells.empty()) throw std::runtime_error("Rust surface route has no stance cells");
-                std::vector<PointPose> checked{start_point_};
-                checked.reserve(cells.size() + 2);
-                for (const auto &cell : cells) {
-                    const auto point = world(cell);
-                    if (checked.back().x != point.x || checked.back().y != point.y ||
-                        checked.back().z != point.z) checked.push_back(point);
-                }
-                if (checked.back().x != goal_point_.x || checked.back().y != goal_point_.y ||
-                    checked.back().z != goal_point_.z) checked.push_back(goal_point_);
-                checked.front().yaw = start_point_.yaw;
-                checked.back().yaw = goal_point_.yaw;
-                rust_failure_kind = "geometry";
-                const auto admitted=artifact_->rust_graph->checkMetricRoute(checked,geometry);
-                if(admitted.failure_kind==mls::RustRouteCheckResult::kCancelled) {
-                    search_info_.outcome=SearchInfo::Outcome::Cancelled;
+                    search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                    search_info_.rust_failure_kind = "query";
+                    search_info_.rust_failure = "Rust surface route exhausted";
+                    ++search_info_.rust_query_failures;
+                    // Keep the public blocked-start diagnosis without launching another planner.
+                    metric.actual_start = 0;
+                    metric.ground_support = 0;
+                    const auto origin = artifact_->rust_graph->checkMetricRoute(
+                        {start_point_, start_point_}, geometry);
+                    if (origin.failure_kind == LT_MLS_ROUTE_OCCUPIED ||
+                        origin.failure_kind == LT_MLS_ROUTE_NO_GO) {
+                        endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                        endpoint_resolution_.start_failure = origin.failure_kind == LT_MLS_ROUTE_OCCUPIED
+                            ? TraversabilityFailure::OccupiedBody : TraversabilityFailure::ExternalPreblockedBody;
+                    }
                     return false;
                 }
-                if (!admitted.valid) {
-                    throw std::runtime_error("Rust surface route failed final geometry check");
-                }
+                auto checked = std::move(query.poses);
+                if (checked.size() < 2) throw std::runtime_error("Rust surface route has no poses");
+                rust_failure_kind = "geometry";
                 auto smoothed = smoothRoute(checked, valid,
                     [&](const PointPose &point) -> std::optional<double> {
                         const auto ground = artifact_->rust_graph->height(
@@ -648,13 +641,12 @@ namespace global_planner
                 search_info_.outcome = SearchInfo::Outcome::Found;
                 search_info_.used_surface_graph = true;
                 search_info_.used_rust_graph = true;
-                printf("OctoPlanner3D Rust surface route: cells=%zu waypoints=%zu graph_ms=%.3f\n",
-                       cells.size(), planner_results_.size(),
+                printf("OctoPlanner3D Rust surface route: waypoints=%zu graph_ms=%.3f\n",
+                       planner_results_.size(),
                        std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - graph_started).count());
                 return true;
             } catch (const std::exception &error) {
-                search_info_.rust_fallback = true;
                 search_info_.rust_failure_kind = rust_failure_kind;
                 search_info_.rust_failure = error.what();
                 if (std::strcmp(rust_failure_kind, "query") == 0) {
@@ -664,8 +656,9 @@ namespace global_planner
                 } else {
                     ++search_info_.rust_other_failures;
                 }
-                printf("OctoPlanner3D Rust surface query unavailable: %s; trying C++ fallback\n",
+                printf("OctoPlanner3D Rust surface query failed: %s\n",
                        error.what());
+                return false;
             }
         }
         if (!resolveGoal()) return false;
@@ -2303,17 +2296,39 @@ namespace global_planner
                 from.z() + t * (to.z() - from.z()));
             const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, sampled_body, yaw);
             if (failure == TraversabilityFailure::None) continue;
+            bool departure = false;
+            if (failure == TraversabilityFailure::GroundSupport && has_start_ &&
+                from == octomap::point3d(start_point_.x,start_point_.y,start_point_.z) &&
+                artifact_ && artifact_->rust_graph) {
+                const auto cell = worldToGrid(point.x(),point.y(),point.z());
+                if (!artifact_->rust_graph->below(cell.x,cell.y,cell.z)) {
+                    const double initial_yaw = start_point_.yaw.value_or(yaw);
+                    for (double sign : {-1.0,1.0}) {
+                        const octomap::point3d center = from + octomap::point3d(
+                            sign*body_offset_m_*std::cos(initial_yaw),
+                            sign*body_offset_m_*std::sin(initial_yaw),0);
+                        departure = departure || std::hypot(point.x()-center.x(),point.y()-center.y()) <= robot_radius_;
+                    }
+                }
+            }
             // A step connects two supported stances. Its body moves continuously,
             // while the observed tread height changes discontinuously. Keep the
             // actual body sweep, but do not require its interpolated height to
             // remain the nominal standing height above either tread.
             if (failure != TraversabilityFailure::GroundSupport ||
-                std::abs(to.z() - from.z()) < 1e-7 || i == 0 || i == count ||
-                queryWorld(point, robot_radius_, false, sampled_body, yaw) != TraversabilityFailure::None) {
+                i == 0 || i == count) {
                 if (failure_out) *failure_out = failure;
                 if (failed_point) *failed_point = point;
                 return false;
             }
+            const auto clearance = queryWorld(point, robot_radius_, false, sampled_body, yaw);
+            if (clearance != TraversabilityFailure::None ||
+                (!departure && std::abs(to.z()-from.z()) < 1e-7)) {
+                if (failure_out) *failure_out = clearance != TraversabilityFailure::None ? clearance : failure;
+                if (failed_point) *failed_point = point;
+                return false;
+            }
+            if (departure) continue;
             bool supported = false;
             const double lower_z = std::min(from.z(), to.z());
             const double upper_z = std::max(from.z(), to.z());
