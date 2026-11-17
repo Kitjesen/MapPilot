@@ -62,7 +62,9 @@ are selected through the supported RobotConfig and RunPlan for each real
 platform; do not hard-code one robot model as the product target. The native
 field runtime uses the declared Linux/CycloneDDS platform contract. Python owns
 the Host framework and semantic/API layer; C++ owns field LiDAR, SLAM, maps,
-terrain, navigation, and driver hot paths.
+terrain, navigation, and driver processes and hot paths. Rust kernels under
+`src/kernels/` are dependency-free libraries behind a C ABI, linked into the
+owning C++ process; they never own a process, DDS endpoint, or lifecycle.
 
 Productization currently prioritizes the shared mapping -> map save/reload ->
 localization -> autonomous navigation workflow, including safe task termination.
@@ -115,18 +117,21 @@ High layers may depend on lower layers only. Waypoint/path dispatch is message
 flow, not a package dependency.
 
 ```text
-All Modules -> core/ (Module, In/Out, Registry, utils, msgs)
+All Modules -> runtime/ and message/ (Module, In/Out, Registry, utils, msgs)
 
 nav/        must not import perception/, decision/, drivers/, gateway/
 perception/ must not import nav/, decision/, drivers/, gateway/
-decision/   consumes perception through runtime messages, not nav/gateway imports
-drivers/    must not import nav/ or semantic code except lazy registration
-gateway/    must not import nav/, semantic/, or drivers/
+decision/   consumes perception through runtime messages; no nav/, drivers/,
+            gateway/, localization/ imports
+drivers/    must not import nav/, perception/, decision/, gateway/
+gateway/    must not import nav/, perception/, decision/, drivers/, slam/
+maps/       must not import nav/, perception/, decision/, drivers/, gateway/
 ```
 
 Use existing factories, registries, and `runtime.registry` before direct backend
 imports. Machine-enforced ownership lives in
-[`config/architecture_layers.yaml`](config/architecture_layers.yaml).
+[`config/architecture_layers.yaml`](config/architecture_layers.yaml); it wins
+over this summary.
 
 ## Where Changes Belong
 
@@ -143,7 +148,8 @@ imports. Machine-enforced ownership lives in
 | Sim direct-child execution | `src/lingtu/sim/process.py`, `src/lingtu/sim/identity.py` |
 | Host Module graph | `src/lingtu/assembly/host/`, `src/runtime/host.py` |
 | Physical devices and calibration | `config/robots/<vendor>/<model>/robot.yaml`, `config/devices.yaml` |
-| Native algorithms/services | Their owning C++ tree under `src/` |
+| MLS surfaces, sparse graph, global route query and route geometry checks | `src/kernels/nav/mls_core` (Rust); C++ adapter `src/nav/cpp/planning/global/octoplanner/mls_backend.*` |
+| Native algorithms/services | Their owning C++ tree under `src/`, or a Rust kernel under `src/kernels/` |
 
 ## Runtime Safety Boundaries
 
@@ -159,6 +165,11 @@ imports. Machine-enforced ownership lives in
   distinct surfaces at the same XY. Retain observed ground, unknown-space
   evidence, and the robot's executable motion constraints. A projection may
   suggest candidates or aid inspection, but cannot authorize motion.
+- For a request with a prepared MLS artifact, the Rust query owns endpoint
+  attachment, search and geometry admission, and C++ smoothing reuses that
+  checker. Rust exhaustion or error is the result; do not launch a second C++
+  search for the same request. The legacy C++ grid serves only requests
+  without a prepared MLS artifact.
 - Field `mapd` owns live map state, standalone traversability owns
   `/nav/traversability`, and save-time pruning owns persistent-map cleanup.
   Python map layers are development/simulation fallbacks and must not compete
