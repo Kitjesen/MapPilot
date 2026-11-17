@@ -168,3 +168,22 @@ def test_native_source_contract_names_fixed_tensor_shapes() -> None:
     assert "1LL * 5 * 8400" in source
     assert "unexpected YOLO TensorRT input contract" in source
     assert "unexpected YOLO TensorRT output contract" in source
+
+
+def test_source_timestamp_reaches_the_tracker_once(monkeypatch, tmp_path) -> None:
+    detector, _library = _loaded_detector(monkeypatch, tmp_path)
+    detector.load_model()
+    received = []
+    update = detector._tracker.update
+
+    def record(results, frame=None, *, timestamp=None):
+        received.append(timestamp)
+        return update(results, frame, timestamp=timestamp)
+
+    monkeypatch.setattr(detector._tracker, "update", record)
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    detector.set_source_ts(12.5)
+    detector.detect(image, "person")
+    detector.detect(image, "person")
+
+    assert received == [12.5, None]

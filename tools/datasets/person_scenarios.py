@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Deterministic target-person scenarios written in the TPT-Bench layout.
 
-Each scenario renders flat-coloured people seen by a pinhole camera, detector
-boxes with noise, map-frame positions and per-person annotations. The replay
+Each scenario renders flat-coloured people in front of a grey, world-fixed
+background texture seen by a pinhole camera, detector boxes with noise,
+map-frame positions and per-person annotations. The replay
 uses the production NativeByteTracker and PersonTracker. Appearance comes from
 ``MarkerEncoder``: every clothing colour maps to a fixed unit vector with small
 per-crop noise, so "similar clothes" is an explicit cosine similarity.
@@ -66,7 +67,7 @@ class MarkerEncoder:
 
     def encode(self, crop: np.ndarray) -> np.ndarray:
         pixels = np.asarray(crop, dtype=np.float64).reshape(-1, 3)
-        pixels = pixels[pixels.sum(axis=1) > 30]  # ignore black background
+        pixels = pixels[np.ptp(pixels, axis=1) > 40]  # ignore the grey background
         if len(pixels) == 0:
             return np.zeros(EMBEDDING_DIM, dtype=np.float32)
         nearest = np.argmin(((pixels[:, None, :] - self._colours[None]) ** 2).sum(axis=2), axis=1)
@@ -172,6 +173,21 @@ def _project(point: tuple[float, float], yaw: float) -> tuple[float, list[float]
     return depth, clipped
 
 
+def _background_panorama() -> np.ndarray:
+    """A grey cylindrical texture at fixed world bearings, so camera yaw moves it."""
+    rng = np.random.default_rng(11)
+    width = int(2 * math.pi * FOCAL)
+    coarse = rng.integers(20, 120, size=(HEIGHT // 8 + 1, width // 8 + 1), dtype=np.uint8)
+    texture = np.kron(coarse, np.ones((8, 8), dtype=np.uint8))[:HEIGHT, :width]
+    return np.repeat(texture[:, :, None], 3, axis=2)
+
+
+def _background(panorama: np.ndarray, yaw: float) -> np.ndarray:
+    bearings = np.arctan((CX - np.arange(WIDTH)) / FOCAL) + yaw
+    columns = np.round(-bearings * FOCAL).astype(int) % panorama.shape[1]
+    return panorama[:, columns].copy()
+
+
 def _visible_fraction(box: list[float], occluders: list[list[float]]) -> float:
     mask = np.ones((int(box[3] - box[1]) + 1, int(box[2] - box[0]) + 1), dtype=bool)
     for other in occluders:
@@ -187,6 +203,7 @@ def write_scenario(scenario: Scenario, dataset_dir: Path, seed: int = 0) -> None
     import cv2
 
     rng = np.random.default_rng(seed)
+    panorama = _background_panorama()
     image_dir = dataset_dir / "panoramic_images" / scenario.name
     image_dir.mkdir(parents=True, exist_ok=True)
     truth, annotations, detection_lines = {}, {}, []
@@ -200,7 +217,7 @@ def write_scenario(scenario: Scenario, dataset_dir: Path, seed: int = 0) -> None
             if projected is not None:
                 visible.append((projected[0], person, point, projected[1]))
         visible.sort(key=lambda item: -item[0])  # paint far to near
-        image = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+        image = _background(panorama, yaw)
         frame_annotations, boxes, positions = {}, [], []
         for index, (_depth, person, point, box) in enumerate(visible):
             x1, y1, x2, y2 = (int(round(v)) for v in box)

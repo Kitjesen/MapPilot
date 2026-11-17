@@ -263,7 +263,7 @@ def replay_sequence(
             tracks = byte_tracker.update(TrackerInput([
                 Detection2D(bbox=np.asarray(box[:4], dtype=np.float32), score=float(box[4]), label="person")
                 for box in boxes
-            ]))
+            ]), frame, timestamp=timestamp)
             objects = []
             for row in tracks:
                 box = [float(value) for value in row[:4]]

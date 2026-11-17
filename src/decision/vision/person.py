@@ -177,6 +177,9 @@ class PersonTracker:
     APPEARANCE_THRESHOLD = 0.6
     REACQUIRE_CONFIRM_FRAMES = 3
     REACQUIRE_GAP = 1.0
+    # A new detector ID may continue the target without identity evidence only
+    # across a detector break this short (camera motion, a few dropped frames).
+    TRACK_CONTINUATION_GAP = 0.5
     MAX_PERSON_SPEED = 3.0  # m/s, with measurement noise allowed separately
     POSITION_NOISE = 0.2  # m
     MAX_VERIFIED_VIEWS = 8
@@ -227,6 +230,8 @@ class PersonTracker:
         self._verified_identity: dict | None = None
         self._identity_retry_until: dict[str, float] = {}
         self._identity_retry_state: dict[str, dict] = {}
+        # Track IDs seen in the same frame as the accepted target are other people.
+        self._co_visible_ids: dict[str, float] = {}
 
         # Observability counters for Re-ID signal usage.
         self._reid_stats: dict = {
@@ -236,6 +241,7 @@ class PersonTracker:
             "lost": 0,
             "dino_match": 0,
             "dino_rejected": 0,
+            "track_continuation": 0,
         }
 
     def set_dino_encoder(self, encoder) -> None:
@@ -691,6 +697,7 @@ class PersonTracker:
             self._verified_identity = None
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
+            self._co_visible_ids.clear()
             self._reset_reacquire()
             self._frame_dino.clear()
             self._dino_event = "locked" if dino_feat is not None else "disabled"
@@ -756,6 +763,8 @@ class PersonTracker:
             matched = self._match_person(persons, rgb_frame)
             if matched is not None:
                 self._observation_accepted = self._update_tracked(matched, rgb_frame)
+                if self._observation_accepted:
+                    self._remember_co_visible(persons, matched)
                 return self._observation_accepted
 
             if not self._target_selected and not self.has_identity_reference:
@@ -811,9 +820,11 @@ class PersonTracker:
                     return p
 
         # Strategy 2: motion match. A changed tracker ID is only a candidate;
-        # it must remain the same for several frames before identity changes.
+        # _motion_reacquire decides whether the gap allows it to take over.
         motion_candidates: list[tuple[float, dict]] = []
         for p in persons:
+            if str(p.get("id") or "") in self._co_visible_ids:
+                continue
             timestamp = self._get_observation_ts(p)
             previous_timestamp = self._person.observation_ts
             if timestamp is not None and previous_timestamp is not None:
@@ -868,6 +879,8 @@ class PersonTracker:
             clip_encoder = self._clip_encoder
 
         for p in persons:
+            if str(p.get("id") or "") in self._co_visible_ids:
+                continue
             crop = self._crop_person(rgb_frame, p)
             if crop is None:
                 continue
@@ -991,6 +1004,8 @@ class PersonTracker:
         eligible = []
         for candidate in ordered:
             candidate_id = str(candidate.get("id") or "")
+            if candidate_id != current_id and candidate_id in self._co_visible_ids:
+                continue
             timestamp = self._get_observation_ts(candidate)
             previous = self._person.observation_ts
             if timestamp is not None and previous is not None and timestamp <= previous:
@@ -1018,13 +1033,24 @@ class PersonTracker:
             self._reset_reacquire()
             self._dino_event = "missing_image"
             return None
-        if self._pending_identity is not None:
-            self._dino_event = "awaiting_identity_verification"
-            return None
         candidates: list[tuple[float, dict]] = []
+        continuations: list[tuple[float, dict]] = []
         cooling_down = False
         current_id = str(self._person.obj_id or "")
         eligible = self._eligible_dino_candidates(persons)
+        awaiting = self._pending_identity is not None
+        # Continuation covers a detector ID break of an accepted target, not a
+        # target whose own track is visible or under an identity rejection.
+        continuation_allowed = (
+            not awaiting
+            and self._verified_identity is None
+            and current_id not in {str(person.get("id") or "") for person in persons}
+            and current_id not in self._identity_retry_until
+        )
+        if awaiting:
+            # A pending check concerns a different track. The original track
+            # returning within the short gap still matches below and cancels it.
+            eligible = [entry for entry in eligible if entry[1] == current_id]
 
         authorized = self._verified_identity
         encode_batch = getattr(self._dino_encoder, "encode_batch", None)
@@ -1111,12 +1137,32 @@ class PersonTracker:
                     and retry_until is None
                     and score >= self._dino_min_similarity
                 ):
+                    self._pending_identity = None
                     self._reset_reacquire()
                     self._dino_similarity = score
                     self._dino_event = "matched"
                     self._reid_stats["dino_match"] += 1
                     return candidate
+                if (
+                    continuation_allowed
+                    and retry_until is None
+                    and gap <= self.TRACK_CONTINUATION_GAP
+                    and score >= self._dino_min_similarity
+                    and self._near_predicted(position, gap)
+                ):
+                    continuations.append((score, candidate))
                 candidates.append((score, candidate))
+        if awaiting:
+            self._dino_event = "awaiting_identity_verification"
+            return None
+        if len(continuations) == 1:
+            # Longer absences still require identity verification.
+            score, candidate = continuations[0]
+            self._reset_reacquire()
+            self._dino_similarity = score
+            self._dino_event = "continued"
+            self._reid_stats["track_continuation"] += 1
+            return candidate
         candidates.sort(key=lambda item: item[0], reverse=True)
         if not candidates:
             self._reset_reacquire()
@@ -1223,17 +1269,54 @@ class PersonTracker:
             return False
 
     def _motion_reacquire(self, candidates: list[tuple[float, dict]]) -> dict | None:
-        """Use motion only when one unambiguous new track stays consistent."""
+        """Without identity evidence, motion may only continue a recent, unambiguous ID break."""
         if len(candidates) != 1:
             self._reset_reacquire()
             self._reid_stats["lost"] += 1
             return None
         candidate = candidates[0][1]
+        if str(candidate.get("id") or "") != self._reacquire_id:
+            timestamp = self._get_observation_ts(candidate)
+            previous = self._person.observation_ts
+            gap = 0.0 if timestamp is None or previous is None else max(0.0, timestamp - previous)
+            near = self._near_predicted(self._get_pos(candidate), gap)
+            if near and gap <= self.TRACK_CONTINUATION_GAP:
+                self._reset_reacquire()
+                self._reid_stats["track_continuation"] += 1
+                return candidate
+            if not near or gap > self.REACQUIRE_GAP:
+                # A longer absence needs identity evidence; motion alone admits
+                # occluders and people entering where the target left.
+                self._reset_reacquire()
+                self._reid_stats["lost"] += 1
+                return None
         if not self._confirm_reacquire(candidate):
             return None
         self._reset_reacquire()
         self._reid_stats["motion_dominant"] += 1
         return candidate
+
+    def _near_predicted(self, position: list[float], gap: float) -> bool:
+        """Whether a position is reachable from the target's predicted position after ``gap`` s."""
+        if not self._observation_context_valid:
+            return False
+        predicted = self._predict_position(min(gap, _MOTION_PREDICT_DT))
+        distance = math.hypot(position[0] - predicted[0], position[1] - predicted[1])
+        return distance <= self.POSITION_NOISE + self.MAX_PERSON_SPEED * gap
+
+    def _remember_co_visible(self, persons: list[dict], target: dict) -> None:
+        timestamp = self._get_observation_ts(target)
+        if timestamp is None:
+            return
+        target_id = str(target.get("id") or "")
+        for person in persons:
+            person_id = str(person.get("id") or "")
+            if person_id and person_id != target_id:
+                self._co_visible_ids[person_id] = timestamp
+        self._co_visible_ids.pop(target_id, None)
+        self._co_visible_ids = {
+            key: value for key, value in self._co_visible_ids.items() if timestamp - value <= self.LOST_TIMEOUT
+        }
 
     def _confirm_reacquire(
         self,
@@ -1624,6 +1707,7 @@ class PersonTracker:
             self._verified_identity = None
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
+            self._co_visible_ids.clear()
             self._dino_similarity = None
             self._dino_event = "ready" if self._dino_encoder is not None else "disabled"
 
@@ -1650,6 +1734,7 @@ class PersonTracker:
             self._verified_identity = None
             self._identity_retry_until.clear()
             self._identity_retry_state.clear()
+            self._co_visible_ids.clear()
             self._dino_similarity = None
             self._dino_event = "context_changed"
             return True

@@ -127,6 +127,36 @@ class TestPersonTrackerUpdate:
         ) is True
         assert tracker._person.obj_id == "person-b"
 
+    @staticmethod
+    def _seen(identifier, x, ts):
+        return {"id": identifier, "label": "person", "position": [x, 0.0, 0.0], "confidence": 0.9, "ts": ts}
+
+    def _locked(self):
+        tracker = PersonTracker()
+        tracker.lock_target(self._seen("target", 1.0, 20.0))
+        return tracker
+
+    def test_a_short_detector_id_break_continues_the_target_immediately(self):
+        tracker = self._locked()
+
+        assert tracker.update([self._seen("fragment", 1.05, 20.1)]) is True
+        assert tracker._person.obj_id == "fragment"
+
+    def test_a_person_seen_beside_the_target_cannot_take_over_by_motion(self):
+        tracker = self._locked()
+        assert tracker.update([self._seen("target", 1.0, 20.1), self._seen("neighbour", 1.4, 20.1)]) is True
+
+        for timestamp in (20.2, 20.3, 20.4, 20.5):
+            assert tracker.update([self._seen("neighbour", 1.1, timestamp)]) is False
+        assert tracker._person.obj_id == "target"
+
+    def test_a_new_person_after_a_long_absence_needs_identity_evidence(self):
+        tracker = self._locked()
+
+        for timestamp in (23.0, 23.1, 23.2, 23.3):
+            assert tracker.update([self._seen("entrant", 1.1, timestamp)]) is False
+        assert tracker._person.obj_id == "target"
+
     def test_anonymous_crossing_does_not_switch_the_locked_person(self):
         tracker = PersonTracker()
         tracker.lock_target(
@@ -514,4 +544,5 @@ class TestPersonTrackerReID:
             "lost": 0,
             "dino_match": 0,
             "dino_rejected": 0,
+            "track_continuation": 0,
         }
