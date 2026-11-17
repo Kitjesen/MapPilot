@@ -26,6 +26,17 @@ ones. Final/cancelled/failed state comes from the persisted turn and message;
 GET snapshots remain the recovery source after missing events or reconnecting.
 This does not introduce a second task owner or replay accepted requests.
 
+When the conversation starts `start_navigation` or `start_inspection_route`, the
+Gateway binds the native task and request IDs to that conversation turn's Agent
+`run_id`. Accepted native navigation and inspection events are then appended as
+`role="tool"` messages on the same turn and sent through this same
+`agent_message` stream. Their `metadata.activity_type` is `navigation` or
+`inspection`, and `metadata.activity_state` uses `started`, `running`,
+`awaiting`, `completed`, `failed` or `cancelled`. The start-tool response is
+still only an admission receipt. The later native event is the execution fact,
+and terminal events release the process-local binding. Non-Agent navigation is
+not attached to a conversation.
+
 A generated plan is an assistant message with `kind="plan"` and
 `metadata.plan={title, summary?, steps:[{title, detail?}]}` (1–12 steps).
 `text` retains the full draft Markdown for copying, export, search and sharing.

@@ -42,6 +42,45 @@ def workbench_tools(gw, *, client_id: str = "web"):
     tools = []
     observations = {}
 
+    def bind_agent_task(*, task_id: str = "", request_id: str = "", run_id: str = "",
+                        conversation_id: str = "", turn_id: str = "", kind: str) -> None:
+        if not run_id:
+            return
+        binding = {
+            "run_id": run_id,
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "kind": kind,
+        }
+        lock = getattr(gw, "_state_lock", None)
+        if lock is None:
+            if task_id:
+                getattr(gw, "_agent_task_bindings", {})[task_id] = dict(binding)
+            if request_id:
+                getattr(gw, "_agent_request_bindings", {})[request_id] = dict(binding)
+            return
+        with lock:
+            if task_id:
+                gw._agent_task_bindings[task_id] = dict(binding)
+                while len(gw._agent_task_bindings) > 256:
+                    gw._agent_task_bindings.pop(next(iter(gw._agent_task_bindings)), None)
+            if request_id:
+                gw._agent_request_bindings[request_id] = dict(binding)
+                while len(gw._agent_request_bindings) > 256:
+                    gw._agent_request_bindings.pop(next(iter(gw._agent_request_bindings)), None)
+
+    def unbind_agent_task(*, task_id: str = "", request_id: str = "") -> None:
+        lock = getattr(gw, "_state_lock", None)
+        if lock is None:
+            bindings = getattr(gw, "_agent_task_bindings", {})
+            requests = getattr(gw, "_agent_request_bindings", {})
+            bindings.pop(task_id, None)
+            requests.pop(request_id, None)
+            return
+        with lock:
+            gw._agent_task_bindings.pop(task_id, None)
+            gw._agent_request_bindings.pop(request_id, None)
+
     def tool(name, description, properties, required=(), *, writes=False):
         definitions = {}
         for value in properties.values():
@@ -124,7 +163,7 @@ def workbench_tools(gw, *, client_id: str = "web"):
     tool("read_imu_record", "Read a recorded IMU interval. Summary statistics use ALL received interval samples; chart samples are downsampled extrema, not suitable for exact means or derivatives. Data is available to run_python as data['imu_record'].",
          {"id": identity, "start": {"type": "number", "minimum": 0}, "end": {"type": "number", "minimum": 0}}, ["id"])
 
-    async def invoke(name, args):
+    async def invoke(name, args, *, run_id: str = "", conversation_id: str = "", turn_id: str = ""):
         try:
             if name == "view_robot_card":
                 if args["view"] not in {"robot", "joints", "imu", "navigation"}:
@@ -156,11 +195,21 @@ def workbench_tools(gw, *, client_id: str = "web"):
                 )
                 if rejection is not None:
                     return json.loads(rejection.body)
+                # Bind by request before native submission; the first native
+                # lifecycle event may arrive before the HTTP receipt returns.
+                bind_agent_task(request_id=request_id, run_id=run_id,
+                                conversation_id=conversation_id, turn_id=turn_id, kind="inspection")
                 result = await start_task(gw, body)
                 if isinstance(result, JSONResponse):
-                    return json.loads(result.body)
+                    payload = json.loads(result.body)
+                    if not payload.get("ok", payload.get("accepted", False)):
+                        unbind_agent_task(request_id=request_id)
+                    return payload
                 if hasattr(result, "model_dump"):
-                    return result.model_dump(mode="json")
+                    result = result.model_dump(mode="json")
+                task_id = str(result.get("task_id") or "") if isinstance(result, dict) else ""
+                bind_agent_task(task_id=task_id, request_id=request_id, run_id=run_id,
+                                conversation_id=conversation_id, turn_id=turn_id, kind="inspection")
                 return result
             if name == "preview_navigation":
                 result = ControlCommandService(gw).preview_plan(PlanPreviewRequest(
@@ -169,15 +218,22 @@ def workbench_tools(gw, *, client_id: str = "web"):
                 ))
                 return result
             if name == "start_navigation":
+                task_id = f"agent-nav-task-{uuid.uuid4().hex}"
+                request_id = f"agent-nav-{uuid.uuid4().hex}"
+                bind_agent_task(task_id=task_id, request_id=request_id, run_id=run_id,
+                                conversation_id=conversation_id, turn_id=turn_id, kind="navigation")
                 body = GoalRequest(
                     x=args["x"], y=args["y"], z=args.get("z", 0.0), yaw=args.get("yaw"),
                     acceptance_radius_m=args.get("acceptance_radius_m"),
                     max_speed_mps=args.get("max_speed_mps"), source="api", target_type="coordinate",
                     instruction="Agent native navigation", client_id=client_id,
-                    request_id=f"agent-nav-{uuid.uuid4().hex}",
+                    task_id=task_id, request_id=request_id,
                 )
                 result = start_navigation(gw, body)
-                return json.loads(result.body) if isinstance(result, JSONResponse) else result
+                payload = json.loads(result.body) if isinstance(result, JSONResponse) else result
+                if not isinstance(payload, dict) or payload.get("accepted") is not True:
+                    unbind_agent_task(task_id=task_id, request_id=request_id)
+                return payload
             if name == "get_navigation_status":
                 return query_navigation_task_status(gw, args["task_id"])
             if name == "cancel_navigation":

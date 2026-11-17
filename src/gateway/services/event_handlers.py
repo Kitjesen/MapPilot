@@ -129,6 +129,16 @@ def handle_inspection_task_event(gw: Any, event: Any) -> None:
         return
     if accepted:
         gw.push_event({"type": "inspection_task_event", "data": projected})
+        _publish_bound_activity(
+            gw,
+            task_id=task_id,
+            request_id=str(projected.get("request_id") or ""),
+            activity_type="inspection",
+            activity_state=_inspection_activity_state(projected),
+            phase="inspection_task_event",
+            text=f"巡检状态：{projected.get('state_name') or projected.get('state') or '更新'}",
+            data=projected,
+        )
     if projected.get("terminal") is not True:
         return
     try:
@@ -373,3 +383,89 @@ def handle_agent_message(gw: Any, msg: Any) -> None:
         )
     except Exception as exc:
         logger.debug("_on_agent_message serialize failed: %s", exc)
+
+
+def _inspection_activity_state(data: dict[str, Any]) -> str:
+    state = str(data.get("state_name") or data.get("state") or "").upper()
+    if state in {"SUCCEEDED", "SUCCESS"}:
+        return "completed"
+    if state in {"FAILED", "ERROR"}:
+        return "failed"
+    if state in {"CANCELLED", "CANCELED"}:
+        return "cancelled"
+    if state in {"PAUSED", "PAUSING", "CANCELLING"}:
+        return "awaiting"
+    return "running"
+
+
+def _publish_bound_activity(
+    gw: Any,
+    *,
+    task_id: str = "",
+    request_id: str = "",
+    activity_type: str,
+    activity_state: str,
+    phase: str,
+    text: str,
+    data: dict[str, Any],
+) -> None:
+    """Mirror native facts into the Agent timeline when a tool owns the task."""
+
+    with getattr(gw, "_state_lock", threading.RLock()):
+        binding = None
+        if task_id:
+            binding = getattr(gw, "_agent_task_bindings", {}).get(task_id)
+        if binding is None and request_id:
+            binding = getattr(gw, "_agent_request_bindings", {}).get(request_id)
+        if not isinstance(binding, dict) or not binding.get("run_id"):
+            return
+        binding = dict(binding)
+    metadata = {
+        "activity_type": activity_type,
+        "activity_state": activity_state,
+        "task_id": task_id,
+        "request_id": request_id,
+        "native": data,
+    }
+    identity = f"native-{activity_type}-{task_id or request_id}-{data.get('event_sequence') or data.get('sequence') or data.get('ts') or time.time_ns()}"
+    payload = None
+    conversation_id = str(binding.get("conversation_id") or "")
+    turn_id = str(binding.get("turn_id") or "")
+    agent = (getattr(gw, "_all_modules", {}) or {}).get("AgentPlannerModule")
+    store = getattr(agent, "_conversation_store", None) if agent is not None else None
+    if conversation_id and turn_id and callable(store):
+        try:
+            payload = store().append(
+                conversation_id,
+                turn_id,
+                "tool",
+                text,
+                message_id=identity,
+                run_id=str(binding["run_id"]),
+                kind=phase,
+                metadata=metadata,
+            )
+        except Exception:
+            logger.debug("native activity could not be persisted", exc_info=True)
+    if payload is None:
+        payload = {
+            "conversation_id": conversation_id,
+            "id": identity,
+            "seq": int(data.get("event_sequence") or data.get("sequence") or 1),
+            "revision": 1,
+            "role": "tool",
+            "text": text,
+            "turn_id": turn_id,
+            "run_id": binding["run_id"],
+            "kind": phase,
+            "created_at": time.time(),
+            "metadata": metadata,
+        }
+    payload = {"type": "agent_message", **payload, "phase": phase, "ts": time.time()}
+    gw.push_event(payload)
+    if activity_state in {"completed", "failed", "cancelled"}:
+        with getattr(gw, "_state_lock", threading.RLock()):
+            if task_id:
+                gw._agent_task_bindings.pop(task_id, None)
+            if request_id:
+                gw._agent_request_bindings.pop(request_id, None)

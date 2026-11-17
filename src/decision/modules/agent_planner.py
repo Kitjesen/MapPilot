@@ -807,7 +807,21 @@ class AgentPlannerModule(Module, layer=4):
                     return result
                 result = await motions[name](**args, run=run)
             elif invoke_domain_tool and any(tool["function"]["name"] == name for tool in (domain_tools or [])):
-                result = await invoke_domain_tool(name, args)
+                try:
+                    result = await invoke_domain_tool(
+                        name,
+                        args,
+                        run_id=run.run_id if run is not None else "",
+                        conversation_id=conversation_id,
+                        turn_id=turn_id,
+                    )
+                except TypeError as exc:
+                    # Keep test and plugin callbacks using the original
+                    # two-argument hook while the built-in workbench receives
+                    # the Agent run context.
+                    if "unexpected keyword argument" not in str(exc):
+                        raise
+                    result = await invoke_domain_tool(name, args)
             elif name in {"web_search", "web_extract"}:
                 result = await execute_web_tool(name, args)
             elif name in {"skills_list", "skill_view"}:
