@@ -755,7 +755,8 @@ CliConfig parseArgs(int argc, char **argv) {
     } else if (arg == "--live-obstacle-ray-clearing") {
       cfg.live_obstacle_ray_clearing = parseBool(next(), "--live-obstacle-ray-clearing");
     } else if (arg == "--path-library") {
-      throw std::runtime_error("--path-library is removed; SCAN does not use a path library");
+      // Obsolete CMU path libraries are not loaded.
+      (void)next();
     } else if (arg == "--map") {
       cfg.map_path = next();
     } else if (arg == "--publish-cmd-vel") {

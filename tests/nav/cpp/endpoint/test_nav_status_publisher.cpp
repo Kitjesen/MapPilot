@@ -431,10 +431,10 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
               contains(autonomy, "\"occupied_points\": [[0.550000, 0.050000, 0.450000]]"),
           "local-map diagnostics must expose the exact collision layer consumed by SCAN");
   require(contains(autonomy, "\"source_obstacle_points_total\": 2") &&
-              contains(autonomy, "\"obstacle_filter\": \"cmu_height_envelope\"") &&
-              contains(autonomy, "\"obstacle_points_total\": 1") &&
-              contains(autonomy, "\"obstacle_points\": [[1.000000, 2.000000, 3.000000, 0.500000]]"),
-          "CMU local-map diagnostics must omit ground points before bounded sampling");
+              contains(autonomy, "\"obstacle_filter\": \"none\"") &&
+              contains(autonomy, "\"obstacle_points_total\": 2") &&
+              contains(autonomy, "1.000000, 2.000000, 3.000000, 0.500000"),
+          "local-map diagnostics keep registered points without a height envelope");
   require(contains(autonomy, "\"predicted_points\": 40") &&
               contains(autonomy, "\"prediction_clusters\": 2") &&
               contains(autonomy, "\"prediction_horizon_s\": 1.000000"),

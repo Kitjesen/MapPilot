@@ -237,6 +237,7 @@ TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
   state.params.maxYawAccelRadS2 = 0.0;
   state.params.nominalDt = 0.05;
   state.params.yawRateGain = 2.5;
+  state.params.stopYawRateGain = 2.5;
   state.params.spline.yawGain = 3.0;
   state.params.spline.headingErrorThreshold = 1.0;
 

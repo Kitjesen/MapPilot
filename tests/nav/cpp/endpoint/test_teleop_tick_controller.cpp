@@ -1256,6 +1256,7 @@ void testRotationClearsPreviousTranslationFailureAndPath() {
   fixture.config.publish_cmd_vel = true;
   fixture.planner_output.active = true;
   fixture.planner_output.reason = "aegis_goal_blocked";
+  fixture.now_values = {10.0, 10.01};
   TeleopTickController controller(fixture.actions, fixture.control());
   const auto blocked = controller.tick(fixture.input());
   require(blocked.local && blocked.local->reason == "aegis_goal_blocked",
@@ -1263,8 +1264,8 @@ void testRotationClearsPreviousTranslationFailureAndPath() {
 
   fixture.request = {0.0, 0.0, 0.35};
   const auto rotating = controller.tick(fixture.input());
-  require(rotating.publish.command.wz == 0.35 && !rotating.teleop.stopped,
-          "rotation must reach final control after a blocked translation");
+  require(std::abs(rotating.publish.command.wz - 0.04) < 1e-9 && !rotating.teleop.stopped,
+          "SCAN yaw acceleration must limit the first pure-rotation step after a blocked translation");
   require(rotating.local && !rotating.local->seen && !rotating.local->active &&
               !rotating.local->tracking.active,
           "rotation must clear the previous translation diagnostics in the owning loop");
@@ -1354,6 +1355,7 @@ void testDirectScanYawUsesOneAccelerationClockAndReversesContinuously() {
   fixture.config.teleop_local_planner = true;
   fixture.config.publish_cmd_vel = true;
   fixture.config.path_follower_max_yaw_accel_rad_s2 = 2.0;
+  fixture.config.tick_hz = 20.0;
   fixture.request = {0.0, 0.0, 1.0};
   fixture.now_values = {10.0, 10.0, 10.05, 11.0, 11.05, 11.10, 11.15,
                         11.20, 11.20, 11.25};

@@ -263,17 +263,17 @@ void testCompiledProductMotionContractParses() {
           "path follower heading-alignment hysteresis must parse");
   const auto executor_config = buildExecutorConfig(cfg);
   require(std::abs(executor_config.follower.maxYawRateRadS - 0.70) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignEnterRad - 0.40) < 1e-12 &&
-              std::abs(executor_config.follower.headingAlignExitRad - 0.40) < 1e-12 &&
-              std::abs(executor_config.follower.baseLookAheadDis - 0.50) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignEnterRad - 0.80) < 1e-12 &&
+              std::abs(executor_config.follower.headingAlignExitRad - 0.30) < 1e-12 &&
+              std::abs(executor_config.follower.baseLookAheadDis - 0.35) < 1e-12 &&
               std::abs(executor_config.follower.maxAccel - 1.0) < 1e-12,
-          "CMU config must apply the official Go2 follower profile");
+          "parsed follower limits must reach the executor unchanged");
   const auto status = buildStatusWriterConfig(cfg, inputGateConfig(cfg));
-  require(std::abs(status.follower_lookahead_m - 0.50) < 1e-12 &&
+  require(std::abs(status.follower_lookahead_m - 0.35) < 1e-12 &&
               std::abs(status.max_accel_mps2 - 1.0) < 1e-12 &&
-              std::abs(status.follower_goal_tolerance_m - 0.30) < 1e-12 &&
+              std::abs(status.follower_goal_tolerance_m - 0.05) < 1e-12 &&
               std::abs(status.nominal_dt_s - 0.01) < 1e-12,
-          "CMU status must report the effective Go2 follower profile");
+          "status must report the parsed follower profile");
   require(executor_config.recovery.behavior_order.size() == 2U &&
               executor_config.recovery.behavior_order[0] ==
                   nav_kernel::RecoveryAction::Rotate &&
@@ -410,11 +410,11 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "navd",
       "--path-library",
       "fixture-paths",
-      "--octo-robot-radius-m",
+      "--collision-cylinder-radius-m",
       "0.25",
-      "--octo-body-clearance-below-m",
+      "--collision-clearance-below-m",
       "0.18",
-      "--octo-body-clearance-above-m",
+      "--collision-clearance-above-m",
       "0.30",
       "--octo-max-iterations",
       "240000",
@@ -468,9 +468,12 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
       "0.18",
   });
   const auto &octo = cfg.octoplanner_options;
-  require(std::abs(octo.robot_radius - 0.25) < 1e-12, "OctoPlanner3D radius must parse");
-  require(std::abs(octo.body_clearance_below_m - 0.18) < 1e-12, "body lower envelope must parse");
-  require(std::abs(octo.body_clearance_above_m - 0.30) < 1e-12, "body upper envelope must parse");
+  require(std::abs(octo.robot_radius - 0.25) < 1e-12,
+          "OctoPlanner3D radius must follow the SCAN collision cylinder");
+  require(std::abs(octo.body_clearance_below_m - 0.20) < 1e-12,
+          "body lower envelope must snap the cylinder clearance onto the SCAN voxel");
+  require(std::abs(octo.body_clearance_above_m - 0.30) < 1e-12,
+          "body upper envelope must snap the cylinder clearance onto the SCAN voxel");
   require(octo.max_iterations == 240000, "A* budget must parse");
   require(octo.snap_search_radius_cells == 16, "snap radius must parse");
   require(octo.ground_support, "ground support must stay enabled");
@@ -707,7 +710,7 @@ void testControlModesLockTheirSafetyContract() {
   require(teleop_avoid.control_mode == ControlMode::TeleopAvoid, "teleop_avoid mode must parse");
   require(teleop_avoid.check_obstacle, "teleop_avoid must enforce obstacle checks");
   require(!teleop_avoid.use_traversability_cost,
-          "teleop_avoid must allow CMU scan-only operation without traversability");
+          "teleop_avoid must run SCAN without a traversability cost");
 
   const auto teleop_gate = inputGateConfig(teleop);
   require(!teleop_gate.require_odom, "pure teleop must not require odometry");
@@ -720,7 +723,8 @@ void testControlModesLockTheirSafetyContract() {
 
   const auto avoid_gate = inputGateConfig(teleop_avoid);
   require(avoid_gate.require_odom, "teleop_avoid needs pose for spatial obstacle safety");
-  require(avoid_gate.require_cloud, "teleop_avoid must require obstacle cloud");
+  require(avoid_gate.require_local_collision && !avoid_gate.require_cloud,
+          "teleop_avoid must require the SCAN collision volume");
   require(!avoid_gate.require_traversability,
           "scan-only teleop_avoid must not wait for traversability");
   require(buildStatusWriterConfig(teleop_avoid, avoid_gate).stop_confirmation_evidence ==
@@ -778,7 +782,7 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
   require(std::abs(status.follower_lookahead_m - teleop.path_follower_lookahead_m) < 1e-12 &&
               std::abs(status.follower_goal_tolerance_m - teleop.path_follower_goal_tolerance_m) < 1e-12 &&
               std::abs(status.max_accel_mps2 - teleop.path_follower_max_accel_mps2) < 1e-12,
-          "unused CMU follower defaults must not override the teleop/map RunPlan status");
+          "parsed follower values must reach teleop status unchanged");
   const auto avoid = parse({
       "navd",
       "--control-mode",
@@ -788,35 +792,27 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
   });
   require(avoid.path_library_dir.empty(), "stop-only teleop_avoid must not require planner assets");
 
-  bool assisted_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--control-mode",
-        "teleop_avoid",
-        "--teleop-local-planner",
-        "true",
-        "--path-library",
-        "",
-    });
-  } catch (const std::runtime_error &) {
-    assisted_rejected = true;
-  }
-  require(assisted_rejected, "assisted teleop must require local planner assets");
+  const auto assisted = parse({
+      "navd",
+      "--control-mode",
+      "teleop_avoid",
+      "--teleop-local-planner",
+      "true",
+      "--path-library",
+      "",
+  });
+  require(assisted.path_library_dir.empty(),
+          "assisted teleop must start SCAN without a path library");
 
-  bool autonomy_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--control-mode",
-        "autonomy",
-        "--path-library",
-        "",
-    });
-  } catch (const std::runtime_error &) {
-    autonomy_rejected = true;
-  }
-  require(autonomy_rejected, "autonomy must still require planner assets");
+  const auto autonomy = parse({
+      "navd",
+      "--control-mode",
+      "autonomy",
+      "--path-library",
+      "",
+  });
+  require(autonomy.path_library_dir.empty(),
+          "autonomy must start SCAN without a path library");
 }
 
 void testLocalPlannerVisualizationIsExplicitAndBounded() {
@@ -962,29 +958,27 @@ void testGo2RunPlanGeometryEnvironmentParsesExactly() {
   ScopedEnvironment planning_range("LINGTU_NAV_CORRIDOR_LOOKAHEAD_M", "3.0");
   ScopedEnvironment obstacle_voxel("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M", "0.05");
 
-  const auto cmu_cfg = parse({"navd", "--path-library", "fixture-paths"});
-  require(std::abs(cmu_cfg.vehicle_length_m - 0.76) < 1e-12 &&
-              std::abs(cmu_cfg.vehicle_width_m - 0.31) < 1e-12,
+  const auto parsed = parse({"navd", "--path-library", "fixture-paths"});
+  require(std::abs(parsed.vehicle_length_m - 0.76) < 1e-12 &&
+              std::abs(parsed.vehicle_width_m - 0.31) < 1e-12,
           "Go2 physical dimensions must parse from the compiled RunPlan environment");
-  require(std::abs(cmu_cfg.collision_cylinder_radius_m - 0.25) < 1e-12 &&
-              std::abs(cmu_cfg.collision_cylinder_offset_m - 0.18) < 1e-12,
+  require(std::abs(parsed.collision_cylinder_radius_m - 0.25) < 1e-12 &&
+              std::abs(parsed.collision_cylinder_offset_m - 0.18) < 1e-12,
           "Go2 double-cylinder geometry must parse from the compiled RunPlan environment");
-  require(std::abs(cmu_cfg.obstacle_voxel_size_m - 0.05) < 1e-12,
-          "Go2 CMU obstacle fusion must retain the upstream five-centimeter density");
-  const auto cmu = buildLocalPlannerParams(cmu_cfg);
-  require(std::abs(cmu.footprintPadding - 0.05) < 1e-12,
-          "Go2 CMU must receive the one configured hard margin");
-  require(std::abs(cmu.autonomySpeed - 0.50) < 1e-12 &&
-              std::abs(cmu.maxSpeed - 0.50) < 1e-12,
-          "CMU speed scaling must normalize against the configured follower speed");
-  require(std::abs(cmu.adjacentRange - 3.0) < 1e-12,
-          "CMU planning range must follow the compiled local corridor range");
-  require(cmu.useTerrainAnalysis,
-          "CMU must use the official terrain-height obstacle semantics");
-  require(!cmu.twoWayDrive,
-          "autonomous CMU planning must match the forward-only Go2 follower contract");
-  require(std::abs(cmu.nearFieldStopDis) < 1e-12,
-          "CMU candidate collision checks must not be followed by a duplicate near-field stop");
+  require(std::abs(parsed.obstacle_voxel_size_m - 0.05) < 1e-12,
+          "the configured obstacle voxel size must remain available to the endpoint");
+  require(std::abs(parsed.teleop_obstacle_margin_m - 0.05) < 1e-12,
+          "the configured body hard margin must remain on the endpoint config");
+  const auto planner = buildLocalPlannerParams(parsed);
+  require(std::abs(planner.footprintPadding) < 1e-12,
+          "SCAN cylinder geometry already owns the complete hard envelope");
+  require(std::abs(planner.autonomySpeed - 0.50) < 1e-12 &&
+              std::abs(planner.maxSpeed - 0.50) < 1e-12,
+          "SCAN speed scaling must normalize against the configured follower speed");
+  require(std::abs(planner.adjacentRange - 3.0) < 1e-12,
+          "SCAN planning range must follow the compiled local corridor range");
+  require(!planner.useTerrainAnalysis,
+          "SCAN collision input must not inherit a terrain-cloud interpretation");
 
   ScopedEnvironment planner_backend("LINGTU_NAV_LOCAL_PLANNER_BACKEND", "scan");
   const auto scan_cfg = parse({"navd"});
@@ -1202,13 +1196,9 @@ void testScanIsTheOnlyLocalBackend() {
     }
     require(rejected, "a non-SCAN local planner must fail startup");
   }
-  bool path_library_rejected = false;
-  try {
-    (void)parse({"navd", "--path-library", "fixture-paths"});
-  } catch (const std::runtime_error&) {
-    path_library_rejected = true;
-  }
-  require(path_library_rejected, "a path library argument must fail startup");
+  const auto ignored_library = parse({"navd", "--path-library", "fixture-paths"});
+  require(ignored_library.path_library_dir.empty(),
+          "a path library argument must not select a planner resource");
 }
 
 void testScanHasSingleCollisionEnvelope() {

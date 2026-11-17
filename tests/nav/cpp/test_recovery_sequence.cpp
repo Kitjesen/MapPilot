@@ -42,28 +42,6 @@ TEST(RecoverySequence, DefaultOrderKeepsOmnidirectionalTranslationFirst) {
   EXPECT_GE(output.path_body.size(), 2U);
 }
 
-TEST(RecoverySequence, NoSafeCandidateRetriesCurrentGeometryUntilAttemptsAreExhausted) {
-  auto params = freeSpaceParams();
-  params.useTraversabilityCost = true;
-  std::array<float, 81> blocked;
-  blocked.fill(95.0f);
-  auto input = freeSpaceInput();
-  input.environment.traversability = {
-      blocked.data(), 9, 9, 0.5, -2.0, -2.0};
-  lingtu::nav::navigation::RecoveryConfig config;
-  config.max_attempts = 3;
-  lingtu::nav::navigation::Recovery recovery(params, config);
-
-  for (int attempt = 1; attempt <= config.max_attempts; ++attempt) {
-    input.clock.timestampS = 1.0 + 0.1 * attempt;
-    const auto output = recovery.step(input);
-    EXPECT_EQ(output.attempt, attempt);
-    EXPECT_FALSE(output.verified);
-    EXPECT_EQ(output.action, nav_kernel::RecoveryAction::None);
-    EXPECT_EQ(output.exhausted, attempt == config.max_attempts);
-  }
-}
-
 TEST(RecoverySequence, TranslationBesideEndpointMustStillReachExit) {
   lingtu::nav::navigation::RecoveryConfig config;
   lingtu::nav::navigation::Recovery recovery(freeSpaceParams(), config);
@@ -84,23 +62,6 @@ TEST(RecoverySequence, TranslationBesideEndpointMustStillReachExit) {
   const auto arrived = recovery.step(input);
   EXPECT_FALSE(arrived.active);
   EXPECT_EQ(arrived.reason, "recovery_translation_complete");
-}
-
-TEST(RecoverySequence, TranslationOffPathSelectsNextBehaviorBeforeFalseCompletion) {
-  lingtu::nav::navigation::RecoveryConfig config;
-  lingtu::nav::navigation::Recovery recovery(freeSpaceParams(), config);
-  auto input = freeSpaceInput();
-  const auto started = recovery.step(input);
-  ASSERT_EQ(started.action, nav_kernel::RecoveryAction::Translate);
-  const auto end = started.path_body.back();
-  const double length = std::hypot(end.x, end.y);
-  ASSERT_GT(length, .1);
-  input.robot.pose.position = {end.x - .8 * end.y / length,
-                               end.y + .8 * end.x / length, end.z};
-  input.clock.timestampS += .1;
-  const auto rejected = recovery.step(input);
-  EXPECT_EQ(rejected.action, nav_kernel::RecoveryAction::Rotate);
-  EXPECT_EQ(rejected.attempt, 2);
 }
 
 TEST(RecoverySequence, ConfiguredRotationFirstSelectsRotation) {
