@@ -72,7 +72,7 @@ class NavigationClient:
     def select_planner(
         self, name: str, *, request_id: str | None = None, client_id: str = "sdk",
     ) -> CommandResult:
-        """Select SCAN/CMU while idle; success means the native switch completed."""
+        """Select SCAN while idle; success means the native switch completed."""
         return self._client._command("/api/v1/navigation/planner", {
             "name": name, "request_id": request_id or _new_request_id(), "client_id": client_id,
         })

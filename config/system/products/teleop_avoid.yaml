@@ -28,7 +28,7 @@ native_nav:
   # Match SCAN's upstream 100 Hz FSM and closed-loop controller cadence.
   tick_hz: 100.0
   local_planner: scan
-  local_planners: [cmu, scan]
+  local_planners: [scan]
   check_obstacle: true
   use_traversability_cost: false
   teleop:
@@ -39,8 +39,6 @@ native_nav:
   smoothing: false
   follower:
     max_yaw_rate_rad_s: 1.0
-  recovery:
-    max_attempts: 0
 processes:
   - lidar
   - imu

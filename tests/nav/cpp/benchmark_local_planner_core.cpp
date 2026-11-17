@@ -146,8 +146,6 @@ int main(int argc, char** argv) {
   params.useTerrainAnalysis = true;
   params.useTraversabilityCost = true;
   params.traversabilityNearFieldStop = true;
-  params.pathScaleBySpeed = false;
-  params.pathRangeBySpeed = false;
   params.autonomySpeed = 0.4;
   params.maxSpeed = 1.0;
 

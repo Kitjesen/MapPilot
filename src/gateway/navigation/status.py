@@ -225,18 +225,6 @@ def _native_endpoint_readiness(
         if not expected_parameters:
             blockers.append("native_product_expectation_unavailable")
         else:
-            # CMU replaces the generic follower lookahead and stop distance
-            # with its own fixed body-path profile before execution. Compare
-            # the status snapshot against those effective values.
-            if str(native_nav.get("local_planner") or "").strip().lower() == "cmu":
-                cmu_effective = (
-                    ("path_follower_lookahead_m", "LINGTU_NAV_CMU_FOLLOWER_LOOKAHEAD_M"),
-                    ("path_follower_goal_tolerance_m", "LINGTU_NAV_CMU_FOLLOWER_STOP_DISTANCE_M"),
-                )
-                for parameter, environment_name in cmu_effective:
-                    value = _finite_float(expected_environment.get(environment_name))
-                    if value is not None:
-                        expected_parameters[parameter] = value
             observed_path_follower = _mapping(snapshot.get("path_follower"))
             observed_nav_loop = _mapping(snapshot.get("nav_loop"))
             observed_parameters = (

@@ -358,24 +358,6 @@ if(_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS)
       COMPONENT lingtu_runtime)
 endif()
 
-set(_LINGTU_CMU_PATH_SOURCE "${_NAV_CPP_DIR}/planning/local/cmu/paths")
-set(_LINGTU_CMU_PATH_BUILD "${CMAKE_BINARY_DIR}/cmu_paths")
-add_custom_target(lingtu_cmu_paths ALL
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${_LINGTU_CMU_PATH_BUILD}"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${_LINGTU_CMU_PATH_SOURCE}/go2"
-    "${_LINGTU_CMU_PATH_BUILD}/go2"
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${_LINGTU_CMU_PATH_SOURCE}/thunder"
-    "${_LINGTU_CMU_PATH_BUILD}/thunder"
-  COMMENT "Staging CMU path libraries for Go2 and Thunder")
-
-install(DIRECTORY
-  "${_LINGTU_CMU_PATH_SOURCE}/go2"
-  "${_LINGTU_CMU_PATH_SOURCE}/thunder"
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/lingtu/cmu_paths
-  COMPONENT cmu_paths)
-
 if(WIN32)
   # Do not maintain a hand-written allowlist: every endpoint-owned executable
   # or shared library that directly links CycloneDDS must be independently

@@ -341,8 +341,8 @@ def _local_planner_backend(
         native_nav = getattr(run_plan, "native_nav", None)
         if isinstance(native_nav, Mapping):
             configured = native_nav.get("local_planner")
-    backend = str(configured or "cmu").strip().lower()
-    if backend not in {"cmu", "scan"}:
+    backend = str(configured or "scan").strip().lower()
+    if backend != "scan":
         raise ValueError(f"unsupported local planner backend: {backend}")
     return backend
 
@@ -352,14 +352,9 @@ def _path_library_args(
     navigation_binary: Path,
     paths: dict[str, Path],
 ) -> tuple[str, ...]:
-    if backend == "scan":
-        return ()
-    if backend != "cmu":
+    if backend != "scan":
         raise ValueError(f"unsupported local planner backend: {backend}")
-    return (
-        "--path-library",
-        _native_path_arg(navigation_binary, paths["path_library"]),
-    )
+    return ()
 
 
 def _bind_manifest_binaries_to_run_plan(
@@ -1696,10 +1691,6 @@ def _preflight_runtime(
     paths = {
         "sensor_runner": _repo_path(str(paths_cfg.get("sensor_runner") or "")),
     }
-    if _local_planner_backend(manifest) == "cmu":
-        paths["path_library"] = _repo_path(
-            str(paths_cfg.get("path_library") or "")
-        )
     if state_provider != "mujoco_navigation_fixture":
         paths["slam_config"] = _repo_path(str(paths_cfg.get("slam_config") or ""))
     for name, path in paths.items():
@@ -2752,12 +2743,9 @@ def _evaluate_phase(
             "require_odom",
             "require_localization_health",
         ]
-        if str(nav_status.get("local_planner") or "").strip().lower() == "cmu":
-            required_inputs.append("require_cloud")
-        else:
-            collision = ((nav_status.get("local_map") or {}).get("collision") or {})
-            if collision.get("complete") is not True or int(collision.get("generation") or 0) <= 0:
-                blockers.append("stale_fail_safe_contract_missing:map_collision")
+        collision = ((nav_status.get("local_map") or {}).get("collision") or {})
+        if collision.get("complete") is not True or int(collision.get("generation") or 0) <= 0:
+            blockers.append("stale_fail_safe_contract_missing:map_collision")
         if require_traversability:
             required_inputs.append("require_traversability")
         for required_input in required_inputs:
@@ -3799,7 +3787,7 @@ def _run_phase(
                 width=int(video_cfg.get("width") or 1920),
                 height=int(video_cfg.get("height") or 1080),
                 fps=float(video_cfg.get("fps") or 24.0),
-                require_candidate_evidence=local_planner_backend == "cmu",
+                require_candidate_evidence=False,
             )
             video_report["requested"] = True
         except Exception as exc:
@@ -3872,7 +3860,7 @@ def _run_phase(
     video_blocker = _video_artifact_blocker(
         required=bool(thresholds.get("require_video_artifact", True)),
         video_report=video_report,
-        require_candidates=local_planner_backend == "cmu",
+        require_candidates=False,
     )
     if video_blocker:
         blockers.append(video_blocker)

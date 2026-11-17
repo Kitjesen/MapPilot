@@ -996,3 +996,44 @@ def test_duplicate_verified_view_does_not_evict_distinct_reference_crops():
 
     assert [int(crop[0, 0, 0]) for crop in tracker._verified_reference_crops] == [30, 40]
     assert tracker._verified_reference_timestamps == [10.09, 12.09]
+
+
+def test_original_track_returning_cancels_a_pending_identity_check():
+    tracker = configured()
+    frame = np.ones((16, 16, 3), np.uint8)
+    for timestamp in (1.6, 1.63, 1.66):
+        assert not tracker.update([person("other", ts=timestamp)], frame)
+    assert tracker.identity_candidate()["object"]["id"] == "other"
+
+    # The pending candidate is still visible; only the original track may resume.
+    assert tracker.update([person("old", ts=1.7), person("other", ts=1.7)], frame)
+    assert tracker.identity_candidate() is None
+    assert tracker.status()["id"] == "old"
+
+
+def test_a_person_seen_beside_the_target_never_becomes_its_identity_candidate():
+    tracker = configured()
+    frame = np.ones((16, 16, 3), np.uint8)
+    assert tracker.update([person("old", ts=1.03), person("neighbour", ts=1.03, x=0.4)], frame)
+
+    for timestamp in (1.06, 1.09, 1.12, 1.15, 1.6, 1.63, 1.66):
+        assert not tracker.update([person("neighbour", ts=timestamp, x=0.1)], frame)
+    assert tracker.identity_candidate() is None
+    assert tracker.status()["id"] == "old"
+
+
+def test_a_short_detector_id_break_continues_a_matching_target():
+    tracker = configured()
+    frame = np.ones((16, 16, 3), np.uint8)
+
+    assert tracker.update([person("fragment", ts=1.1, x=0.05)], frame)
+    assert tracker.status()["id"] == "fragment"
+    assert tracker.status()["dino_event"] == "continued"
+
+
+def test_a_short_id_break_with_different_appearance_still_needs_verification():
+    tracker = configured()
+    changed = np.full((16, 16, 3), 2, np.uint8)
+
+    assert not tracker.update([person("fragment", ts=1.1, x=0.05)], changed)
+    assert tracker.status()["id"] == "old"

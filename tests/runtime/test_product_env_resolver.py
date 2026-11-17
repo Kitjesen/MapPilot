@@ -365,7 +365,7 @@ def test_real_env_resolves_declared_scan_backend_configuration() -> None:
 
 
 def test_local_planner_selection_rejects_unknown_algorithm() -> None:
-    with pytest.raises(ValueError, match="local_planner must be cmu or scan"):
+    with pytest.raises(ValueError, match="local_planner must be scan"):
         resolve_product_host_runtime(
             "nav",
             "real",
@@ -373,10 +373,10 @@ def test_local_planner_selection_rejects_unknown_algorithm() -> None:
         )
 
 
-def test_local_planner_selection_requires_a_product_declaration() -> None:
-    with pytest.raises(ValueError, match="does not declare selectable local planners"):
+def test_local_planner_selection_rejects_a_removed_backend() -> None:
+    with pytest.raises(ValueError, match="local_planner must be scan"):
         resolve_product_host_runtime(
             "teleop",
             "real",
-            local_planner="scan",
+            local_planner="cmu",
         )

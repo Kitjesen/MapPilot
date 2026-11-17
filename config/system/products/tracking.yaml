@@ -17,12 +17,11 @@ topics:
   - /maps/activation/request
   - /maps/activation/ack
   - /nav/goal/status
-  - /nav/traversability
   - /nav/way_point
 capabilities:
   - saved_map_relocalization
   - explicit_goal_tracking
-  - local_planner_collision_and_traversability_scoring
+  - local_planner_collision_scoring
   - path_follower_pre_command_output
   - final_cmd_vel_single_writer
   - operator_motion_typed_dds_interface
@@ -46,14 +45,13 @@ host:
   run_startup_checks: true
 includes: [control, lidar, slam, maps, limits, follower, global, local, teleop, camera]
 native_nav:
-  local_planner: cmu
-  local_planners: [cmu, scan]
-  tick_hz: 20.0
-  # CMU uses the generic control cadence. SCAN selection is promoted to its
-  # required 100 Hz cadence during Product resolution.
+  local_planner: scan
+  local_planners: [scan]
+  # SCAN's closed-loop controller runs at its required 100 Hz cadence.
+  tick_hz: 100.0
   follower:
     max_yaw_rate_rad_s: 1.0
-  use_traversability_cost: true
+  use_traversability_cost: false
   teleop:
     takeover: true
     planner: true
@@ -62,7 +60,6 @@ processes:
   - imu
   - slam
   - maps
-  - traversability
   - nav
   - driver
   - camera

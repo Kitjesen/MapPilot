@@ -210,10 +210,8 @@ may be lower than the upstream launch defaults; they are explicit runtime
 inputs. The native follower adds command-continuity bounds; heading alignment
 uses SCAN's single threshold and the planner objectives remain.
 
-`nav` and `teleop_avoid` select `scan` by default and target 100 Hz for the SCAN
+Products that run local planning select SCAN and target 100 Hz for the SCAN
 FSM and controller, with the upstream 20 Hz future-collision schedule.
-`cmu` remains an explicit backend option and is not deleted or used as a silent
-fallback.
 
 ## Terrain and foot placement scope
 

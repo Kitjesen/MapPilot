@@ -19,9 +19,6 @@ StairTraversalOutput Executor::tickStairTransition(
   if (stair_step_.phase != previous_stair_phase) {
     resetLocalPlanning();
     reference.clear();
-    guide_map_.clear();
-    recovery_.reset();
-    resetAutonomyProgress();
   }
   return stair_step_;
 }
@@ -74,8 +71,6 @@ ExecutionOutput Executor::tick(const ExecutionInput &input) {
       stair_replan_pending_ = true;
     }
     follower_.stopLinear();
-    recovery_follower_.stopLinear();
-    resetAutonomyProgress();
     output.tracking = {};
   } else if (output.path_found) {
     stair_replan_pending_ = false;
@@ -100,12 +95,9 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                                                TraversabilityGridView traversability,
                                                ExecutionObservation observation) {
   ExecutionOutput output;
-  resetTeleopRotation();
   if (intent_mode_) resetMotion();
   if (route.empty()) {
     resetLocalPlanning();
-    recovery_.reset();
-    resetAutonomyProgress();
     output.reason = "no_global_path";
     return output;
   }
@@ -238,29 +230,14 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
     output.reason = "goal_reached";
     follower_.stopLinear();
-    resetAutonomyProgress();
     return output;
   }
 
-  const auto planner_capabilities = local_planner_.capabilities();
-  SegmentTarget target;
-  const std::vector<nav_kernel::Vec3> *plan_route = nullptr;
-  if (planner_capabilities.ownsReferencePath) {
-    if (reference.empty() || config_.planning_frame == PlanningFrame::Odom) {
-      target = buildSegment(map_body, planning_body, map_from_odom);
-      buildReference(target, map_from_odom);
-    }
-    plan_route = &reference;
-    output.target_index = route.size() - 1;
-    output.target = route.back();
-  } else {
-    target = buildSegment(map_body, planning_body, map_from_odom);
-    buildReference(target, map_from_odom);
-    applyLocalGuide(map_body, planning_body, map_from_odom, timestamp_s);
-    plan_route = &segment;
-    output.target_index = target.index;
-    output.target = target.point;
+  if (reference.empty() || config_.planning_frame == PlanningFrame::Odom) {
+    buildReference(buildSegment(map_body, planning_body, map_from_odom), map_from_odom);
   }
+  output.target_index = route.size() - 1;
+  output.target = route.back();
   output.target_distance_m = nav_kernel::distance3D(output.target, map_body.position);
 
   if (stair_step_.approachTarget) {
@@ -326,10 +303,9 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   const nav_kernel::LocalKinematicState kinematics =
       planningKinematics(planning_body, observation, timestamp_s);
   nav_kernel::LocalPlanRequest plan_request = makeLocalPlanRequest(
-      planning_body, *plan_route, &reference, generation, kinematics, observation,
+      planning_body, reference, &reference, generation, kinematics, observation,
       obstacle_xyzh_planning, obstacle_count, timestamp_s,
-      traj_frozen_, traversability,
-      planner_capabilities.consumesTraversability);
+      traj_frozen_, traversability, false);
   const auto tracking = follower_.diagnostics().tracking;
   if (tracking.active)
     plan_request.execution = {tracking.trajectoryId, tracking.sampleTimeS,
@@ -348,12 +324,12 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   if (pose_blend_) plan_request.bodyHeading.reset();
   if (stair_step_.phase == StairPhase::Traversing && stair_step_.bodyYaw)
     plan_request.bodyHeading = nav_kernel::normalizeAngle(*stair_step_.bodyYaw - map_from_odom.yaw);
-  if (planner_capabilities.consumesPredictions && observation.predictions.fresh(timestamp_s)) {
+  if (observation.predictions.fresh(timestamp_s)) {
     output.prediction_count = observation.predictions.count;
   }
   const nav_kernel::LocalPlan plan =
       planLocal(plan_request, map_from_odom, &output.local_planner_debug);
-  if (planner_capabilities.ownsReferencePath && output.local_planner_debug.localTargetValid) {
+  if (output.local_planner_debug.localTargetValid) {
     output.target = map_from_odom.mapPointFromOdom(
         output.local_planner_debug.localTarget);
     output.target_distance_m =
@@ -363,13 +339,10 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   const nav_kernel::LocalPlanStatus plan_status = plan.status();
   const bool plan_ready = plan.ready();
   const bool near_field_stop = plan_status == nav_kernel::LocalPlanStatus::NearFieldStop;
-  const bool planner_input_valid =
-      plan_status != nav_kernel::LocalPlanStatus::InvalidInput &&
-      plan_status != nav_kernel::LocalPlanStatus::NotConfigured;
-  const bool recovery_failure =
+  const bool local_plan_failed =
       plan_status == nav_kernel::LocalPlanStatus::NoPath ||
       plan_status == nav_kernel::LocalPlanStatus::Blocked || near_field_stop;
-  if(pose_blend_ && !pose_blend_original_.empty() && recovery_failure && observation.body_velocity_valid &&
+  if(pose_blend_ && !pose_blend_original_.empty() && local_plan_failed && observation.body_velocity_valid &&
      std::hypot(observation.body_linear_velocity.x,observation.body_linear_velocity.y)<=0.03 &&
      std::abs(observation.body_yaw_rate)<=0.08 &&
      nav_kernel::distance3D(map_body.position,
@@ -381,98 +354,22 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     output.trajectory_frozen=true;
     return output;
   }
-  RecoveryOutput recovery;
-  if (!planner_capabilities.ownsReferencePath) {
-    if (recovery_failure && planner_input_valid &&
-        (local_blocked_since_s_ < 0.0 || local_blocked_since_s_ > timestamp_s)) {
-      local_blocked_since_s_ = timestamp_s;
-    }
-    const bool blocked_long_enough =
-        (local_blocked_since_s_ >= 0.0 &&
-         timestamp_s - local_blocked_since_s_ >= std::max(0.0, config_.recovery.blocked_interval_s)) ||
-        (final_motion_blocked_since_s_ >= 0.0 &&
-         timestamp_s - final_motion_blocked_since_s_ >=
-             std::max(0.0, config_.recovery.blocked_interval_s));
-    const bool recovery_enabled = config_.recovery.max_attempts > 0 && !stair_step_.constrainRecovery;
-    const bool recovery_active = recovery_.active();
-    const bool stalled = !recovery_active && !blocked_long_enough &&
-                          autonomyMotionStalled(planning_body, timestamp_s,
-                              plan_status == nav_kernel::LocalPlanStatus::Pending);
-    if (stalled && stair_step_.constrainRecovery) {
-      // A stair profile forbids ordinary recovery translations/rotations, not
-      // replanning within the same observed flight. Discard the stalled local
-      // trajectory and stop this tick; the next plan uses current collision data.
-      resetLocalPlanning();
-      follower_.stopLinear();
-      recovery_follower_.stopLinear();
-      resetAutonomyProgress();
-      output.reason = "stair_replanning";
-      output.recovery_trigger = "execution_stalled";
-      output.near_field_stop = near_field_stop;
-      output.trajectory_frozen = true;
-      return output;
-    }
-    if (stalled && !recovery_enabled) autonomy_stall_stop_ = true;
-    output.recovery_trigger = recovery_active
-                                  ? "active"
-                                  : (blocked_long_enough ? "local_blocked"
-                                                         : (stalled ? "execution_stalled" : "inactive"));
-    const bool force_recovery = recovery_enabled &&
-                                (recovery_active || blocked_long_enough || stalled);
-    if (force_recovery && planner_input_valid) {
-      recovery = recovery_.step(plan_request);
-    } else if (!planner_input_valid || plan_ready) {
-      recovery_.reset();
-    }
-  }
-
   output.near_field_stop = near_field_stop;
   output.slow_down = std::clamp(plan.hints().slowdownLevel, 0, 3);
-  output.recovery_state = recovery.state;
-  output.recovery_action = static_cast<int>(recovery.action);
-  output.recovery_attempt = recovery.attempt;
-  output.recovery_candidate_count = recovery.candidate_count;
-  output.recovery_rotation_target_rad = recovery.rotation_target_rad;
-  output.recovery_verified = recovery.verified;
-  output.recovery_progress = recovery.progress;
-  output.recovery_reason = recovery.reason;
-  output.recovery_exhausted = recovery.exhausted;
   const bool spline_provided =
       std::holds_alternative<nav_kernel::SplineTarget>(plan.target());
   const auto &preview_path = plan.previewPath();
-  output.local_path_body = recovery.active
-                               ? recovery.path_body
-                               : (spline_provided
-                                      ? planningPathToBody(planning_body, preview_path)
-                                      : preview_path);
-  output.path_found = recovery.active
-                          ? recovery.verified && recovery.path_body.size() >= 2
-                          : plan_ready || output.local_path_body.size() >= 2;
-
-  if (recovery_failure && !recovery.active && !recovery.exhausted && planner_input_valid) {
-    if (local_blocked_since_s_ < 0.0 || local_blocked_since_s_ > timestamp_s) {
-      local_blocked_since_s_ = timestamp_s;
-    }
-  } else if (plan_ready || recovery.active) {
-    local_blocked_since_s_ = -1.0;
-  }
-
-  const bool recovery_action_changed =
-      recovery.active &&
-      (output.recovery_action != recovery_action_ || output.recovery_attempt != recovery_attempt_);
-  if (recovery_action_changed) {
-    recovery_follower_.reset();
-  }
-  recovery_action_ = recovery.active ? output.recovery_action : 0;
-  recovery_attempt_ = recovery.active ? output.recovery_attempt : -1;
-
+  output.local_path_body = spline_provided
+                               ? planningPathToBody(planning_body, preview_path)
+                               : preview_path;
+  output.path_found = plan_ready || output.local_path_body.size() >= 2;
   if (output.path_found && !near_field_stop && output.local_path_body.size() < 2) {
     if (output.local_path_body.size() == 1 &&
         std::hypot(output.local_path_body.front().x, output.local_path_body.front().y) > 0.05) {
       output.local_path_body.insert(output.local_path_body.begin(), {0.0, 0.0, 0.0});
     }
   }
-  output.local_path_map = !recovery.active && spline_provided
+  output.local_path_map = spline_provided
                               ? planningPathToMap(map_from_odom, preview_path)
                               : bodyPathToMap(map_body, output.local_path_body);
   if (output.path_found && plan_request.body && output.local_path_map.size() >= 2) {
@@ -496,80 +393,8 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
       output.reason = "scan_body_collision";
       output.cmd_vel = {};
       follower_.stopLinear();
-      recovery_follower_.stopLinear();
       return output;
     }
-  }
-  if (!recovery.active && plan_ready && !near_field_stop &&
-      plan.hints().retainRouteGuide &&
-      output.local_path_map.size() >= 2) {
-    guide_map_ = output.local_path_map;
-    guide_generation_ = generation;
-    guide_stamp_s_ = timestamp_s;
-  } else if (recovery.active || (plan_ready && !plan.hints().retainRouteGuide)) {
-    guide_map_.clear();
-  }
-
-  if (autonomy_stall_stop_) {
-    output.reason = "execution_stalled";
-    output.recovery_trigger = "execution_stalled";
-    output.trajectory_frozen = true;
-    pauseLinearMotion();
-    return output;
-  }
-  if (recovery.exhausted) {
-    output.reason = "local_recovery_exhausted";
-    follower_.stopLinear();
-    recovery_follower_.stopLinear();
-    resetAutonomyProgress();
-    return output;
-  }
-
-  if (recovery.active && recovery.verified && recovery.direct_command) {
-    output.cmd_vel = nav_kernel::Follower::rotationCommand(
-        recovery.rotation_direction, config_.recovery.rotation_rate_rad_s);
-    output.reason = output.recovery_reason;
-    follower_.stopLinear();
-    setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
-    return output;
-  }
-
-  if (recovery.active && recovery.verified) {
-    if (output.local_path_body.size() < 2) {
-      output.reason = "recovery_untrackable_path";
-      recovery_follower_.stopLinear();
-      follower_.stopLinear();
-      resetAutonomyProgress();
-      return output;
-    }
-
-    const auto recovery_params = nav_kernel::recoveryFollowerParams(
-        config_.follower, config_.recovery.translation_speed_mps,
-        local_planner_.params().adjacentRange);
-
-    nav_kernel::FollowerState recovery_state;
-    recovery_state.requestedSpeed = 1.0;
-    recovery_state.currentTime = timestamp_s;
-    recovery_state.params = recovery_params;
-    recovery_state.goalDistance = std::hypot(output.local_path_body.back().x, output.local_path_body.back().y);
-    recovery_state.standardPathProfile = false;
-    nav_kernel::LocalPlan recovery_plan =
-        nav_kernel::LocalPlan::path(output.local_path_body);
-    const nav_kernel::FollowerOutput recovery_control =
-        recovery_follower_.follow(recovery_plan, recovery_state);
-    output.cmd_vel = recovery_control.cmd;
-    output.reason = output.recovery_reason;
-    follower_.stopLinear();
-    setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
-    return output;
-  }
-
-  if (output.recovery_reason != "inactive") {
-    output.reason = output.recovery_reason;
-    follower_.stopLinear();
-    recovery_follower_.stopLinear();
-    resetAutonomyProgress();
-    return output;
   }
   const bool path_provided = std::holds_alternative<nav_kernel::PathTarget>(plan.target());
   nav_kernel::FollowerState follower_state;
@@ -591,10 +416,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   follower_state.params = config_.follower;
   if(!pose_stages_.empty() && pose_stages_[pose_stage_].tangentHeading) {
     follower_state.params.spline.timeForward=0;
-  }
-  if (path_provided) {
-    follower_state.params = nav_kernel::cmuFollowerParams(follower_state.params);
-    follower_state.standardPathProfile = false;
   }
   // A shifted endpoint must not add another stopping radius outside the task's goal region.
   double endpoint_tolerance = active_goal_reached_m_;
@@ -648,8 +469,7 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
     return output;
   }
   if (!plan_ready) {
-    output.planning_failed = planner_capabilities.ownsReferencePath &&
-                             plan_status == nav_kernel::LocalPlanStatus::NoPath;
+    output.planning_failed = plan_status == nav_kernel::LocalPlanStatus::NoPath;
     if (output.planning_failed) {
       output.blocked_point = local_planner_.firstBlockedReferencePoint(plan_request);
       output.blocked_obstacle_generation = plan_request.identity.obstacleGeneration;
@@ -658,17 +478,11 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                         ? "local_plan_pending"
                         : nav_kernel::localPlanStatusName(plan_status);
     follower_.stopLinear();
-    // Preserve earlier motion evidence across transient holds. Pending pauses
-    // its timer above; blocked holds still expose a stalled motion attempt.
-    if (!planner_input_valid || plan_status == nav_kernel::LocalPlanStatus::Cancelled) {
-      resetAutonomyProgress();
-    }
     return output;
   }
   if (path_provided && output.local_path_body.size() < 2) {
     output.reason = "untrackable_local_path";
     follower_.stopLinear();
-    resetAutonomyProgress();
     return output;
   }
   output.cmd_vel = control.cmd;
@@ -679,7 +493,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                       ? (control.awaitingTrajectory ? "spline_speed_replan"
                          : control.executionFrozen ? "spline_execution_frozen" : "spline_control_ready")
                       : "control_ready";
-  setAutonomyMotionExpected(output.cmd_vel, planning_body, timestamp_s);
   return output;
 }
 

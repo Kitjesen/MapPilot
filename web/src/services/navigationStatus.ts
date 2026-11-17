@@ -248,7 +248,6 @@ export function operatorReasonMessage(reason: string, locale: Locale): string {
     ['local_blocked', '局部路线受阻。', 'The local route is blocked.'],
     ['local_near_field_stop', '检测到近场障碍，已请求停车。', 'A near-field obstacle was detected; a stop was requested.'],
     ['execution_stalled', '运动进展不足，请查看当前任务状态。', 'Motion progress is insufficient. Check the current task state.'],
-    ['local_recovery_exhausted', '局部恢复未找到可行运动，等待重新规划。', 'Local recovery found no feasible motion; waiting for replanning.'],
     ['empty_path', '暂未生成可执行路线。', 'No executable route is available yet.'],
     ['localization_not_tracking', '定位尚未进入跟踪状态，运动指令已保持。', 'Localization is not tracking; motion commands are held.'],
     ['collision_at_trajectory_start', '轨迹起点存在碰撞，运动指令未获放行。', 'A collision exists at the trajectory start; motion was not authorized.'],

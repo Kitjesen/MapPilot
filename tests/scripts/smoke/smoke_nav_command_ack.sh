@@ -9,8 +9,6 @@ log_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack.log"
 
 endpoint="${build_dir}/navd"
 control="${build_dir}/lingtu_nav_control"
-path_library="${source_dir}/src/nav/cpp/planning/local/cmu/paths"
-
 for file in "${endpoint}" "${control}"; do
   if [[ ! -x "${file}" ]]; then
     echo "missing executable: ${file}" >&2
@@ -20,7 +18,7 @@ done
 
 rm -f "${status_file}" "${log_file}"
 "${endpoint}" \
-  --path-library "${path_library}" \
+  --local-planner scan \
   --domain-id "${domain_id}" \
   --control-mode teleop \
   --check-obstacle false \

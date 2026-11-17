@@ -25,8 +25,7 @@ _LEGACY_NAV_PARAMETER_KEYS = frozenset(
     }
 )
 _GLOBAL_PLANNERS = frozenset({"octoplanner3d", "far"})
-_LOCAL_PLANNERS = frozenset({"cmu", "scan"})
-_RECOVERY_ACTIONS = frozenset({"translate", "rotate"})
+_LOCAL_PLANNERS = frozenset({"scan"})
 NATIVE_NAV_ENVIRONMENT = {
     "control_mode": "LINGTU_NAV_CONTROL_MODE",
     "global_planner": "NAV_GLOBAL_PLANNER",
@@ -78,38 +77,6 @@ _TUNING_ENVIRONMENT = {
     "teleop_traversability_hard_cost": "LINGTU_TELEOP_TRAVERSABILITY_HARD_COST",
     "teleop_traversability_soft_cost": "LINGTU_TELEOP_TRAVERSABILITY_SOFT_COST",
 }
-_CMU_ENVIRONMENT = {
-    field: f"LINGTU_NAV_{field.upper()}"
-    for field in (
-        "cmu_ground_height_m",
-        "cmu_cost_height_high_m",
-        "cmu_cost_height_low_m",
-        "cmu_points_per_path",
-        "cmu_direction_weight",
-        "cmu_direction_threshold_deg",
-        "cmu_direction_to_vehicle",
-        "cmu_path_scale",
-        "cmu_min_path_scale",
-        "cmu_path_scale_step",
-        "cmu_scale_by_speed",
-        "cmu_min_path_range_m",
-        "cmu_path_range_step_m",
-        "cmu_range_by_speed",
-        "cmu_crop_by_goal",
-        "cmu_goal_clear_range_m",
-        "cmu_slow_path_count",
-        "cmu_slow_group_count",
-        "cmu_follower_lookahead_m",
-        "cmu_follower_yaw_gain",
-        "cmu_follower_nominal_dt_s",
-        "cmu_follower_switch_time_s",
-        "cmu_follower_heading_align_rad",
-        "cmu_follower_omni_goal_m",
-        "cmu_follower_omni_heading_rad",
-        "cmu_follower_stop_distance_m",
-        "cmu_follower_slowdown_distance_m",
-    )
-}
 _FAR_ENVIRONMENT = {
     field: f"LINGTU_NAV_{field.upper()}"
     for field in (
@@ -121,9 +88,6 @@ _FAR_ENVIRONMENT = {
     )
 }
 _TUNING_INTEGER_FIELDS = frozenset({
-    "cmu_points_per_path",
-    "cmu_slow_path_count",
-    "cmu_slow_group_count",
     "max_obstacle_points", "local_planner_threads",
     "local_planner_debug_candidates", "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
@@ -131,10 +95,6 @@ _TUNING_INTEGER_FIELDS = frozenset({
     "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",
 })
 _TUNING_BOOLEAN_FIELDS = frozenset({
-    "cmu_direction_to_vehicle",
-    "cmu_scale_by_speed",
-    "cmu_range_by_speed",
-    "cmu_crop_by_goal",
     "smoother_scale_velocities", "live_obstacle_ray_clearing", "far_simplify_path",
 })
 _OCTOPLANNER_ENVIRONMENT = {
@@ -172,7 +132,7 @@ def local_planner_name(value: Any) -> str:
 
     name = str(value or "").strip().lower()
     if name not in _LOCAL_PLANNERS:
-        raise ValueError("local_planner must be cmu or scan")
+        raise ValueError("local_planner must be scan")
     return name
 
 
@@ -251,73 +211,22 @@ def _native_nav_mapping(config: Mapping[str, Any]) -> Mapping[str, Any]:
     return native_nav
 
 
-def _recovery_order(value: Any) -> tuple[str, ...]:
-    if isinstance(value, str):
-        actions = tuple(part.strip().lower() for part in value.split(","))
-    elif isinstance(value, (list, tuple)):
-        actions = tuple(str(part).strip().lower() for part in value)
-    else:
-        raise ValueError("native_nav.recovery.behavior_order must be a sequence")
-    if (
-        not actions
-        or any(action not in _RECOVERY_ACTIONS for action in actions)
-        or len(set(actions)) != len(actions)
-    ):
-        raise ValueError(
-            "native_nav.recovery.behavior_order must be a unique subset of translate,rotate"
-        )
-    return actions
-
-
 def _recovery_config(
-    native_nav_config: Mapping[str, Any], defaults: Mapping[str, Any], disabled_attempts: int
+    native_nav_config: Mapping[str, Any], defaults: Mapping[str, Any]
 ) -> dict[str, Any]:
     raw = native_nav_config.get("recovery") or {}
     if not isinstance(raw, Mapping):
         raise ValueError("native_nav.recovery must be a mapping")
-    attempts = raw.get("max_attempts", disabled_attempts)
-    if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
-        raise ValueError("native_nav.recovery.max_attempts must be a non-negative integer")
-    behavior_order = raw.get("behavior_order")
-    raw = {**defaults, **raw}
-    recovery = {
-        "behavior_order": _recovery_order(
-            defaults["behavior_order"] if behavior_order is None else behavior_order
-        ),
-        "blocked_interval_s": _finite_number(raw, "blocked_interval_s"),
-        "rotation_timeout_s": _finite_number(raw, "rotation_timeout_s"),
-        "translation_timeout_s": _finite_number(raw, "translation_timeout_s"),
-        "max_attempts": attempts,
-        # Recovery uses the same responsive product motion contract. A Product
-        # may still provide a lower explicit value for a specialized mode.
-        "translation_speed_mps": _finite_number(raw, "translation_speed_mps"),
-        "rotation_rate_rad_s": _finite_number(raw, "rotation_rate_rad_s"),
-        "min_rotation_rad": _finite_number(raw, "min_rotation_rad"),
-        "max_rotation_rad": _finite_number(raw, "max_rotation_rad"),
-        "rotation_candidate_step_rad": _finite_number(raw, "rotation_candidate_step_rad"),
-        "rotation_sample_step_rad": _finite_number(raw, "rotation_sample_step_rad"),
-    }
-    if recovery["rotation_timeout_s"] <= 0.0:
-        raise ValueError("native_nav.recovery.rotation_timeout_s must be positive")
-    if recovery["translation_timeout_s"] <= 0.0:
-        raise ValueError("native_nav.recovery.translation_timeout_s must be positive")
-    if recovery["rotation_rate_rad_s"] <= 0.0:
-        raise ValueError("native_nav.recovery.rotation_rate_rad_s must be positive")
-    if recovery["min_rotation_rad"] <= 0.0:
-        raise ValueError("native_nav.recovery.min_rotation_rad must be positive")
-    if not recovery["min_rotation_rad"] <= recovery["max_rotation_rad"] <= math.pi:
+    unsupported = sorted(set(raw) - {"translation_speed_mps"})
+    if unsupported:
         raise ValueError(
-            "native_nav.recovery rotation range must satisfy 0 < min <= max <= pi"
+            "native_nav.recovery only accepts translation_speed_mps; removed keys: "
+            + ", ".join(unsupported)
         )
-    if recovery["rotation_candidate_step_rad"] <= 0.0:
-        raise ValueError(
-            "native_nav.recovery.rotation_candidate_step_rad must be positive"
-        )
-    if not 0.0 < recovery["rotation_sample_step_rad"] <= recovery["min_rotation_rad"]:
-        raise ValueError(
-            "native_nav.recovery.rotation_sample_step_rad must be in (0, min_rotation_rad]"
-        )
-    return recovery
+    speed = _finite_number({**defaults, **raw}, "translation_speed_mps")
+    if speed < 0.0:
+        raise ValueError("native_nav.recovery.translation_speed_mps must not be negative")
+    return {"translation_speed_mps": speed}
 
 
 @dataclass(frozen=True)
@@ -346,7 +255,6 @@ class NativeNavConfig:
         )
         recovery = dict(self.native_nav["recovery"])
         recovery["translation_speed_mps"] = min(recovery["translation_speed_mps"], max_planar_mps)
-        recovery["rotation_rate_rad_s"] = min(recovery["rotation_rate_rad_s"], max_angular_rps)
         return replace(self, parameters=parameters, native_nav={**self.native_nav, "recovery": recovery})
 
     @property
@@ -404,17 +312,7 @@ class NativeNavConfig:
             "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": _env_number(
                 parameters["path_follower_heading_align_exit_rad"]
             ),
-            "LINGTU_NAV_RECOVERY_ORDER": ",".join(recovery["behavior_order"]),
-            "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": _env_number(recovery["blocked_interval_s"]),
-            "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": _env_number(recovery["rotation_timeout_s"]),
-            "LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S": _env_number(recovery["translation_timeout_s"]),
-            "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS": str(recovery["max_attempts"]),
             "LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS": _env_number(recovery["translation_speed_mps"]),
-            "LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S": _env_number(recovery["rotation_rate_rad_s"]),
-            "LINGTU_NAV_RECOVERY_MIN_ROTATION_RAD": _env_number(recovery["min_rotation_rad"]),
-            "LINGTU_NAV_RECOVERY_MAX_ROTATION_RAD": _env_number(recovery["max_rotation_rad"]),
-            "LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD": _env_number(recovery["rotation_candidate_step_rad"]),
-            "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD": _env_number(recovery["rotation_sample_step_rad"]),
             # Native endpoint ABI; the value is the active Product name.
             "LINGTU_PRODUCT": self.product,
             "LINGTU_TELEOP_PLANNER_HORIZON_M": _env_number(parameters["teleop_planner_horizon_m"]),
@@ -478,7 +376,6 @@ def compile_native_nav_config(
     load_settings(settings, settings_directory, standalone=True)
     defaults = settings["native_nav"]
     recovery_defaults = defaults.pop("recovery")
-    disabled_attempts = defaults.pop("recovery_max_attempts")
     # Bare configurations keep these values tied to the selected mode or goal.
     del defaults["teleop_local_planner"], defaults["goal_height_tolerance_m"]
     native_nav_config = {**defaults, **explicit}
@@ -502,7 +399,7 @@ def compile_native_nav_config(
     try:
         local_planner = local_planner_name(native_nav_config.get("local_planner") or defaults["local_planner"])
     except ValueError as exc:
-        raise ValueError("native_nav.local_planner must be cmu or scan") from exc
+        raise ValueError("native_nav.local_planner must be scan") from exc
     native_nav = {
         "control_mode": raw_control_mode,
         "global_planner": global_planner,
@@ -529,7 +426,7 @@ def compile_native_nav_config(
             raw_control_mode == "teleop_avoid",
         ),
         "smoothing": _bool(native_nav_config, "smoothing"),
-        "recovery": _recovery_config(native_nav_config, recovery_defaults, disabled_attempts),
+        "recovery": _recovery_config(native_nav_config, recovery_defaults),
     }
     if raw_control_mode == "teleop" and (native_nav["check_obstacle"] or native_nav["use_traversability_cost"]):
         raise ValueError("native_nav teleop mode must not enable obstacle or traversability checks")
@@ -540,9 +437,8 @@ def compile_native_nav_config(
         raise ValueError(
             "native_nav teleop_avoid must enable obstacle checks and teleop local planner"
         )
-    # SCAN consumes Mapd's 3D collision volume, not the CMU terrain-cost grid.
-    if local_planner == "scan":
-        native_nav["use_traversability_cost"] = False
+    # SCAN consumes Mapd's 3D collision volume.
+    native_nav["use_traversability_cost"] = False
     vehicle_length_m = _finite_number(config, "vehicle_length_m", 1.0)
     vehicle_width_m = _finite_number(config, "vehicle_width_m", 0.6)
     vehicle_height_m = _finite_number(config, "vehicle_height_m", 0.5)
@@ -626,19 +522,12 @@ def compile_native_nav_config(
         "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MIN_M": _env_number(obstacle_height_min),
         "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M": _env_number(obstacle_height_max),
     }
-    if local_planner == "cmu":
-        tuning_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] = _env_number(
-            _finite_number(native_nav_config, "obstacle_voxel_size_m")
-        )
-    else:
-        tuning_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] = _env_number(
-            _finite_number(native_nav_config, "scan_motion_voxel_size_m")
-        )
+    tuning_environment["LINGTU_NAV_SCAN_MOTION_VOXEL_SIZE_M"] = _env_number(
+        _finite_number(native_nav_config, "scan_motion_voxel_size_m")
+    )
     tuning_fields = dict(_TUNING_ENVIRONMENT)
     if global_planner == "far":
         tuning_fields.update(_FAR_ENVIRONMENT)
-    if local_planner == "cmu":
-        tuning_fields.update(_CMU_ENVIRONMENT)
     for key, env_key in tuning_fields.items():
         if key in _TUNING_BOOLEAN_FIELDS:
             value = native_nav_config[key]

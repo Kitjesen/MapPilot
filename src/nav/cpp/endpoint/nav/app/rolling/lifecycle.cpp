@@ -630,12 +630,10 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentMot
     case RollingSegmentMotionOutcomeKind::kReached:
       return terminateActive(ExplorationSegmentState::kReached,
                              event.reason.empty() ? "segment_reached" : event.reason);
-    case RollingSegmentMotionOutcomeKind::kRecoveryExhausted: {
-      const std::string recovery_reason =
-          event.reason.empty() ? "local_recovery_exhausted" : event.reason;
+    case RollingSegmentMotionOutcomeKind::kPlanningFailed:
       return terminateActive(ExplorationSegmentState::kFailed,
-                             std::string{"segment_local_recovery_exhausted:"} + recovery_reason);
-    }
+                             std::string{"segment_local_planning_failed:"} +
+                                 (event.reason.empty() ? "local_no_path" : event.reason));
   }
   return {};
 }

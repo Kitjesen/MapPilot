@@ -848,8 +848,14 @@ bool PlannerFsm::planFromCurrentTraj(double nowS, FsmOutput &output,
     startPt_ = odomPos_;
     startVel_ = odomVel_;
     startAcc_.setZero();
+    // Upstream SCAN never rebuilds from odometry here, so its per-axis
+    // tolerance retiming was not written for a measured boundary. Use the
+    // exact-boundary norm limits that the moving handoff and Follower use.
+    const bool preserveBoundary = plannerManager_.pp_.preserve_boundary_;
+    plannerManager_.pp_.preserve_boundary_ = true;
     bool success = callReboundReplan(true, false, nowS, output);
     if (!success) success = callReboundReplan(true, true, nowS, output);
+    plannerManager_.pp_.preserve_boundary_ = preserveBoundary;
     if (success) {
       // Measured boundaries belong to the input epoch, before the solve elapsed.
       info.start_time_ = nowS;

@@ -138,7 +138,7 @@ class _FakeRunPlan:
                 "native_nav": {
                     "control_mode": "autonomy",
                     "global_planner": "octoplanner3d",
-                    "local_planner": "cmu",
+                    "local_planner": "scan",
                     "publish_cmd_vel": True,
                     "check_obstacle": True,
                     "use_traversability_cost": False,

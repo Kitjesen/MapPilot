@@ -33,7 +33,6 @@
   "map_files": {"slam": "map.pcd", "planner": "octomap.ot", "metadata": "metadata.json"},
   "paths": {
     "slam_config": "src/localization/ltlio/config/sim_mid360_slam.yaml",
-    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "slam_runtime": {"provider": "ltlio", "mode": "localization"},
@@ -93,7 +92,7 @@
     "terminal_goal_z_tolerance_m": 0.4
   },
   "traversability_runtime": {"publish_hz": 10.0, "slow_hz": 2.0},
-  "navigation_runtime": {"local_planner": "cmu", "corridor_lookahead_m": 1.2, "max_obstacle_points": 4000, "status_period_s": 0.5},
+  "navigation_runtime": {"local_planner": "scan", "corridor_lookahead_m": 1.2, "max_obstacle_points": 4000, "status_period_s": 0.5},
   "sensor_runtime": {
     "publish_hz": 10.0,
     "imu_hz": 200.0,

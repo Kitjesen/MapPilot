@@ -56,15 +56,6 @@ cmake -S "$NAV_CPP_DIR" -B "$BUILD_DIR" "${CMAKE_ARGS[@]}"
 
 cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
-for profile in go2 thunder; do
-  for asset in startPaths.ply pathList.ply paths.ply correspondences.txt search_radius.txt; do
-    if [[ ! -s "$BUILD_DIR/cmu_paths/$profile/$asset" ]]; then
-      echo "ERROR: staged CMU $profile path library is missing: $asset" >&2
-      exit 1
-    fi
-  done
-done
-
 case "${RUN_TESTS,,}" in
   1|on|true|yes)
     for required_test in \

@@ -2752,6 +2752,215 @@ was not rerun. Earlier Qwen evidence remains historical and was collected
 on a separate GPU server. This change has no new NX deployment or physical
 robot-following evidence.
 
+## TPT-Bench harness and synthetic identity baseline, 2026-11-17
+
+This adds a benchmark harness for BENCH-01 and a synthetic logic suite for
+DEV-04, DEV-05 and DEV-10 (see the
+[development reference](person-tracking-development-reference.md#11-2026-11-17-补充github-实现快速适配与当前缺口)).
+No TPT-Bench data was used: its OneDrive and Baidu hosts, MOT17,
+Hugging Face and Google Drive are all blocked by this cloud environment's
+network policy. The real-data commands are listed at the end of this section.
+
+[`tpt_bench.py`](../../tools/datasets/tpt_bench.py) has two commands.
+
+- `score` computes the official long-term metrics: AO, best F-score, AP and
+  AMR, averaged over sequences. Its results matched `collect_result` and
+  `evaluate_with_LongSOT` from `tpt_bench_tools/evaluate_baselines.py` at
+  MedlarTea/TPT-BENCH-TOOLS 2488f8b. The comparison covered all 28 result
+  files of this run and 112 values (AO, F, AP and AMR), with a maximum
+  absolute difference of 0. Matplotlib was stubbed for that comparison.
+- `replay` runs the production `NativeByteTracker`, using the `yolo_trt`
+  thresholds 0.3/0.1, and `PersonTracker` on recorded detections. The target
+  is initialised from the first visible label, as in the single-target
+  protocol.
+  - PersonTracker's `time.time()` timeouts follow source timestamps.
+  - An appearance-encoded track whose ID changes is accepted only after
+    `resolve_identity`. In production, VisualServo obtains that verdict
+    from the VLM. The replay can omit the verifier, or use an oracle that
+    answers from the label after a chosen source-time latency. The oracle is
+    an upper bound for a perfect VLM, not LingTu's measured accuracy.
+
+[`person_scenarios.py`](../../tools/datasets/person_scenarios.py) renders
+seven deterministic scenarios in the same layout.
+
+- Scene: a 640×360 pinhole camera, 2 px box noise and a 3% detector miss
+  rate. Partly occluded people receive scores between 0.12 and 0.29.
+- Positions: map-frame positions with 0.05 m noise, so depth and
+  localization are close to perfect.
+- Appearance: `MarkerEncoder` maps clothing colour to a fixed vector. The
+  "similar" clothing has cosine similarity 0.9 to the target; the other two
+  colours have 0.2 and 0.1.
+
+The scenarios measure association, identity and timing logic only. They do
+not measure detector, DINO or ReID accuracy. Their absolute scores are not
+TPT-Bench results.
+
+Platform: Linux x64 CPU container. All 28 replays took about 6 s, which is
+not a timing result for any target platform. To reproduce:
+
+```bash
+python tools/datasets/person_scenarios.py
+```
+
+Summed over the seven scenarios:
+
+| Variant | Mean AO | Mean F | Mean AMR | Wrong-person frames | Reported while absent | Missed visible frames |
+| --- | --- | --- | --- | --- | --- | --- |
+| No appearance encoder (motion) | 0.582 | 0.512 | 0.129 | 234 | 104 | 254 |
+| Appearance, no verifier | 0.566 | 0.632 | 0.497 | 0 | 0 | 266 |
+| Appearance, oracle verifier 0 s | 0.738 | 0.768 | 0.636 | 0 | 0 | 137 |
+| Appearance, oracle verifier 7.88 s | 0.566 | 0.632 | 0.497 | 0 | 0 | 266 |
+
+7.88 s is the median Kimi identity call recorded on 2026-11-16. Per-scenario
+rows are written to `build/person-bench/results/summary.md`.
+
+Findings:
+
+1. **Motion-only identity changes accept other people.** Without an
+   appearance encoder, PersonTracker locked onto someone else in five of the
+   seven scenarios: the occluder (70 frames), the crossing lookalike
+   (58 frames), and the impostor that entered at the exit (45 frames), and the side-by-side
+   companion after a source gap (17 frames). In `similar_elsewhere` it
+   reported the lookalike for 44 frames while the target was gone. This quantifies the DEV-05 gap: three consistent frames
+   of the only nearby candidate are enough to take over.
+2. **Appearance mode never chose the wrong person, but verification blocks
+   recovery.**
+   - `_match_dino` returns while `_pending_identity` is set
+     (`person.py:1021`). The pending request is cleared only when that
+     candidate leaves the view (`person.py:741`), so even the original track
+     ID returning is ignored meanwhile.
+   - In `crossing_similar`, a 0.2 s occlusion let the similar distractor
+     (cosine about 0.9, above the 0.65 threshold, and the only candidate in
+     that frame) become the pending candidate.
+   - With a 0 s oracle, the target was recovered within 0.1 s
+     (AO 0.871). With no verifier, or with 7.88 s latency, it was not recovered
+     before the 12 s scenario ended (AO 0.445).
+3. **Camera rotation fragments 2D tracks.** At ±0.6 rad yaw and 1/3 Hz,
+   `NativeByteTracker` gave the target 41 IDs and 84 switches over 116
+   tracked frames; `walk_away` produced one ID. Every switch goes through
+   reacquisition, so the best variant reached AO 0.113. This matches the
+   missing camera-motion compensation noted in the paper review (BoT-SORT
+   CMC).
+4. **Source gaps.** 0.8 s gaps under 5–20 Hz jitter caused an ID switch.
+   This scenario then had the same verifier dependency: AO 0.477 without a
+   verifier, 0.822 with the 0 s oracle.
+
+Limits: the verifier is a label oracle; scenarios last 12–14 s, so "not
+recovered" means not recovered within that window; positions bypass depth
+contamination (DEV-08). No detector, NX, native-simulation or field run was
+made.
+
+To run on real TPT-Bench, use a detector run elsewhere that writes
+`{"ts", "boxes": [[x1, y1, x2, y2, score]], "positions"?}` JSONL per
+sequence. Without `positions`, the replay estimates bearing and range from
+the equirectangular box and records how many objects used this estimate.
+
+```bash
+python tools/datasets/tpt_bench.py replay --dataset-dir /data/TPT-Bench --sequence 0015 \
+  --detections /data/tpt-detections/0015.jsonl --method lingtu-dino --results-dir /data/TPT-Bench/evaluation_results \
+  --encoder dino --dino-model /models/dinov3.onnx --verifier none
+python tools/datasets/tpt_bench.py score --dataset-dir /data/TPT-Bench --methods lingtu-dino RPF-ReID-ResNet18 \
+  --sequences 0015
+```
+
+The second command also scores the 18 official baselines shipped in
+`evaluation_results`, using the same metric code.
+
+## Identity and track-continuity repairs, 2026-11-17
+
+This addresses the findings of the synthetic baseline above. The item list
+is in the
+[development reference](person-tracking-development-reference.md#第二批代码修复记录2026-11-17).
+
+Changes:
+
+- **Time-based prediction and expiry.** `NativeByteTracker` predicts boxes
+  over the elapsed source time and stores velocity in pixels per second.
+  Lost tracks expire after source time: `track_buffer` frames at 30 FPS,
+  i.e. one second by default. `YoloTensorRTDetector` receives the frame
+  time through the existing `set_source_ts` hook. Without a timestamp, each
+  update still advances one nominal frame period.
+- **Camera-motion compensation.** The same tracker estimates the global
+  image translation by phase correlation, with detected people blanked out,
+  and shifts its predictions before association.
+  - On textured test images it recovered shifts of 0–120 px per frame in
+    all 450 cases, with peak responses of at least 0.63; two unrelated
+    images give about 0.07, and a peak below 0.3 is treated as no camera
+    motion.
+  - Pyramidal Lucas–Kanade optical flow was tried first. It returned wrong
+    transforms for most shifts above 40 px and was not used.
+- **Co-visible IDs are excluded.** `PersonTracker` remembers track IDs that
+  appeared in the same frame as the accepted target. They cannot become
+  motion, ReID or identity-verification candidates.
+- **New IDs and short gaps.**
+  - A new ID continues the target immediately only after a detector break
+    of at most 0.5 s, at the predicted position, as the only such candidate.
+    In appearance mode, the DINO similarity must also reach the threshold,
+    and the old ID must neither be visible nor be cooling down after an
+    identity rejection.
+  - Without appearance, a gap of 0.5–1 s still needs three consistent
+    frames, and a longer gap no longer changes identity on motion alone.
+- **Pending verification.** While a verification is pending, the original
+  track ID can still resume within the short gap. When it does, it cancels
+  the pending check; a late VLM verdict then finds no pending candidate and
+  is ignored.
+
+Matched comparison:
+
+- Data: the same synthetic data (the renderer now draws a world-fixed grey
+  background so that camera motion is observable).
+- Before: the previous commit, run in a separate worktree.
+- After: the current tree.
+- Sums over seven scenarios:
+
+| Variant | AO before → after | F before → after | Wrong-person frames | Reported while absent | Missed visible frames |
+| --- | --- | --- | --- | --- | --- |
+| No appearance encoder (motion) | 0.582 → 0.812 | 0.512 → 0.840 | 234 → 0 | 104 → 0 | 254 → 75 |
+| Appearance, no verifier | 0.566 → 0.809 | 0.632 → 0.836 | 0 → 0 | 0 → 0 | 266 → 78 |
+| Appearance, oracle verifier 0 s | 0.738 → 0.856 | 0.768 → 0.871 | 0 → 0 | 0 → 0 | 137 → 33 |
+| Appearance, oracle verifier 7.88 s | 0.566 → 0.809 | 0.632 → 0.836 | 0 → 0 | 0 → 0 | 266 → 78 |
+
+Per scenario (AO with the 7.88 s verifier):
+
+- `crossing_similar` 0.445 → 0.871;
+- `dropped_frames` 0.477 → 0.899;
+- `ego_rotation` 0.007 → 0.861.
+
+On the same detections, the target's 2D IDs changed as follows:
+
+- `ego_rotation`: 23 → 1 distinct target IDs with compensation;
+- `dropped_frames`: 2 → 1 with time-based prediction.
+
+The motion-only variant's `occlusion_reentry` AO moved from 0.451 to 0.438.
+Its earlier score included following the occluder for 70 frames.
+
+Remaining:
+
+- **Long full occlusion depends on verification latency.**
+  `occlusion_reentry` hides the target for about 3 s. Afterwards a new ID
+  needs identity verification. With an instant oracle it recovers 0.4 s
+  after the detector creates the track; at 7.88 s latency it does not
+  recover within the 14 s scenario. Allowing DINO alone to authorize that
+  return would change the motion-authorization policy, so it was not done.
+- **Shorter lost-track retention at low frame rates.** Time-based expiry
+  shortens retention at low frame rates. At 10 Hz, a lost track previously
+  survived 30 updates (3 s); it now survives 1 s. Longer absences go through
+  identity checks.
+- **DEV-03 on the BPU path is unchanged.**
+
+Verification:
+
+- The perception, decision, runtime, semantic-integration and tools suites
+  ran on the previous and the current sources. The current sources add no
+  failure.
+- 13 new or updated cases fail on the previous sources and pass now.
+- The remaining 70 failures and 24 collection errors are identical in both
+  runs; they come from missing PIL, model files and LFS assets in this
+  container.
+- No detector, NX, MuJoCo or field run was made. Phase correlation took
+  about 0.6 ms on a 320×120 downscaled image in the x86 container. This is
+  not a target-platform measurement.
+
 ## Sources
 
 - [MOT17 official dataset](https://motchallenge.net/data/MOT17.zip)

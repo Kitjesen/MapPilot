@@ -25,7 +25,6 @@ FollowerOutput followPath(Follower &follower, const std::vector<Vec3> &path,
   state.safetyStop = safety_stop;
   state.params = params;
   state.goalDistance = goal_distance;
-  state.standardPathProfile = false;
   return follower.follow(LocalPlan::path(path), state);
 }
 
@@ -227,43 +226,7 @@ TEST(FollowerPath, DirectionThresholdControlsLinearAcceleration) {
   EXPECT_NE(output.cmd.wz, 0.0);
 }
 
-TEST(FollowerPath, CmuProfileMatchesUpstreamAndKeepsDriveMode) {
-  FollowerParams base;
-  base.maxSpeed = 0.5;
-  base.maxAccel = 2.0;
-  base.maxYawRateRadS = 0.55;
-  base.headingAlignEnterRad = 0.8;
-  base.headingAlignExitRad = 0.3;
-  base.twoWayDrive = true;
-  const FollowerParams params = cmuFollowerParams(base);
-
-  EXPECT_DOUBLE_EQ(params.maxSpeed, 0.5);
-  EXPECT_DOUBLE_EQ(params.baseLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.minLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.maxLookAheadDis, 0.5);
-  EXPECT_DOUBLE_EQ(params.yawRateGain, 1.5);
-  EXPECT_DOUBLE_EQ(params.maxYawRateRadS, 0.55);
-  EXPECT_DOUBLE_EQ(params.maxAccel, 2.0);
-  EXPECT_DOUBLE_EQ(params.linearStopThreshold, 0.02);
-  EXPECT_DOUBLE_EQ(params.headingAlignEnterRad, 0.4);
-  EXPECT_DOUBLE_EQ(params.headingAlignExitRad, 0.4);
-  EXPECT_DOUBLE_EQ(params.omniDirGoalThre, 0.4);
-  EXPECT_DOUBLE_EQ(params.omniDirDiffThre, 1.5);
-  EXPECT_DOUBLE_EQ(params.stopDisThre, 0.3);
-  EXPECT_DOUBLE_EQ(params.slowDwnDisThre, 0.75);
-  EXPECT_TRUE(params.twoWayDrive);
-  EXPECT_TRUE(params.noRotAtGoal);
-
-  base.twoWayDrive = false;
-  EXPECT_FALSE(cmuFollowerParams(base).twoWayDrive);
-
-  base.maxAccel = 0.4;
-  const auto limited = cmuFollowerParams(base);
-  EXPECT_DOUBLE_EQ(limited.maxAccel, 0.4);
-  EXPECT_DOUBLE_EQ(limited.linearStopThreshold, 0.004);
-}
-
-TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
+TEST(FollowerLifecycle, PathAndSplineUseTheirOwnHeadingGains) {
   Follower follower;
   FollowerState state;
   state.vehicleYawRelative = 0.2;
@@ -273,15 +236,15 @@ TEST(FollowerLifecycle, DefaultProfileIsPathOnly) {
   state.params.maxYawRateRadS = 10.0;
   state.params.maxYawAccelRadS2 = 0.0;
   state.params.nominalDt = 0.05;
-  state.params.cmu.yaw_gain = 2.5;
+  // A stationary path follower turns with the stop gain.
+  state.params.stopYawRateGain = 2.5;
   state.params.spline.yawGain = 3.0;
   state.params.spline.headingErrorThreshold = 1.0;
 
   const auto path = follower.follow(LocalPlan::path(straightPath()), state);
   EXPECT_NEAR(path.cmd.wz, -0.5, 1e-12);
-  EXPECT_DOUBLE_EQ(state.params.yawRateGain, 7.5);
+  EXPECT_DOUBLE_EQ(state.params.stopYawRateGain, 2.5);
   EXPECT_DOUBLE_EQ(state.params.nominalDt, 0.05);
-  EXPECT_TRUE(state.standardPathProfile);
 
   const auto spline = follower.follow(
       LocalPlan::spline(scanSpline({{0, 0, 0}, {3, 0, 0}}, 1, 3.0)), state);
@@ -1197,7 +1160,7 @@ TEST(FollowerSpline, ExplicitTotalSpeedStillCapsAutonomousDiagonalMotion) {
   EXPECT_NEAR(output.cmd.vy, output.cmd.vx, 1e-9);
 }
 
-TEST(FollowerSpline, AxisLimitsPreserveDiagonalDirectionAcrossBodyFrames) {
+TEST(FollowerSpline, AxisLimitsClipEachBodyAxisLikeUpstream) {
   FollowerParams params;
   params.maxSpeed = .6;
   params.maxAccel = 2;
@@ -1221,7 +1184,6 @@ TEST(FollowerSpline, AxisLimitsPreserveDiagonalDirectionAcrossBodyFrames) {
       state.vehicleYawRelative = yaw;
       state.desiredHeading = yaw;
       Twist previous;
-      double maximumDirectionError = 0;
       FollowerOutput output;
       for (int tick = 0; tick < 100; ++tick) {
         state.currentTime = 1.0+.01*tick;
@@ -1232,21 +1194,20 @@ TEST(FollowerSpline, AxisLimitsPreserveDiagonalDirectionAcrossBodyFrames) {
         EXPECT_LE(std::hypot(output.cmd.vx,output.cmd.vy),.6+1e-9);
         EXPECT_LE(std::hypot(output.cmd.vx-previous.vx,output.cmd.vy-previous.vy),
                   params.maxAccel*.01+1e-9);
-        maximumDirectionError = std::max(maximumDirectionError,
-            std::abs(output.cmd.vx*bodyVy-output.cmd.vy*bodyVx));
         state.vehicleRelative.x += .01*(c*output.cmd.vx-s*output.cmd.vy);
         state.vehicleRelative.y += .01*(s*output.cmd.vx+c*output.cmd.vy);
         previous = output.cmd;
       }
-      EXPECT_LE(maximumDirectionError,1e-9);
-      EXPECT_NEAR(output.cmd.vx,.35,1e-9);
+      // Upstream clamps each body axis independently: forward keeps its
+      // request while the lateral axis saturates.
+      EXPECT_NEAR(output.cmd.vx,bodyVx,1e-9);
       EXPECT_NEAR(output.cmd.vy,side*.35,1e-9);
       EXPECT_NEAR(output.tracking.executionTimeS,.99,1e-9);
     }
   }
 }
 
-TEST(FollowerSpline, AxisLimitsPreservePositionCorrectionDirection) {
+TEST(FollowerSpline, AxisLimitsClipPositionCorrectionLikeUpstream) {
   FollowerParams params;
   params.maxSpeed = .6;
   params.maxAccel = 2;
@@ -1262,10 +1223,12 @@ TEST(FollowerSpline, AxisLimitsPreservePositionCorrectionDirection) {
   state.vehicleRelative = {-.1,.2,0};
   state.currentTime = 1;
   const auto output = follower.follow(LocalPlan::spline(trajectory),state);
-  // The feedback-corrected request is (.3,-.4) + .8*(.1,-.2).
-  constexpr double correctedX = .38, correctedY = -.56;
+  // The feedback-corrected request (.3,-.4) + .8*(.1,-.2) is first limited to
+  // the total speed, then each body axis is clamped independently.
+  const double scale = .6/std::hypot(.38,.56);
+  const double clippedX = .38*scale, clippedY = std::max(-.35,-.56*scale);
   EXPECT_GT(std::hypot(output.cmd.vx,output.cmd.vy),0);
-  EXPECT_LE(std::abs(output.cmd.vx*correctedY-output.cmd.vy*correctedX),1e-9);
+  EXPECT_LE(std::abs(output.cmd.vx*clippedY-output.cmd.vy*clippedX),1e-9);
   EXPECT_LE(std::hypot(output.cmd.vx,output.cmd.vy),params.maxAccel*params.nominalDt+1e-9);
   EXPECT_LE(std::abs(output.cmd.vy),.35+1e-9);
 }
@@ -1687,7 +1650,7 @@ TEST(FollowerPath, ClosedLoopSimulationConverges) {
 }
 
 
-TEST(FollowerSpline, HeadingAlignmentBrakesWhileTheReferenceIsFrozen) {
+TEST(FollowerSpline, HeadingAlignmentStopsTranslationLikeUpstream) {
   Follower follower;
   FollowerState state;
   state.currentTime = 1;
@@ -1702,7 +1665,10 @@ TEST(FollowerSpline, HeadingAlignmentBrakesWhileTheReferenceIsFrozen) {
   state.desiredHeading = 1.2;
   const auto turning = follower.follow(plan, state);
   EXPECT_TRUE(turning.executionFrozen);
-  EXPECT_NEAR(turning.cmd.vx, .395, 1e-9);
+  // Upstream publishes zero translation while the reference is frozen, so the
+  // robot cannot coast past the point where it will resume tracking.
+  EXPECT_DOUBLE_EQ(turning.cmd.vx, 0);
+  EXPECT_DOUBLE_EQ(turning.cmd.vy, 0);
   state.safetyStop = 2;
   const auto stopped = follower.follow(plan, state);
   EXPECT_DOUBLE_EQ(stopped.cmd.vx, 0);
