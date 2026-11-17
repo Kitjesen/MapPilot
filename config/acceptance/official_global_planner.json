@@ -61,6 +61,19 @@
       "expected": {"ok": true}
     },
     {
+      "id": "building_landing_turn_go2_body",
+      "pcd": "octomap/pcd_files/building2_9.pcd",
+      "map_profile": "modeled_surface_free",
+      "start": [9.3, 6.1, 1.15],
+      "goal": [-9.9, 1.5, 0.55],
+      "planner_options": {
+        "robot_radius": 0.25,
+        "body_offset_m": 0.19,
+        "body_clearance_above_m": 0.24
+      },
+      "expected": {"ok": true}
+    },
+    {
       "id": "plaza_traverse_modeled",
       "pcd": "octomap/pcd_files/plaza3_10.pcd",
       "map_profile": "modeled_surface_free",

@@ -384,7 +384,8 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
             timeout_s=args.timeout,
         )
 
-        request = {"map_path": str(map_path), "start": case["start"], "goal": case["goal"], "options": options}
+        case_options = {**options, **case.get("planner_options", {})}
+        request = {"map_path": str(map_path), "start": case["start"], "goal": case["goal"], "options": case_options}
         _json_dump(case_dir / "request.json", request)
         completed = _run(
             [str(planner)],
@@ -425,7 +426,7 @@ def run_manifest(args: argparse.Namespace) -> dict[str, Any]:
                     map_path=map_path,
                     xyz_path=xyz_path,
                     planning_anchor=[float(value) for value in case["start"]],
-                    options=options,
+                    options=case_options,
                     output_dir=case_dir,
                     timeout_s=args.timeout,
                 )
