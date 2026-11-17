@@ -1730,8 +1730,14 @@ namespace global_planner
 
     void OctoPlanner3D::rebuildRustGraph(bool preserve_graph)
     {
+        // lowest_traversable_only keeps the legacy voxel layer for a centered
+        // body. A longitudinal body offset is the body-centre cylinder pair.
+        // The official park acceptance still sets the flag, but that body
+        // must prepare the Rust artifact; otherwise the query falls through
+        // to the voxel start snap and nothing is saved.
+        const bool legacy_lowest_layer = lowest_traversable_only_ && body_offset_m_ <= 0.0;
         if (!artifact_ || !octree_ || !ground_support_ ||
-            support_height_m_ <= 0.0 || lowest_traversable_only_) {
+            support_height_m_ <= 0.0 || legacy_lowest_layer) {
             if (artifact_) {
                 artifact_->rust_graph.reset();
             }
