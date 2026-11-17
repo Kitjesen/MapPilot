@@ -270,13 +270,17 @@ PcdIoResult LoadBinaryPoints(std::istream& stream, const PcdHeader& header) {
     return result;
   }
   const std::string payload = payload_stream.str();
-  if (payload.size() % static_cast<size_t>(layout.byte_stride) != 0U) {
+  const int64_t available =
+      static_cast<int64_t>(payload.size() / static_cast<size_t>(layout.byte_stride));
+  // PCL's binary writer pads the file to a page boundary after the declared
+  // points, so trailing bytes are ignored once POINTS bounds the payload.
+  if (header.points_declared) {
+    if (header.points > available) {
+      result.message = "PCD binary payload does not match declared point count";
+      return result;
+    }
+  } else if (payload.size() % static_cast<size_t>(layout.byte_stride) != 0U) {
     result.message = "PCD binary payload does not match its stride";
-    return result;
-  }
-  int64_t available = static_cast<int64_t>(payload.size() / static_cast<size_t>(layout.byte_stride));
-  if (header.points_declared && header.points != available) {
-    result.message = "PCD binary payload does not match declared point count";
     return result;
   }
   const int64_t point_count = header.points_declared ? header.points : available;

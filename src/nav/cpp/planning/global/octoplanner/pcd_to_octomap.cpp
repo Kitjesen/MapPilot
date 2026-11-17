@@ -1,6 +1,7 @@
 #include <octomap/OcTree.h>
 #include "lingtu/maps/octomap/sampled.hpp"
 #include "lingtu/maps/octomap/rays.hpp"
+#include "lingtu/maps/io/pcd.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -118,75 +119,18 @@ std::vector<Point> readPcd(const std::string & path)
   }
   return points;
 #else
-  std::ifstream in(path);
-  if (!in) {
-    throw std::runtime_error("failed to open input PCD: " + path);
+  // Shared map reader: ASCII, binary and binary_compressed PCD.
+  const auto loaded = lingtu::maps::LoadPcdXyz(path);
+  if (!loaded.ok) {
+    throw std::runtime_error("failed to read input PCD: " + path + ": " + loaded.message);
   }
-
-  std::vector<std::string> fields;
-  int x_index = -1;
-  int y_index = -1;
-  int z_index = -1;
-  bool in_data = false;
-  std::vector<Point> points;
-
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    std::istringstream iss(line);
-    std::string key;
-    iss >> key;
-    const std::string key_l = lower(key);
-    if (!in_data) {
-      if (key_l == "fields") {
-        fields.clear();
-        std::string field;
-        while (iss >> field) {
-          fields.push_back(lower(field));
-        }
-        for (std::size_t idx = 0; idx < fields.size(); ++idx) {
-          if (fields[idx] == "x") {
-            x_index = static_cast<int>(idx);
-          } else if (fields[idx] == "y") {
-            y_index = static_cast<int>(idx);
-          } else if (fields[idx] == "z") {
-            z_index = static_cast<int>(idx);
-          }
-        }
-      } else if (key_l == "data") {
-        std::string mode;
-        iss >> mode;
-        if (lower(mode) != "ascii") {
-          throw std::runtime_error("only ASCII PCD is supported by this converter");
-        }
-        if (x_index < 0 || y_index < 0 || z_index < 0) {
-          throw std::runtime_error("PCD must contain x y z fields");
-        }
-        in_data = true;
-      }
-      continue;
-    }
-
-    std::vector<double> values;
-    std::istringstream row(line);
-    double value = 0.0;
-    while (row >> value) {
-      values.push_back(value);
-    }
-    const int max_index = std::max({x_index, y_index, z_index});
-    if (static_cast<int>(values.size()) <= max_index) {
-      continue;
-    }
-    points.push_back({values[x_index], values[y_index], values[z_index]});
-  }
-
-  if (!in_data) {
-    throw std::runtime_error("PCD DATA ascii section missing");
-  }
-  if (points.empty()) {
+  if (loaded.points.empty()) {
     throw std::runtime_error("PCD contains no valid xyz points");
+  }
+  std::vector<Point> points;
+  points.reserve(loaded.points.size());
+  for (const auto & point : loaded.points) {
+    points.push_back({point.x, point.y, point.z});
   }
   return points;
 #endif
