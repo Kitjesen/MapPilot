@@ -176,8 +176,27 @@ starting the driver.
 
 The Go2 target must have SDK2 installed at `/opt/unitree_robotics`, or set
 `LINGTU_UNITREE_SDK2_PREFIX` consistently for both build and service startup.
-The Doso target must have DOSO SDK 0.6+ (`BrainstemClient`) installed for CMake discovery;
-set `LINGTU_BRAINSTEM_CLIENT_PREFIX` when it is not under a standard prefix.
+The Doso build machine must install BrainstemClient 0.6 before configuring
+`lingtu_driver`. `find_package(BrainstemClient CONFIG REQUIRED)` accepts that
+installed package with no version argument. The package still has to come from
+`Kitjesen/DOSO-SDK` branch `rust`, directory `brainstem/`. That project is
+`project(DOSOSDK VERSION 0.6.0)`. Its template
+`brainstem/cmake/BrainstemClientConfig.cmake.in` is generated at install time
+into `<prefix>/lib/cmake/BrainstemClient/` (`BrainstemClientConfig.cmake` and
+`BrainstemClientConfigVersion.cmake`, version `0.6.0`).
+
+On the Linux ARM64 build machine, from that `brainstem/` directory, install
+the documented build dependencies and run `cmake -S . -B build`, the tests
+described by that directory's README, then:
+
+```bash
+cmake --install build --prefix <prefix>
+export LINGTU_BRAINSTEM_CLIENT_PREFIX=<prefix>
+```
+
+`LINGTU_BRAINSTEM_CLIENT_PREFIX` is prepended to `CMAKE_PREFIX_PATH` when it
+is set. Do not replace this package with the unpublished `Kitjesen/brainstem`
+0.1.0 tree, and do not commit a prebuilt ARM64 prefix into MapPilot.
 
 ## Runtime configuration
 

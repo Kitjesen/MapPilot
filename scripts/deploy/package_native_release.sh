@@ -168,7 +168,9 @@ run_self_test() {
   local relative
   local tarball
   local manifest
+  local system_manifest
   local key_file
+  local unsigned_output
   local extracted_package
   local mapd_tarball
   local tar_listing
@@ -181,6 +183,10 @@ run_self_test() {
   local fake_control
   local success_root
   local stopped_root
+  local first_root
+  local first_output
+  local plain_root
+  local plain_output
   local stopped_failure_root
   local failure_root
   local link_failure_root
@@ -313,6 +319,44 @@ EOF
   printf 'native release config\n' > "${install_prefix}/etc/lingtu/self-test.txt"
   printf 'module lingtu {}\n' > "${install_prefix}/share/lingtu/schemas/messages.idl"
 
+  if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
+    echo "package self-test requires cryptography to sign a release" >&2
+    return 1
+  fi
+  key_file="${test_root}/test-signing-key.pem"
+  python3 - "${key_file}" <<'PY'
+from pathlib import Path
+import sys
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+key = Ed25519PrivateKey.generate()
+Path(sys.argv[1]).write_bytes(
+    key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+)
+PY
+  export LINGTU_NATIVE_RELEASE_SIGNING_KEY="${key_file}"
+
+  if unsigned_output="$(
+    env -u LINGTU_NATIVE_RELEASE_SIGNING_KEY \
+      LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
+      LINGTU_NATIVE_RELEASE_INSTALL_SOURCE="${install_prefix}" \
+      LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+      SOURCE_DATE_EPOCH=1704067200 \
+      bash "${BASH_SOURCE[0]}" v0.0.0 "${test_root}/output-unsigned" 2>&1
+  )"; then
+    echo "packager accepted a release without a signing key" >&2
+    return 1
+  fi
+  grep -Fq 'refusing to write an empty signature' <<<"${unsigned_output}"
+  if [[ -e "${test_root}/output-unsigned" ]] \
+      && grep -R -F '"signature": ""' "${test_root}/output-unsigned" >/dev/null 2>&1; then
+    echo "packager wrote an empty signature" >&2
+    return 1
+  fi
+  test ! -e "${test_root}/output-unsigned"
+
   # A map-optimizer build entrypoint makes lt_pgo a required release artifact.
   # Prove that omission fails before supplying the fixture binary.
   mkdir -p "${test_root}/source/scripts/build"
@@ -334,23 +378,6 @@ EOF
   printf '#!/usr/bin/env bash\nprintf "map optimizer fixture\\n"\n' \
     > "${install_prefix}/bin/lt_pgo"
   chmod 0755 "${install_prefix}/bin/lt_pgo"
-
-  key_file=""
-  if python3 -c 'import cryptography' >/dev/null 2>&1; then
-    key_file="${test_root}/test-signing-key.pem"
-    python3 - "${key_file}" <<'PY'
-from pathlib import Path
-import sys
-
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
-
-key = Ed25519PrivateKey.generate()
-Path(sys.argv[1]).write_bytes(
-    key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
-)
-PY
-  fi
 
   mkdir -p "${install_prefix}/include"
   : > "${install_prefix}/include/internal.hpp"
@@ -412,24 +439,68 @@ PY
 
   tarball="${output_dir}/lingtu-0.0.0-aarch64-native-release.tar.gz"
   manifest="${output_dir}/lingtu-0.0.0-aarch64-native-release-manifest.json"
+  system_manifest="${output_dir}/lingtu-0.0.0-aarch64-native-release-system-manifest.json"
   test -s "${tarball}"
   test -s "${manifest}"
+  test -s "${system_manifest}"
   (
     cd "${output_dir}"
     sha256sum -c lingtu-0.0.0-aarch64-native-release.sha256
   )
   python3 -m json.tool "${manifest}" >/dev/null
-  python3 - "${manifest}" "${key_file}" <<'PY'
+  python3 - "${manifest}" "${key_file}" "${tarball}" "${system_manifest}" <<'PY'
 import json
+import tarfile
 from pathlib import Path
 import sys
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+manifest_path, key_path, archive_path, system_path = sys.argv[1:]
+payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+system = json.loads(Path(system_path).read_text(encoding="utf-8"))
 assert payload["release_format"] == "lingtu.native-release.v1"
 assert payload["artifacts"][0]["filename"].endswith("-native-release.tar.gz")
 assert payload["artifacts"][0]["apply_action"] == "install_script"
 assert payload["artifacts"][0]["install_script"] == "install_nav.sh"
-assert bool(payload["signature"]) == bool(sys.argv[2])
+assert payload["architecture"] == "aarch64"
+assert payload["requiredLibraries"]
+assert system["architecture"] == payload["architecture"]
+assert system["requiredLibraries"] == payload["requiredLibraries"]
+assert "signature" not in system
+assert '"signature": ""' not in Path(manifest_path).read_text(encoding="utf-8")
+
+def verify(document: dict) -> None:
+    unsigned = dict(document)
+    signature = unsigned.pop("signature")
+    assert isinstance(signature, str) and signature
+    canonical = json.dumps(
+        unsigned,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    private = load_pem_private_key(Path(key_path).read_bytes(), password=None)
+    private.public_key().verify(bytes.fromhex(signature), canonical.encode("utf-8"))
+
+verify(payload)
+prefix = "lingtu-0.0.0-aarch64-native-release/"
+with tarfile.open(archive_path) as archive:
+    metadata = json.loads(archive.extractfile(prefix + "metadata.json").read())
+    found = []
+    for member in archive.getmembers():
+        if not member.isfile() or not member.name.startswith(prefix + "lib/"):
+            continue
+        relative = member.name.removeprefix(prefix + "lib/")
+        filename = relative.rsplit("/", 1)[-1]
+        if filename.endswith(".so") or ".so." in filename:
+            found.append(relative)
+assert metadata["architecture"] == "aarch64"
+assert metadata["requiredLibraries"] == payload["requiredLibraries"] == sorted(found)
+verify(metadata)
+assert "liblingtu_nav_client.so" in found
+assert "lingtu/video/runtime-arch" not in found
+assert "lingtu/video/env.sh" not in found
 PY
   tar_listing="$(tar -tzf "${tarball}")"
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/metadata.json' \
@@ -682,6 +753,49 @@ FAKE_CONTROL
     "$(readlink -f "${stopped_root}/releases/v0.0.0")"
   test ! -e "${stopped_root}/control.log"
   test ! -e "${stopped_root}/state/current.json"
+
+  # First install: no current link and no Product session. Stage the release
+  # and point current at it. Do not call ProductControl or create a session.
+  first_root="${test_root}/transaction-first"
+  mkdir -p "${first_root}/state"
+  first_output="$(
+    LINGTU_NATIVE_RELEASE_TEST_ROOT="${test_root}" \
+      LINGTU_NATIVE_RELEASE_TEST_CONTROL="${fake_control}" \
+      LINGTU_FAKE_CONTROL_LOG="${first_root}/control.log" \
+      bash "${extracted_package}/install_nav.sh" \
+      --package-dir "${extracted_package}" \
+      --releases-dir "${first_root}/releases" \
+      --current-link "${first_root}/current" \
+      --state-dir "${first_root}/state"
+  )"
+  grep -Fq 'Host was not started' <<<"${first_output}"
+  test "$(readlink -f "${first_root}/current")" = \
+    "$(readlink -f "${first_root}/releases/v0.0.0")"
+  test ! -e "${first_root}/control.log"
+  test ! -e "${first_root}/state/current.json"
+  test ! -e "${first_root}/state/session.env"
+
+  # A directory at current is not a previous release. Leave it in place.
+  plain_root="${test_root}/transaction-plain-current"
+  mkdir -p "${plain_root}/current/bin" "${plain_root}/state"
+  if plain_output="$(
+    LINGTU_NATIVE_RELEASE_TEST_ROOT="${test_root}" \
+      LINGTU_NATIVE_RELEASE_TEST_CONTROL="${fake_control}" \
+      LINGTU_FAKE_CONTROL_LOG="${plain_root}/control.log" \
+      bash "${extracted_package}/install_nav.sh" \
+      --package-dir "${extracted_package}" \
+      --releases-dir "${plain_root}/releases" \
+      --current-link "${plain_root}/current" \
+      --state-dir "${plain_root}/state" 2>&1
+  )"; then
+    echo "installer replaced a non-symlink current path" >&2
+    return 1
+  fi
+  grep -Fq 'not a symlink' <<<"${plain_output}"
+  test -d "${plain_root}/current/bin"
+  test ! -L "${plain_root}/current"
+  test ! -e "${plain_root}/releases"
+  test ! -e "${plain_root}/control.log"
 
   success_root="${test_root}/transaction-success"
   mkdir -p "${success_root}/old-release" "${success_root}/state"
@@ -938,6 +1052,27 @@ for command_name in cmake git install python3 rsync sha256sum tar gzip; do
     exit 2
   fi
 done
+
+# An empty signature cannot pass the gateway preflight. Fail before any
+# manifest or archive is written.
+if [[ -z "${LINGTU_NATIVE_RELEASE_SIGNING_KEY:-}" || ! -f "${LINGTU_NATIVE_RELEASE_SIGNING_KEY}" ]]; then
+  echo "Native release packaging requires LINGTU_NATIVE_RELEASE_SIGNING_KEY; refusing to write an empty signature" >&2
+  exit 1
+fi
+python3 - "${LINGTU_NATIVE_RELEASE_SIGNING_KEY}" <<'PY'
+from pathlib import Path
+import sys
+
+try:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+except ImportError as exc:
+    raise SystemExit("cryptography is required to sign a native release") from exc
+
+key = load_pem_private_key(Path(sys.argv[1]).read_bytes(), password=None)
+if not isinstance(key, Ed25519PrivateKey):
+    raise SystemExit("native release signing key must be Ed25519")
+PY
 
 VERSION_CLEAN="${VERSION#v}"
 PACKAGE_NAME="lingtu-${VERSION_CLEAN}-${ARCH}-native-release"
@@ -1308,12 +1443,41 @@ python3 - \
   "${ARCH}" \
   "${GIT_COMMIT}" \
   "${BUILD_TIME}" \
-  "${PACKAGE_ROOT}/config/native-release-sha256.txt" <<'PY'
+  "${PACKAGE_ROOT}/config/native-release-sha256.txt" \
+  "${PACKAGE_ROOT}" \
+  "${LINGTU_NATIVE_RELEASE_SIGNING_KEY}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-output, version, arch, commit, build_time, checksum_path = sys.argv[1:]
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+(
+    output,
+    version,
+    arch,
+    commit,
+    build_time,
+    checksum_path,
+    package_root,
+    signing_key,
+) = sys.argv[1:]
+package_root = Path(package_root)
+lib = package_root / "lib"
+
+def is_shared_library(path: Path) -> bool:
+    name = path.name
+    return name.endswith(".so") or ".so." in name
+
+libraries = sorted(
+    path.relative_to(lib).as_posix()
+    for path in lib.rglob("*")
+    if path.is_file() and is_shared_library(path)
+)
+if not libraries:
+    raise SystemExit(f"Native release lib/ contains no shared libraries: {lib}")
+
 artifacts = []
 for line in Path(checksum_path).read_text(encoding="utf-8").splitlines():
     digest, relative = line.split(maxsplit=1)
@@ -1326,8 +1490,16 @@ payload = {
     "git_commit": commit,
     "build_time": build_time,
     "data_plane": "native_typed_dds",
+    "requiredLibraries": libraries,
     "artifacts": artifacts,
 }
+key = load_pem_private_key(Path(signing_key).read_bytes(), password=None)
+if not isinstance(key, Ed25519PrivateKey):
+    raise SystemExit("native release signing key must be Ed25519")
+canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+payload["signature"] = key.sign(canonical.encode("utf-8")).hex()
+if not payload["signature"]:
+    raise SystemExit("native release signature is empty")
 Path(output).write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
@@ -1361,11 +1533,15 @@ python3 - \
   "${ARCH}" \
   "${GIT_COMMIT}" \
   "${BUILD_TIME}" \
-  "${LINGTU_NATIVE_RELEASE_SIGNING_KEY:-}" \
-  "${LINGTU_NATIVE_RELEASE_KEY_ID:-ota-signing-key-01}" <<'PY'
+  "${LINGTU_NATIVE_RELEASE_SIGNING_KEY}" \
+  "${LINGTU_NATIVE_RELEASE_KEY_ID:-ota-signing-key-01}" \
+  "${PACKAGE_ROOT}/metadata.json" <<'PY'
 import json
 from pathlib import Path
 import sys
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 (
     manifest_path,
@@ -1378,7 +1554,19 @@ import sys
     build_time,
     signing_key,
     key_id,
+    metadata_path,
 ) = sys.argv[1:]
+
+metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+libraries = metadata.get("requiredLibraries")
+if metadata.get("architecture") != arch:
+    raise SystemExit("inner metadata architecture does not match the release architecture")
+if not metadata.get("signature"):
+    raise SystemExit("inner metadata signature is empty")
+if not isinstance(libraries, list) or not libraries or not all(
+    isinstance(item, str) and item for item in libraries
+):
+    raise SystemExit("inner metadata requiredLibraries is empty")
 
 tarball = Path(tarball_path)
 artifact = {
@@ -1407,32 +1595,30 @@ manifest = {
     "release_date": build_time,
     "channel": "stable",
     "min_system_version": "1.0.0",
-    "signature": "",
     "public_key_id": key_id,
     "release_format": "lingtu.native-release.v1",
     "git_commit": commit,
+    "architecture": arch,
+    "requiredLibraries": libraries,
     "artifacts": [artifact],
 }
 
-if signing_key:
-    try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import load_pem_private_key
-    except ImportError as exc:
-        raise SystemExit("cryptography is required when a signing key is supplied") from exc
-
-    key = load_pem_private_key(Path(signing_key).read_bytes(), password=None)
-    if not isinstance(key, Ed25519PrivateKey):
-        raise SystemExit("native release signing key must be Ed25519")
-    unsigned = dict(manifest)
-    unsigned.pop("signature", None)
-    canonical = json.dumps(
-        unsigned,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
+if not signing_key:
+    raise SystemExit(
+        "Native release packaging requires LINGTU_NATIVE_RELEASE_SIGNING_KEY; refusing to write an empty signature"
     )
-    manifest["signature"] = key.sign(canonical.encode("utf-8")).hex()
+key = load_pem_private_key(Path(signing_key).read_bytes(), password=None)
+if not isinstance(key, Ed25519PrivateKey):
+    raise SystemExit("native release signing key must be Ed25519")
+canonical = json.dumps(
+    manifest,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+)
+manifest["signature"] = key.sign(canonical.encode("utf-8")).hex()
+if not manifest["signature"]:
+    raise SystemExit("native release signature is empty")
 
 Path(manifest_path).write_text(
     json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
@@ -1443,6 +1629,8 @@ system_manifest = {
     "system_version": version[1:],
     "build_time": build_time,
     "release_format": "lingtu.native-release.v1",
+    "architecture": arch,
+    "requiredLibraries": libraries,
     "components": {
         "lingtu-native-release": {
             "version": version[1:],
