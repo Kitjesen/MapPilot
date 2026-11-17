@@ -1466,7 +1466,6 @@ def test_sim_mujoco_every_product_compiles_for_windows_with_complete_pe_chain_an
                 "mujoco_feeder",
                 "slam_runtime",
                 "map_runtime",
-                "traversability_runtime",
                 "nav_runtime",
                 "host_runtime",
             },
@@ -2176,10 +2175,7 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     ]
     assert [process.name for process in plan.processes] == expected_processes
     assert "acceptance" not in plan.as_dict()["launch"]
-    if product in {"nav", "inspection"}:
-        assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
-    else:
-        assert plan.native_process_environment["LINGTU_EXPLORE_ROUTE"] == "map"
+    assert "LINGTU_EXPLORE_ROUTE" not in plan.native_process_environment
     assert plan.native_process_environment["LINGTU_MAPD_EXTENDED_LAYERS"] == "0"
     assert plan.has_process("traversability") is False
     assert plan.host_config["enable_camera"] is (

@@ -93,7 +93,7 @@ def test_architecture_layer_lookup_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path(
         "src/nav/cpp/planning/local/planner.hpp"
     )["id"] == "L5_algorithm_kernels"
-    assert architecture_layer_for_path("src/nav/cpp/planning/local/cmu/paths")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/nav/cpp/planning/local/scan/backend.cpp")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/nav/adapters/dds/nav/map_out.py")["id"] == ("L3_adapter_layer")
 
@@ -471,7 +471,6 @@ def test_native_navigation_has_one_canonical_runtime_location() -> None:
     cpp = ROOT / "src/nav/cpp"
     assert (cpp / "planning/local/planner.hpp").is_file()
     assert (cpp / "planning/local/planner.cpp").is_file()
-    assert (cpp / "planning/local/cmu/backend.cpp").is_file()
     assert (cpp / "planning/local/scan/backend.cpp").is_file()
     assert (cpp / "tracking/follower.hpp").is_file()
     assert (cpp / "tracking/follower.cpp").is_file()

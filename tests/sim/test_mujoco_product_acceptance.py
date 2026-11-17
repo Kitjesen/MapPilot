@@ -835,8 +835,6 @@ def test_mujoco_saved_map_navigation_products_resolve_exact_chain(
         "nav_runtime",
         "host_runtime",
     }
-    if product == "tracking":
-        expected.add("traversability_runtime")
     if product in {"inspection", "tracking"}:
         expected.add("camera_publisher")
     assert {process.name for process in plan.processes} == expected
