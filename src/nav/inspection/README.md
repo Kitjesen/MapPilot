@@ -34,7 +34,7 @@ execution progress.
 Inspection uses the same navigation chain as the ordinary `nav` Product:
 OctoPlanner3D supplies the global route, and LocalPlanner uses its SCAN backend
 to supply the heading-aware local trajectory and live 3D collision check.
-Inspection does not start CMU or the standalone traversability process.
+Inspection uses SCAN and does not start the standalone traversability process.
 
 The surrounding layers have deliberately smaller roles:
 

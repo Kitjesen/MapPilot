@@ -45,39 +45,12 @@ lingtu::nav::navigation::Executor makeLoop(bool use_traversability = false,
   config.follower.nominalDt = 0.05;
   config.follower.baseLookAheadDis = 0.25;
   config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
-}
-
-lingtu::nav::navigation::Executor makeCmuTeleopAvoidLoop(
-    bool use_traversability = false, double teleop_horizon_m = 2.0) {
-  lingtu::nav::navigation::ExecutorConfig config;
-  nav_kernel::LocalPlannerParams planner;
-  config.corridor_lookahead_m = 2.0;
-  config.max_speed = 0.5;
-  config.teleop_intent_horizon_m = teleop_horizon_m;
-  config.teleop_intent_max_deviation_deg = 55.0;
-  planner.checkObstacle = true;
-  planner.useTerrainAnalysis = true;
-  planner.useTraversabilityCost = use_traversability;
-  planner.traversabilityNearFieldStop = use_traversability;
-  planner.vehicleLength = 1.0;
-  planner.vehicleWidth = 0.6;
-  planner.footprintPadding = 0.15;
-  planner.nearFieldStopDis = 0.5;
-  planner.autonomySpeed = 0.5;
-  planner.maxSpeed = 1.0;
-  config.follower.maxSpeed = 0.5;
-  config.follower.maxAccel = 10.0;
-  config.follower.nominalDt = 0.05;
-  config.follower.baseLookAheadDis = 0.25;
-  config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
+  planner.backend = nav_kernel::LocalPlannerBackend::Scan;
+  return makeConfiguredExecutor(std::move(config), planner, "");
 }
 
 lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
                                                    double vehicle_length_m = 0.6,
-                                                   int recovery_max_attempts = 3,
-                                                   double recovery_blocked_interval_s = 2.0,
                                                    lingtu::nav::navigation::PlanningFrame frame =
                                                        lingtu::nav::navigation::PlanningFrame::Map,
                                                    double yaw_acceleration =
@@ -87,8 +60,6 @@ lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m =
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
   config.max_speed = 0.5;
-  config.recovery.max_attempts = recovery_max_attempts;
-  config.recovery.blocked_interval_s = recovery_blocked_interval_s;
   planner.backend = nav_kernel::LocalPlannerBackend::Scan;
   planner.checkObstacle = true;
   planner.useTerrainAnalysis = true;
@@ -102,89 +73,6 @@ lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m =
   config.follower.maxYawAccelRadS2 = yaw_acceleration;
   config.follower.nominalDt = 0.05;
   return makeConfiguredExecutor(std::move(config), planner, "");
-}
-
-lingtu::nav::navigation::Executor makeRecoveryDisabledLoop() {
-  lingtu::nav::navigation::ExecutorConfig config;
-  nav_kernel::LocalPlannerParams planner;
-  config.corridor_lookahead_m = 2.0;
-  config.max_speed = 0.5;
-  planner.checkObstacle = false;
-  planner.useTerrainAnalysis = true;
-  planner.useTraversabilityCost = true;
-  planner.traversabilityNearFieldStop = false;
-  planner.traversabilityHardCost = 90.0;
-  config.recovery.blocked_interval_s = 0.0;
-  config.recovery.max_attempts = 0;
-  planner.autonomySpeed = 0.5;
-  planner.maxSpeed = 1.0;
-  config.follower.maxSpeed = 0.5;
-  config.follower.maxAccel = 10.0;
-  config.follower.nominalDt = 0.05;
-  config.follower.baseLookAheadDis = 0.25;
-  config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
-}
-lingtu::nav::navigation::Executor makeRecoverySafetyLoop(double no_progress_timeout_s = 2.0,
-                                                          int max_attempts = 3,
-                                                          double near_field_stop_dis = 0.5) {
-  lingtu::nav::navigation::ExecutorConfig config;
-  nav_kernel::LocalPlannerParams planner;
-  config.corridor_lookahead_m = 2.0;
-  config.max_speed = 0.5;
-  planner.checkObstacle = true;
-  planner.useTerrainAnalysis = true;
-  planner.useTraversabilityCost = true;
-  planner.traversabilityNearFieldStop = false;
-  planner.traversabilityHardCost = 90.0;
-  planner.dirThre = 20.0;
-  config.recovery.blocked_interval_s = 0.0;
-  config.recovery.rotation_timeout_s = 0.1;
-  config.recovery.translation_timeout_s = no_progress_timeout_s;
-  config.recovery.max_attempts = max_attempts;
-  planner.nearFieldStopDis = near_field_stop_dis;
-  planner.vehicleLength = 0.80;
-  planner.vehicleWidth = 0.60;
-  planner.footprintPadding = 0.27;
-  planner.autonomySpeed = 0.5;
-  planner.maxSpeed = 1.0;
-  config.follower.maxSpeed = 0.5;
-  config.follower.maxAccel = 10.0;
-  config.follower.nominalDt = 0.05;
-  config.follower.baseLookAheadDis = 0.25;
-  config.follower.lookAheadRatio = 0.2;
-  return makeConfiguredExecutor(std::move(config), planner, LINGTU_TEST_PATH_LIBRARY);
-}
-
-std::vector<float> makeRotationOnlyObservedGrid(int rows, int cols, double resolution,
-                                                double origin) {
-  std::vector<float> grid(rows * cols, 95.0f);
-  for (int row = 0; row < rows; ++row) {
-    const double y = origin + (static_cast<double>(row) + 0.5) * resolution;
-    for (int col = 0; col < cols; ++col) {
-      const double x = origin + (static_cast<double>(col) + 0.5) * resolution;
-      if (std::abs(x) <= 0.84 && std::abs(y) <= 0.84) {
-        grid[row * cols + col] = 0.0f;
-      }
-    }
-  }
-  return grid;
-}
-
-std::vector<float> makeRotationOnlyObstacleRing() {
-  std::vector<float> obstacle_xyzh;
-  for (int degrees = -180; degrees < 180; degrees += 5) {
-    const double angle = degrees * M_PI / 180.0;
-    obstacle_xyzh.push_back(static_cast<float>(1.10 * std::cos(angle)));
-    obstacle_xyzh.push_back(static_cast<float>(1.10 * std::sin(angle)));
-    obstacle_xyzh.push_back(0.0f);
-    obstacle_xyzh.push_back(1.0f);
-  }
-  return obstacle_xyzh;
-}
-
-int obstacleCount(const std::vector<float> &obstacle_xyzh) {
-  return static_cast<int>(obstacle_xyzh.size() / 4);
 }
 
 lingtu::nav::navigation::ExecutionObservation observation(std::uint64_t frame_epoch,
@@ -323,82 +211,6 @@ lingtu::nav::navigation::ExecutionOutput tickAtRest(
 
 }  // namespace
 
-TEST(Executor, PlansLocalPathAndCmdVelFromGlobalPath) {
-  auto loop = makeLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-  const auto next = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.02));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_FALSE(out.goal_reached);
-  EXPECT_TRUE(out.path_found);
-  EXPECT_FALSE(out.near_field_stop);
-  EXPECT_GE(out.local_path_body.size(), 2u);
-  EXPECT_EQ(out.local_path_body.size(), out.local_path_map.size());
-  EXPECT_GT(next.cmd_vel.vx, 0.0);
-}
-
-TEST(Executor, ResetMotionKeepsGoalAndClearsStallTiming) {
-  auto loop = makeLoop();
-  loop.setRoute(route(
-      {
-          {0.0, 0.0, 0.0},
-          {1.0, 0.0, 0.0},
-          {2.0, 0.0, 0.0},
-          {3.0, 0.0, 0.0},
-      },
-      0.75));
-
-  const auto moving = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-  ASSERT_TRUE(moving.active);
-  ASSERT_TRUE(moving.path_found);
-
-  loop.resetMotion();
-
-  EXPECT_TRUE(loop.hasRoute());
-  const auto resumed = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 100.0));
-  EXPECT_TRUE(resumed.active);
-  EXPECT_TRUE(resumed.path_found);
-  EXPECT_EQ(resumed.recovery_state, 0)
-      << "a pause must not carry stale stall/recovery timing into resume";
-  EXPECT_FALSE(resumed.recovery_exhausted);
-}
-
-TEST(Executor, ExplicitResumeReconnectsEarlierThreeDimensionalRouteAfterManualMovement) {
-  auto loop = makeLoop(false, 1.0);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.30},
-      {4.0, 0.0, 0.30},
-      {4.0, 1.0, 0.60},
-      {4.0, 0.0, 0.90},
-      {0.0, 0.0, 0.90},
-      {-1.0, 0.0, 0.90},
-  }));
-  (void)loop.tick(routeInput(pose(0.0, 0.0, 0.30, 0.0), nullptr, 0, 1.0));
-  const auto upper = loop.tick(routeInput(pose(2.0, 0.0, 0.90, 0.0), nullptr, 0, 1.1));
-  EXPECT_NEAR(upper.target.z, 0.90, 1e-6);
-
-  // Normal tracking remains monotonic until the operator explicitly resumes.
-  const auto old_progress =
-      loop.tick(routeInput(pose(0.5, 0.2, 0.35, 0.0), nullptr, 0, 1.2));
-  EXPECT_NEAR(old_progress.target.z, 0.90, 1e-6);
-  loop.resumeRoute();
-  ASSERT_TRUE(loop.hasRoute());
-  const auto resumed =
-      loop.tick(routeInput(pose(0.5, 0.2, 0.35, 0.0), nullptr, 0, 10.0));
-  EXPECT_NEAR(resumed.target.x, 1.5, 1e-6);
-  EXPECT_NEAR(resumed.target.y, 0.0, 1e-6);
-  EXPECT_NEAR(resumed.target.z, 0.35 + (0.30 - 0.35) / 3.5, 1e-6)
-      << "the connector must approach the original route height without shifting it";
-  EXPECT_FALSE(resumed.goal_reached);
-}
-
 TEST(Executor, ExplicitResumeRetainsPositionToleranceAndSpeed) {
   auto loop = makeLoop(false, 1.0);
   auto retained = route({{0.0, 0.0, 0.0}, {5.0, 0.0, 0.0}}, 1.0, 0.05, 0.03);
@@ -459,23 +271,6 @@ TEST(Executor, PositionArrivalLeavesStopConfirmationToTheTask) {
     input.mapBody.position.x = .83;
     EXPECT_FALSE(loop.tick(input).goal_reached);
   }
-}
-
-TEST(Executor, TightGoalKeepsFollowerMovingOutsideArrivalRadius) {
-  auto loop = makeLoop();
-  loop.setRoute(route({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}, std::nullopt, 0.1));
-  lingtu::nav::navigation::ExecutionOutput out;
-  // The first acceleration step equals the follower's output deadband.
-  for (int tick = 0; tick < 5; ++tick) {
-    out = awaitScanOutput([&] {
-      return loop.tick(routeInput(pose(0.85, 0.0, 0.0, 0.0), nullptr, 0, 1.0 + tick * 0.05));
-    });
-  }
-  EXPECT_FALSE(out.goal_reached);
-  EXPECT_GT(out.cmd_vel.vx, 0.0)
-      << out.reason << " target_distance=" << out.target_distance_m
-      << " path_points=" << out.local_path_body.size()
-      << " path_end=" << (out.local_path_body.empty() ? -1.0 : out.local_path_body.back().x);
 }
 
 TEST(Executor, RequestedGoalPreventsAdjustedEndpointAndArrivalToleranceFromAdding) {
@@ -561,7 +356,6 @@ TEST(Executor, ScanArrivalBeforeEnd) {
     config.max_speed = config.follower.maxSpeed = 1.0;
     config.follower.maxAccel = .75;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -605,7 +399,6 @@ TEST(Executor, PointArrivalAndPoseBraking) {
     config.max_speed = config.follower.maxSpeed = 1.0;
     config.follower.maxAccel = 2.0;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -675,7 +468,7 @@ TEST(Executor, PointArrivalAndPoseBraking) {
 
 
 TEST(Executor, PoseArrivalAfterStop) {
-  auto executor = makeScanExecutor(3.0, .6, 0);
+  auto executor = makeScanExecutor(3.0, .6);
   auto guide = route({{0, 0, .5}, {2, 0, .5}}, std::nullopt, .15);
   auto model = std::make_shared<lingtu::nav::collision::Body>();
   model->margin_m = 0;
@@ -718,7 +511,6 @@ TEST(Executor, ScanSettlingDriftRetainsTerminalSplineWithoutTurningBack) {
     config.planning_frame = frame;
     config.max_speed = config.follower.maxSpeed = .5;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -806,7 +598,7 @@ TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
 }
 
 TEST(Executor, ScanReceivesPrediction) {
-  auto executor = makeScanExecutor(3.0, .6, 3, .1);
+  auto executor = makeScanExecutor(3.0, .6);
   executor.setRoute({{{0, 0, .5}, {3, 0, .5}}});
   const nav_kernel::PredictedObstacle crossing{{1.0, -.2, .5},
                                                 {1.0, .2, .5}, .05, .1, 1};
@@ -863,24 +655,6 @@ TEST(Executor, UsesPerLegInspectionArrivalTolerance) {
 }
 
 
-
-TEST(Executor, TeleopIntentPlansWithoutGlobalPathAndHonorsRequestedSpeed) {
-  auto loop = makeLoop();
-  nav_kernel::Twist intent;
-  intent.vx = 0.25;
-
-  lingtu::nav::navigation::ExecutionOutput out;
-  for (int i = 0; i < 4; ++i) {
-    out = loop.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, nullptr, 0, 1.0 + 0.05 * i));
-  }
-
-  EXPECT_TRUE(out.active);
-  EXPECT_TRUE(out.path_found);
-  EXPECT_GE(out.local_path_body.size(), 2u);
-  EXPECT_GT(out.cmd_vel.vx, 0.0);
-  EXPECT_LE(std::hypot(out.cmd_vel.vx, out.cmd_vel.vy), 0.25 + 1e-6);
-  EXPECT_EQ(out.recovery_state, 0);
-}
 
 TEST(Executor, ScanTeleopDiagonalUsesAxisCapacityWithinFiniteTotalSpeed) {
   for (const double total_limit : {std::sqrt(2.0), 1.2, 0.6}) {
@@ -1840,9 +1614,7 @@ TEST(Executor, ScanLeftAndRightRemainBodyRelativeAtDifferentHeadings) {
 TEST(Executor, ScanTeleopHonorsExplicitYawWhileTranslating) {
   for (const double yaw_acceleration : {0.0, nav_kernel::FollowerParams{}.maxYawAccelRadS2}) {
     SCOPED_TRACE(yaw_acceleration);
-    auto executor = makeScanExecutor(3.0, 0.6, 3, 2.0,
-                                     lingtu::nav::navigation::PlanningFrame::Map,
-                                     yaw_acceleration);
+    auto executor = makeScanExecutor(3.0, 0.6, lingtu::nav::navigation::PlanningFrame::Map, yaw_acceleration);
     double now = 1.0;
     const auto tick = [&]() {
       return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), {0.25, 0.0, -0.3},
@@ -2066,7 +1838,7 @@ TEST(Executor, ScanTeleopIntentReceivesCollisionSnapshot) {
 }
 
 TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-4, -4, -1}, {4, 4, 1}, 0.1);
   // The rear cylinder starts in the first cell. Forward leaves it into free
   // cells, while a left request enters a separate occupied cell.
@@ -2115,7 +1887,7 @@ TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
   EXPECT_DOUBLE_EQ(std::hypot(left.cmd_vel.vx, left.cmd_vel.vy), 0.0);
   EXPECT_DOUBLE_EQ(left.cmd_vel.wz, 0.0);
 
-  auto yaw_executor = makeScanExecutor(3.0, 0.6, 0);
+  auto yaw_executor = makeScanExecutor(3.0, 0.6);
   now += 0.05;
   const auto with_yaw = awaitScanOutput([&] {
     return yaw_executor.tick(intentInput(pose(0, 0, 0, 0), {0.25, 0.0, 0.1},
@@ -2128,7 +1900,7 @@ TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
 }
 
 TEST(Executor, ScanBoundaryDepartureRespectsLowerRequestedSpeed) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-4, -4, -1}, {4, 4, 1}, 0.1);
   collision.occupy({-0.18, 0.0, 0.0});
   auto observation = emptyScanObservation(1.0);
@@ -2154,7 +1926,7 @@ TEST(Executor, ScanBoundaryDepartureRespectsLowerRequestedSpeed) {
 }
 
 TEST(Executor, ScanFreeStartPlannerFailureDoesNotBecomeDepartureRecovery) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-1, -1, -1}, {1, 1, 1}, 0.1);
   for (int x = -10; x < 10; ++x) {
     for (int y = -10; y < 10; ++y) {
@@ -2243,36 +2015,33 @@ TEST(Executor, ScanKeepsSafeIntentOnMapChange) {
 }
 
 TEST(Executor, TeleopGuideFollowsExplicitSteeringAndKeepsReleasedHeading) {
-  for (const bool scan : {false, true}) {
-    SCOPED_TRACE(scan ? "SCAN" : "CMU");
-    auto executor = scan ? makeScanExecutor() : makeCmuTeleopAvoidLoop();
-    const auto initial = executor.tick(intentInput(
-        pose(0.0, 0.0, 0.0, 0.0), {0.25, 0.0, 0.0}, nullptr, 0, 1.0, {},
-        emptyScanObservation(1.0)));
-    const double horizon = initial.target.x;
-    ASSERT_GT(horizon, 0.0);
+  auto executor = makeScanExecutor();
+  const auto initial = executor.tick(intentInput(
+      pose(0.0, 0.0, 0.0, 0.0), {0.25, 0.0, 0.0}, nullptr, 0, 1.0, {},
+      emptyScanObservation(1.0)));
+  const double horizon = initial.target.x;
+  ASSERT_GT(horizon, 0.0);
 
-    // Steering must move the guide even before travelling the advance distance.
-    const auto turning = executor.tick(intentInput(
-        pose(0.0, 0.0, 0.0, 0.20), {0.25, 0.0, 0.25}, nullptr, 0, 1.1, {},
-        emptyScanObservation(1.1)));
-    EXPECT_NEAR(turning.target.x, horizon * std::cos(0.20), 1e-9);
-    EXPECT_NEAR(turning.target.y, horizon * std::sin(0.20), 1e-9);
+  // Steering must move the guide even before travelling the advance distance.
+  const auto turning = executor.tick(intentInput(
+      pose(0.0, 0.0, 0.0, 0.20), {0.25, 0.0, 0.25}, nullptr, 0, 1.1, {},
+      emptyScanObservation(1.1)));
+  EXPECT_NEAR(turning.target.x, horizon * std::cos(0.20), 1e-9);
+  EXPECT_NEAR(turning.target.y, horizon * std::sin(0.20), 1e-9);
 
-    // Release before another angular update: retain the final measured heading.
-    const auto released = executor.tick(intentInput(
-        pose(0.1, 0.0, 0.0, 0.26), {0.25, 0.0, 0.0}, nullptr, 0, 1.2, {},
-        emptyScanObservation(1.2)));
-    EXPECT_NEAR(released.target.x, 0.1 + horizon * std::cos(0.26), 1e-9);
-    EXPECT_NEAR(released.target.y, horizon * std::sin(0.26), 1e-9);
+  // Release before another angular update: retain the final measured heading.
+  const auto released = executor.tick(intentInput(
+      pose(0.1, 0.0, 0.0, 0.26), {0.25, 0.0, 0.0}, nullptr, 0, 1.2, {},
+      emptyScanObservation(1.2)));
+  EXPECT_NEAR(released.target.x, 0.1 + horizon * std::cos(0.26), 1e-9);
+  EXPECT_NEAR(released.target.y, horizon * std::sin(0.26), 1e-9);
 
-    // An avoidance-induced turn must not keep rotating the operator's guide.
-    const auto detouring = executor.tick(intentInput(
-        pose(0.1, 0.0, 0.0, 0.50), {0.25, 0.0, 0.0}, nullptr, 0, 1.3, {},
-        emptyScanObservation(1.3)));
-    EXPECT_DOUBLE_EQ(detouring.target.x, released.target.x);
-    EXPECT_DOUBLE_EQ(detouring.target.y, released.target.y);
-  }
+  // An avoidance-induced turn must not keep rotating the operator's guide.
+  const auto detouring = executor.tick(intentInput(
+      pose(0.1, 0.0, 0.0, 0.50), {0.25, 0.0, 0.0}, nullptr, 0, 1.3, {},
+      emptyScanObservation(1.3)));
+  EXPECT_DOUBLE_EQ(detouring.target.x, released.target.x);
+  EXPECT_DOUBLE_EQ(detouring.target.y, released.target.y);
 }
 
 TEST(Executor, ScanReleasedSteeringDoesNotPullBackToOldHeading) {
@@ -2462,212 +2231,6 @@ TEST(Executor, ScanCollisionStopsOrReplans) {
       << updated.reason;
 }
 
-TEST(Executor, CmuRotatesWhenNoPath) {
-  auto loop = makeCmuTeleopAvoidLoop();
-  nav_kernel::Twist intent;
-  intent.vx = 0.3;
-  std::vector<float> obstacle_xyzh;
-  for (int i = -2; i <= 2; ++i) {
-    obstacle_xyzh.push_back(0.90f);
-    obstacle_xyzh.push_back(0.08f * static_cast<float>(i));
-    obstacle_xyzh.push_back(0.0f);
-    obstacle_xyzh.push_back(1.0f);
-  }
-
-  const auto out = loop.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, obstacle_xyzh.data(),
-                                   static_cast<int>(obstacle_xyzh.size() / 4), 1.0));
-
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_GT(std::abs(out.cmd_vel.wz), 0.01);
-  EXPECT_EQ(out.reason, out.recovery_reason);
-  ASSERT_TRUE(out.recovery_verified) << out.recovery_reason;
-  ASSERT_EQ(out.recovery_action,
-            static_cast<int>(nav_kernel::RecoveryAction::Rotate));
-  ASSERT_GT(std::abs(out.recovery_rotation_target_rad), 0.10);
-
-  const double selected_yaw = out.recovery_rotation_target_rad;
-  const auto rotating = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, 0.5 * selected_yaw), intent,
-      obstacle_xyzh.data(), static_cast<int>(obstacle_xyzh.size() / 4), 1.05));
-  EXPECT_DOUBLE_EQ(rotating.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(rotating.cmd_vel.vy, 0.0);
-  EXPECT_EQ(std::signbit(rotating.cmd_vel.wz), std::signbit(out.cmd_vel.wz));
-  EXPECT_NEAR(rotating.recovery_rotation_target_rad, selected_yaw, 1e-9)
-      << "the selected yaw must stay latched while rotation is in progress";
-
-  const auto completed = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, selected_yaw), intent, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.1));
-  EXPECT_EQ(completed.recovery_reason, "recovery_rotation_complete");
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.wz, 0.0);
-
-  const auto replanned = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, selected_yaw), intent, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.2));
-  EXPECT_TRUE(replanned.path_found) << replanned.reason;
-  EXPECT_FALSE(replanned.near_field_stop) << replanned.reason;
-  EXPECT_EQ(replanned.reason, "teleop_assist_control_ready");
-
-  const auto resumed = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, selected_yaw), intent, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.21));
-  EXPECT_TRUE(resumed.path_found) << resumed.reason;
-  EXPECT_GT(resumed.cmd_vel.vx, 0.01) << resumed.reason;
-}
-
-TEST(Executor, ReverseOverridesBlockedState) {
-  auto loop = makeCmuTeleopAvoidLoop();
-  std::vector<float> obstacle_xyzh;
-  for (int i = -3; i <= 3; ++i) {
-    obstacle_xyzh.insert(obstacle_xyzh.end(),
-                         {0.60f, 0.06f * static_cast<float>(i), 0.0f, 1.0f});
-  }
-
-  nav_kernel::Twist forward;
-  forward.vx = 0.30;
-  const auto blocked = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, 0.0), forward, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.0));
-  EXPECT_FALSE(blocked.path_found);
-  EXPECT_DOUBLE_EQ(blocked.cmd_vel.vx, 0.0);
-
-  nav_kernel::Twist reverse;
-  reverse.vx = -0.30;
-  const auto selected = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, 0.0), reverse, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.05));
-  const auto retreat = loop.tick(intentInput(
-      pose(0.0, 0.0, 0.0, 0.0), reverse, obstacle_xyzh.data(),
-      static_cast<int>(obstacle_xyzh.size() / 4), 1.06));
-
-  EXPECT_TRUE(selected.path_found) << selected.reason;
-  EXPECT_TRUE(retreat.path_found) << retreat.reason;
-  EXPECT_FALSE(retreat.near_field_stop) << retreat.reason;
-  EXPECT_EQ(retreat.recovery_state, 0) << retreat.reason;
-  EXPECT_LT(retreat.cmd_vel.vx, 0.0) << retreat.reason;
-}
-
-TEST(Executor, TeleopIntentHardLimitsSelectedPathEndDirection) {
-  auto loop = makeLoop(false, 2.0, 5.0);
-  nav_kernel::Twist intent;
-  intent.vx = 0.3;
-  std::vector<float> obstacle_xyzh;
-  for (int i = -2; i <= 2; ++i) {
-    obstacle_xyzh.push_back(0.9f);
-    obstacle_xyzh.push_back(0.08f * static_cast<float>(i));
-    obstacle_xyzh.push_back(0.0f);
-    obstacle_xyzh.push_back(1.0f);
-  }
-
-  const auto out = loop.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, obstacle_xyzh.data(),
-                                   static_cast<int>(obstacle_xyzh.size() / 4), 1.0));
-
-  if (out.path_found) {
-    ASSERT_GE(out.local_path_body.size(), 2U);
-    const auto &before_end = out.local_path_body[out.local_path_body.size() - 2];
-    const auto &end = out.local_path_body.back();
-    const double end_direction_deg =
-        std::atan2(end.y - before_end.y, end.x - before_end.x) * 180.0 / M_PI;
-    EXPECT_LE(std::abs(end_direction_deg), 5.0 + 1e-6);
-  } else {
-    EXPECT_EQ(out.cmd_vel.vx, 0.0);
-    EXPECT_EQ(out.cmd_vel.vy, 0.0);
-    EXPECT_GT(std::abs(out.cmd_vel.wz), 0.01);
-    EXPECT_TRUE(out.recovery_verified);
-    EXPECT_EQ(out.recovery_action,
-              static_cast<int>(nav_kernel::RecoveryAction::Rotate));
-  }
-}
-
-TEST(Executor, TeleopIntentRotatesBeforeRetryingWhenTranslationIsSurrounded) {
-  auto loop = makeLoop();
-  nav_kernel::Twist intent;
-  intent.vx = 0.3;
-  std::vector<float> obstacle_xyzh;
-  for (int degrees = -180; degrees < 180; degrees += 5) {
-    const double angle = degrees * M_PI / 180.0;
-    obstacle_xyzh.push_back(static_cast<float>(0.8 * std::cos(angle)));
-    obstacle_xyzh.push_back(static_cast<float>(0.8 * std::sin(angle)));
-    obstacle_xyzh.push_back(0.0f);
-    obstacle_xyzh.push_back(1.0f);
-  }
-
-  const auto out = loop.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), intent, obstacle_xyzh.data(),
-                                   static_cast<int>(obstacle_xyzh.size() / 4), 1.0));
-
-  EXPECT_FALSE(out.path_found);
-  EXPECT_EQ(out.reason, "recovery_rotation_active");
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_GT(std::abs(out.cmd_vel.wz), 0.01);
-  EXPECT_EQ(out.recovery_state, 1);
-  EXPECT_TRUE(out.recovery_verified);
-}
-
-TEST(Executor, DisabledRecoveryKeepsGoalActiveForTheNextLocalReplan) {
-  auto loop = makeRecoveryDisabledLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-  std::vector<float> risk_grid(9 * 9, 95.0f);
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      risk_grid.data(), 9, 9, 0.5, -2.0, -2.0, 1,
-  };
-
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0, traversability));
-  const auto retry = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.1, traversability));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_FALSE(out.path_found);
-  EXPECT_FALSE(out.recovery_exhausted);
-  EXPECT_EQ(out.recovery_state, 0);
-  EXPECT_NE(out.reason, "local_recovery_exhausted");
-  EXPECT_TRUE(out.local_path_body.empty());
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz, 0.0);
-  EXPECT_TRUE(retry.active);
-  EXPECT_FALSE(retry.recovery_exhausted);
-  EXPECT_NE(retry.reason, "local_recovery_exhausted");
-}
-TEST(Executor, RecoveryDoesNotBackUpThroughBlockedRearFootprint) {
-  auto loop = makeRecoverySafetyLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  constexpr int kRows = 41;
-  constexpr int kCols = 41;
-  constexpr double kResolution = 0.1;
-  constexpr double kOrigin = -2.05;
-  std::vector<float> grid(kRows * kCols, 95.0f);
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kRows, kCols, kResolution, kOrigin, kOrigin, 1,
-  };
-
-  const std::vector<float> obstacle_xyzh = {
-      -0.90f, 0.48f, 0.0f, 1.0f, -0.90f, -0.48f, 0.0f, 1.0f,
-  };
-  (void)loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(),
-                  static_cast<int>(obstacle_xyzh.size() / 4), 1.0, traversability));
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(),
-                             static_cast<int>(obstacle_xyzh.size() / 4), 1.2, traversability));
-
-  for (const auto &point : out.local_path_body) {
-    EXPECT_GE(point.x, -1e-6);
-  }
-  EXPECT_GE(out.cmd_vel.vx, -1e-6);
-}
-
 TEST(Executor, SpeedLimitSurvivesPoseStageTransition) {
   auto executor = makeScanExecutor();
   auto guide = route({{0, 0, .5}, {2, 0, .5}});
@@ -2694,214 +2257,21 @@ TEST(Executor, SpeedLimitSurvivesPoseStageTransition) {
 }
 
 TEST(Executor, AcceptedMotionAndNewRouteClearFinalBrakingRejection) {
-  auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
+  auto executor = makeScanExecutor(3.0, 0.6);
   const auto path = route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}});
   executor.setRoute(path);
-  executor.reportFinalMotionBlocked(true, 1.0);
-  executor.reportFinalMotionBlocked(false, 1.05);
+  executor.reportFinalMotionBlocked(true);
+  executor.reportFinalMotionBlocked(false);
   const auto tick = [&](double now) {
     return executor.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, now, {},
                                     emptyScanObservation(now)));
   };
   const auto accepted = awaitScanOutput([&] { return tick(1.11); });
   EXPECT_EQ(accepted.recovery_trigger, "inactive") << accepted.reason;
-  executor.reportFinalMotionBlocked(true, 1.12);
+  executor.reportFinalMotionBlocked(true);
   executor.setRoute(path);
   const auto replacement = awaitScanOutput([&] { return tick(1.25); });
   EXPECT_EQ(replacement.recovery_trigger, "inactive") << replacement.reason;
-}
-
-TEST(Executor, NoSafeRecoveryCandidateRetriesCurrentGeometryUntilExhausted) {
-  auto loop = makeRecoverySafetyLoop();
-  loop.setRoute(route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}}));
-  std::vector<float> blocked(41 * 41, 95.0f);
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      blocked.data(), 41, 41, 0.1, -2.05, -2.05, 1};
-  const auto tick = [&](double now, std::uint64_t cloud, std::uint64_t terrain) {
-    return loop.tick(routeInput(
-        pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, now, traversability,
-        observation(1, cloud, terrain, now, now, now)));
-  };
-
-  for (int attempt = 1; attempt <= 3; ++attempt) {
-    const auto blocked = tick(1.0 + .01 * attempt, 10, 20);
-    EXPECT_EQ(blocked.recovery_attempt, attempt) << blocked.recovery_reason;
-    EXPECT_FALSE(blocked.recovery_verified);
-    EXPECT_EQ(blocked.recovery_exhausted, attempt == 3);
-    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vx, 0.0);
-    EXPECT_DOUBLE_EQ(blocked.cmd_vel.vy, 0.0);
-    EXPECT_DOUBLE_EQ(blocked.cmd_vel.wz, 0.0);
-  }
-}
-
-TEST(Executor, RecoverySelectsOnlyReachableLateralExit) {
-  auto loop = makeRecoverySafetyLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  constexpr int kRows = 61;
-  constexpr int kCols = 61;
-  constexpr double kResolution = 0.1;
-  constexpr double kOrigin = -3.05;
-  std::vector<float> grid(kRows * kCols, 95.0f);
-  for (int row = 0; row < kRows; ++row) {
-    const double y = kOrigin + (static_cast<double>(row) + 0.5) * kResolution;
-    for (int col = 0; col < kCols; ++col) {
-      const double x = kOrigin + (static_cast<double>(col) + 0.5) * kResolution;
-      if (x >= -0.80 && x <= 0.80 && y >= -0.65 && y <= 1.80) {
-        grid[row * kCols + col] = 0.0f;
-      }
-    }
-  }
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kRows, kCols, kResolution, kOrigin, kOrigin, 2,
-  };
-
-  (void)loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 0.9, traversability));
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0, traversability));
-
-  ASSERT_GE(out.local_path_body.size(), 2u);
-  EXPECT_EQ(out.recovery_state, 2);
-  EXPECT_GT(out.local_path_body.back().y, 0.6);
-  EXPECT_LT(std::abs(out.local_path_body.back().x), 0.25);
-  EXPECT_GT(out.cmd_vel.vy, 0.0) << "reason=" << out.reason << " verified=" << out.recovery_verified
-                                 << " progress=" << out.recovery_progress
-                                 << " path_size=" << out.local_path_body.size() << " first_next=("
-                                 << out.local_path_body[1].x << "," << out.local_path_body[1].y
-                                 << ")";
-  EXPECT_NEAR(out.cmd_vel.vx, 0.0, 0.05);
-}
-
-TEST(Executor, RecoveryProgressRequiresOdometryMovement) {
-  auto loop = makeRecoverySafetyLoop(0.1, 1);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  constexpr int kRows = 61;
-  constexpr int kCols = 61;
-  constexpr double kResolution = 0.1;
-  constexpr double kOrigin = -3.05;
-  std::vector<float> grid(kRows * kCols, 95.0f);
-  for (int row = 0; row < kRows; ++row) {
-    const double y = kOrigin + (static_cast<double>(row) + 0.5) * kResolution;
-    for (int col = 0; col < kCols; ++col) {
-      const double x = kOrigin + (static_cast<double>(col) + 0.5) * kResolution;
-      if (x >= -0.80 && x <= 0.80 && y >= -0.65 && y <= 1.80) {
-        grid[row * kCols + col] = 0.0f;
-      }
-    }
-  }
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kRows, kCols, kResolution, kOrigin, kOrigin, 3,
-  };
-
-  (void)loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 0.9, traversability));
-  const auto started = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0, traversability));
-  ASSERT_EQ(started.recovery_state, 2);
-  EXPECT_TRUE(started.recovery_verified);
-  EXPECT_DOUBLE_EQ(started.recovery_progress, 0.0);
-  EXPECT_GT(started.cmd_vel.vy, 0.0);
-
-  const auto stalled = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.2, traversability));
-  EXPECT_TRUE(stalled.recovery_exhausted);
-  EXPECT_EQ(stalled.reason, "local_recovery_exhausted");
-  EXPECT_DOUBLE_EQ(stalled.recovery_progress, 0.0);
-  EXPECT_DOUBLE_EQ(stalled.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(stalled.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(stalled.cmd_vel.wz, 0.0);
-}
-
-TEST(Executor, RecoveryRetriesOnCurrentGeometryAfterRotationCompletes) {
-  auto loop = makeRecoverySafetyLoop(2.0, 3, 0.2);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  constexpr int kRows = 201;
-  constexpr int kCols = 201;
-  constexpr double kResolution = 0.02;
-  constexpr double kOrigin = -2.01;
-  std::vector<float> grid = makeRotationOnlyObservedGrid(kRows, kCols, kResolution, kOrigin);
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kRows, kCols, kResolution, kOrigin, kOrigin, 10,
-  };
-  const std::vector<float> obstacle_xyzh = makeRotationOnlyObstacleRing();
-
-  const auto base = observation(1, 10, 20, 1.00, 0.95, 0.96);
-  const auto rotating = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(),
-                                  obstacleCount(obstacle_xyzh), 1.00, traversability, base));
-
-  ASSERT_EQ(rotating.recovery_state, 1)
-      << "reason=" << rotating.reason << " recovery_reason=" << rotating.recovery_reason
-      << " candidates=" << rotating.recovery_candidate_count;
-  ASSERT_TRUE(rotating.recovery_verified);
-  ASSERT_NE(rotating.cmd_vel.wz, 0.0);
-
-  const double completed_yaw = rotating.cmd_vel.wz > 0.0 ? 0.35 : -0.35;
-  const auto completed = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                   obstacleCount(obstacle_xyzh), 1.20, traversability,
-                                   observation(1, 10, 20, 1.20, 0.95, 0.96)));
-
-  EXPECT_EQ(completed.reason, "recovery_rotation_complete");
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(completed.cmd_vel.wz, 0.0);
-
-  const auto unchanged = loop.tick(routeInput(pose(0.0, 0.0, 0.0, completed_yaw), obstacle_xyzh.data(),
-                                   obstacleCount(obstacle_xyzh), 1.25, traversability,
-                                   observation(1, 10, 20, 1.25, 0.95, 0.96)));
-  EXPECT_EQ(unchanged.recovery_state, 1) << unchanged.reason;
-  EXPECT_TRUE(unchanged.recovery_verified) << unchanged.recovery_reason;
-  EXPECT_NE(unchanged.cmd_vel.wz, 0.0);
-
-}
-
-TEST(Executor, NewRouteResetsCompletedRecoveryAttempts) {
-  auto loop = makeRecoverySafetyLoop(2.0, 3, 0.2);
-  const auto guide = route({{0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {3, 0, 0}});
-  loop.setRoute(guide);
-
-  constexpr int kSize = 201;
-  constexpr double kResolution = 0.02;
-  constexpr double kOrigin = -2.01;
-  std::vector<float> grid = makeRotationOnlyObservedGrid(kSize, kSize, kResolution, kOrigin);
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      grid.data(), kSize, kSize, kResolution, kOrigin, kOrigin, 10,
-  };
-  const auto obstacles = makeRotationOnlyObstacleRing();
-  const auto rotating = loop.tick(routeInput(
-      pose(0, 0, 0, 0), obstacles.data(), obstacleCount(obstacles), 1.0,
-      traversability, observation(1, 10, 20, 1.0, 0.95, 0.96)));
-  ASSERT_EQ(rotating.recovery_state, 1);
-  ASSERT_TRUE(rotating.recovery_verified);
-  ASSERT_NE(rotating.cmd_vel.wz, 0.0);
-  const double yaw = rotating.cmd_vel.wz > 0.0 ? 0.35 : -0.35;
-  const auto completed = loop.tick(routeInput(
-      pose(0, 0, 0, yaw), obstacles.data(), obstacleCount(obstacles), 1.2,
-      traversability, observation(1, 10, 20, 1.2, 0.95, 0.96)));
-  ASSERT_EQ(completed.recovery_reason, "recovery_rotation_complete");
-  const auto next = routeInput(
-      pose(0, 0, 0, yaw), obstacles.data(), obstacleCount(obstacles), 1.25,
-      traversability, observation(1, 10, 20, 1.25, 0.95, 0.96));
-  const auto resumed = loop.tick(next);
-  ASSERT_TRUE(resumed.recovery_verified) << resumed.recovery_reason;
-  ASSERT_EQ(resumed.recovery_attempt, 2);
-
-  loop.setRoute(guide);
-  const auto replaced = loop.tick(next);
-  EXPECT_TRUE(replaced.active);
-  EXPECT_EQ(replaced.recovery_attempt, 1) << replaced.recovery_reason;
 }
 
 TEST(Executor, PositionOnlyGoalDoesNotAddTerminalYawAlignment) {
@@ -2940,184 +2310,6 @@ TEST(Executor, RelocalizationJumpSelectsPathAheadOfRobot) {
   EXPECT_GE(out.target.x, 8.0);
 }
 
-TEST(Executor, ShortCorridorLookaheadDoesNotCutAcrossUpcomingCorner) {
-  auto loop = makeLoop(false, 0.6);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {0.2, 0.0, 0.0},
-      {0.4, 0.0, 0.0},
-      {0.6, 0.0, 0.0},
-      {0.8, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {1.0, 0.2, 0.0},
-      {1.0, 0.4, 0.0},
-  }));
-
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-
-  EXPECT_LE(out.target.x, 0.8);
-  EXPECT_DOUBLE_EQ(out.target.y, 0.0);
-}
-
-TEST(Executor, RollingLocalPathDoesNotTriggerFinalGoalSlowdown) {
-  auto loop = makeLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {5.0, 0.0, 0.0},
-  }));
-
-  lingtu::nav::navigation::ExecutionOutput out;
-  for (int i = 0; i < 6; ++i) {
-    out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0 + 0.05 * i));
-  }
-
-  EXPECT_NEAR(out.cmd_vel.vx, 0.5, 1e-6);
-}
-
-TEST(Executor, NearFieldObstacleBlocksCmdVel) {
-  auto loop = makeLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-  const std::vector<float> obstacle_xyzh = {
-      0.45f,
-      0.0f,
-      0.0f,
-      1.0f,
-  };
-
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(),
-                             static_cast<int>(obstacle_xyzh.size() / 4), 1.0));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_TRUE(out.near_field_stop);
-  EXPECT_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_EQ(out.cmd_vel.wz, 0.0);
-}
-
-TEST(Executor, SafeDetourOverridesStraightStop) {
-  auto loop = makeLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-  const std::vector<float> obstacle_xyzh = {
-      0.85f,
-      0.0f,
-      0.0f,
-      1.0f,
-  };
-
-  const auto out =
-      loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), obstacle_xyzh.data(), obstacleCount(obstacle_xyzh), 1.0));
-
-  ASSERT_TRUE(out.path_found) << out.reason;
-  EXPECT_FALSE(out.near_field_stop)
-      << "a collision-checked local detour must supersede the blocked straight intent";
-  EXPECT_EQ(out.reason, "control_ready");
-  EXPECT_TRUE(out.trajectory_frozen);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_GT(std::abs(out.cmd_vel.wz), 1e-6);
-}
-
-TEST(Executor, KeepsDetourSideAcrossSmallObstacleJitter) {
-  auto loop = makeLoop();
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-  const auto obstacle = [](float lateral_offset) {
-    std::vector<float> points;
-    for (int index = -3; index <= 3; ++index) {
-      points.insert(points.end(), {
-                                      0.90F,
-                                      lateral_offset + 0.08F * static_cast<float>(index),
-                                      0.0F,
-                                      1.0F,
-                                  });
-    }
-    return points;
-  };
-  const auto left_bias = obstacle(0.015F);
-  const auto right_bias = obstacle(-0.015F);
-
-  const auto first =
-      loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), left_bias.data(), obstacleCount(left_bias), 1.0));
-  const std::vector<float> transient_close_obstacle{
-      0.45F,
-      0.0F,
-      0.0F,
-      1.0F,
-  };
-  const auto stopped = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), transient_close_obstacle.data(),
-                                 obstacleCount(transient_close_obstacle), 1.025));
-  const auto second =
-      loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), right_bias.data(), obstacleCount(right_bias), 1.05));
-
-  ASSERT_TRUE(first.path_found) << first.reason;
-  ASSERT_TRUE(stopped.near_field_stop);
-  ASSERT_TRUE(second.path_found) << second.reason;
-  ASSERT_FALSE(first.local_path_body.empty());
-  ASSERT_FALSE(second.local_path_body.empty());
-  const double first_lateral = first.local_path_body.back().y;
-  const double second_lateral = second.local_path_body.back().y;
-  ASSERT_GT(std::abs(first_lateral), 0.1);
-  ASSERT_GT(std::abs(second_lateral), 0.1);
-  EXPECT_GT(first_lateral * second_lateral, 0.0)
-      << "a safe committed detour must not switch sides on sensor jitter";
-}
-
-TEST(Executor, CommittedGuideDoesNotReplaceGlobalRouteBends) {
-  auto loop = makeLoop(false, 3.0, 55.0, 1);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {0.3, -0.1, 0.0},
-      {0.5, -0.3, 0.0},
-      {0.7, -0.7, 0.0},
-      {1.1, -0.9, 0.0},
-      {1.5, -0.7, 0.0},
-      {2.1, -0.3, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  const auto first = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-  const auto second = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.05));
-
-  ASSERT_TRUE(first.path_found) << first.reason;
-  ASSERT_TRUE(second.path_found) << second.reason;
-  EXPECT_GT(second.local_planner_debug.relativeGoalDistanceM, 1.0)
-      << "the committed local guide must augment, not truncate, the global route";
-}
-
-TEST(Executor, PassedLocalGuideNeverCommandsReverse) {
-  auto loop = makeLoop(false, 3.0);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-
-  const auto first = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0));
-  ASSERT_TRUE(first.path_found) << first.reason;
-
-  const auto advanced = loop.tick(routeInput(pose(2.5, 0.0, 0.0, 0.0), nullptr, 0, 1.05));
-  ASSERT_TRUE(advanced.path_found) << advanced.reason;
-  EXPECT_GE(advanced.cmd_vel.vx, 0.0)
-      << "a consumed local guide must not pull the robot back toward old path points";
-  ASSERT_FALSE(advanced.local_path_map.empty());
-  EXPECT_GE(advanced.local_path_map.back().x, 2.5 - 1e-6);
-}
-
 TEST(Executor, AutonomousCmuTurnsInsteadOfDrivingBackward) {
   auto loop = makeLoop(false, 3.0);
   loop.setRoute(route({
@@ -3132,29 +2324,6 @@ TEST(Executor, AutonomousCmuTurnsInsteadOfDrivingBackward) {
       << "autonomous CMU must use the Go2 forward-drive contract";
 }
 
-TEST(Executor, TraversabilityGridBlocksCmdVel) {
-  auto loop = makeLoop(true);
-  loop.setRoute(route({
-      {0.0, 0.0, 0.0},
-      {1.0, 0.0, 0.0},
-      {2.0, 0.0, 0.0},
-      {3.0, 0.0, 0.0},
-  }));
-  std::vector<float> risk_grid(5 * 5, 0.0f);
-  risk_grid[2 * 5 + 1] = 95.0f;
-  risk_grid[2 * 5 + 2] = 95.0f;
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      risk_grid.data(), 5, 5, 0.25, 0.0, -0.5,
-  };
-
-  const auto out = loop.tick(routeInput(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0, traversability));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_TRUE(out.near_field_stop);
-  EXPECT_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_EQ(out.cmd_vel.wz, 0.0);
-}
-
 TEST(Executor, ScanOccupiedStartHoldsWithoutRecovery) {
   lingtu::nav::navigation::ExecutorConfig config;
   auto model = std::make_shared<lingtu::nav::collision::Body>();
@@ -3163,7 +2332,6 @@ TEST(Executor, ScanOccupiedStartHoldsWithoutRecovery) {
   part.half_size = {.3, .1, .1};
   model->parts.push_back(part);
   config.body = model;
-  config.recovery.blocked_interval_s = 0;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.checkObstacle = true;
@@ -3201,9 +2369,7 @@ TEST(Executor, ScanOccupiedStartHoldsWithoutRecovery) {
   EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0);
   EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0);
-  EXPECT_FALSE(output.recovery_exhausted);
   EXPECT_EQ(output.recovery_state, 0);
-  EXPECT_EQ(output.recovery_attempt, 0);
 }
 
 TEST(Executor, ScanIgnoresTwoDimensionalTraversabilityInput) {
@@ -3474,8 +2640,6 @@ TEST(Executor, ScanInitializationFailureReportsCauseAndStops) {
 TEST(Executor, ScanDoesNotAddAnExecutorStallLatch) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-  config.recovery.max_attempts = 0;
-  config.recovery.blocked_interval_s = 0.5;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.scan.voxelResolution = 0.10;
@@ -3494,7 +2658,6 @@ TEST(Executor, ScanDoesNotAddAnExecutorStallLatch) {
     moving = moving || output.cmd_vel.vx > 0.0;
     EXPECT_NE(output.reason, "execution_stalled");
     EXPECT_EQ(output.recovery_trigger, "inactive");
-    EXPECT_EQ(output.recovery_attempt, 0);
   }
   ASSERT_TRUE(moving);
   executor.setRoute(guide);
@@ -3511,7 +2674,7 @@ TEST(Executor, StairHeadingFollowsFlightInBothPlanningFramesAndDirections) {
     for (const bool descending : {false, true}) {
       SCOPED_TRACE(static_cast<int>(frame));
       SCOPED_TRACE(descending);
-      auto executor = makeScanExecutor(3, .6, 3, 2, frame);
+      auto executor = makeScanExecutor(3, .6, frame);
       StairFlight flight;
       flight.id = "diagonal-stairs";
       flight.axis = {std::cos(axis_yaw), std::sin(axis_yaw), 0};
@@ -3580,7 +2743,7 @@ TEST(Executor, ScanStairKeepsPlannerOwnershipAndStopsForCollision) {
   using namespace lingtu::nav::navigation;
   for (const bool descending : {false, true}) {
     SCOPED_TRACE(descending);
-    auto executor = makeScanExecutor(3.0, .6, 3, .5);
+    auto executor = makeScanExecutor(3.0, .6);
     StairFlight flight;
     flight.id = "stairs";
     flight.lateralMin = -1.0;
@@ -3769,109 +2932,10 @@ TEST(Executor, StairRejectedLocalRouteReplansAfterMeasuredVelocitySettles) {
 }
 
 namespace {
-lingtu::nav::navigation::Executor makeProgressLoop(bool recovery_enabled = false,
-                                                   double speed = 0.15,
-                                                   bool check_obstacle = false) {
-  lingtu::nav::navigation::ExecutorConfig config;
-  config.max_speed = speed;
-  config.recovery.max_attempts = recovery_enabled ? 3 : 0;
-  config.recovery.blocked_interval_s = 0.5;
-  config.follower.maxAccel = 0.5;
-  config.follower.linearStopThreshold = 0.0;
-  config.follower.slowDwnDisThre = 0.0;
-  nav_kernel::LocalPlannerParams planner;
-  planner.checkObstacle = check_obstacle;
-  planner.useTerrainAnalysis = false;
-  planner.useTraversabilityCost = false;
-  return makeConfiguredExecutor(config, planner, LINGTU_TEST_PATH_LIBRARY);
-}
 }  // namespace
 
-TEST(Executor, StallDoesNotCountWrongDirectionDriftHeaveOrYawAsTranslation) {
-  for (const int scenario : {0, 1, 2, 3}) {
-    SCOPED_TRACE(scenario);
-    auto executor = makeProgressLoop();
-    executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-    lingtu::nav::navigation::ExecutionOutput output;
-    // A corrective heading-alignment phase gets its own observation interval.
-    for (int tick = 0; tick <= 40; ++tick) {
-      const double t = tick * 0.05;
-      auto body = pose(0, 0, 0, 0);
-      lingtu::nav::navigation::ExecutionObservation obs;
-      obs.body_velocity_valid = true;
-      if (scenario == 0) { body.position.y = .15 * t; obs.body_linear_velocity.y = .15; }
-      if (scenario == 1) { body.position.x = -.15 * t; obs.body_linear_velocity.x = -.15; }
-      if (scenario == 2) { body.position.z = .08 * std::sin(8 * t); }
-      if (scenario == 3) { body.yaw = -.15 * t; obs.body_yaw_rate = -.15; }
-      output = executor.tick(routeInput(body, nullptr, 0, 1.0 + t, {}, obs));
-      if (output.reason == "execution_stalled") break;
-    }
-    EXPECT_EQ(output.reason, "execution_stalled");
-    EXPECT_DOUBLE_EQ(output.cmd_vel.vx, 0.0);
-    EXPECT_DOUBLE_EQ(output.cmd_vel.vy, 0.0);
-    EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0.0);
-  }
-}
-
-TEST(Executor, StallUsesSidewaysCommandInPlanningFrame) {
-  auto executor = makeProgressLoop();
-  executor.setRoute(route({{0, 0, 0}, {.38, 0, 0}}, std::nullopt, .05));
-  lingtu::nav::navigation::ExecutionOutput output;
-  bool sideways_commanded = false;
-  constexpr double yaw = M_PI / 3;
-  for (int tick = 0; tick <= 40; ++tick) {
-    const double t = tick * 0.05;
-    lingtu::nav::navigation::ExecutionObservation obs;
-    obs.body_velocity_valid = true;
-    obs.body_linear_velocity.x = std::sin(yaw) * .03;
-    obs.body_linear_velocity.y = std::cos(yaw) * .03;
-    output = executor.tick(routeInput(pose(0, .03 * t, 0, yaw), nullptr, 0,
-                                      1.0 + t, {}, obs));
-    sideways_commanded = sideways_commanded || output.cmd_vel.vy < -.01;
-    if (output.reason == "execution_stalled") break;
-  }
-  EXPECT_TRUE(sideways_commanded);
-  EXPECT_EQ(output.reason, "execution_stalled");
-}
-
-TEST(Executor, StallStartsExistingRecoveryWhenDriftingAwayFromPath) {
-  auto executor = makeProgressLoop(true);
-  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-  lingtu::nav::navigation::ExecutionOutput output;
-  for (int tick = 0; tick <= 16; ++tick) {
-    const double t = tick * 0.05;
-    output = executor.tick(routeInput(pose(-.15 * t, 0, 0, 0), nullptr, 0, 1.0 + t));
-    if (output.recovery_trigger == "execution_stalled") break;
-  }
-  EXPECT_EQ(output.recovery_trigger, "execution_stalled");
-  EXPECT_TRUE(output.recovery_verified) << output.recovery_reason;
-  EXPECT_GT(output.recovery_state, 0);
-}
-
-TEST(Executor, StallProgressSurvivesIntermittentNearFieldStops) {
-  auto executor = makeProgressLoop(true, .15, true);
-  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-  const std::vector<float> obstacle_xyzh = {.45f, 0.0f, 0.0f, 1.0f};
-  lingtu::nav::navigation::ExecutionOutput output;
-  bool ready_seen = false;
-  bool hold_seen = false;
-  for (int tick = 0; tick <= 12; ++tick) {
-    const bool held = tick % 2 == 1;
-    output = executor.tick(routeInput(
-        pose(0, 0, 0, 0), held ? obstacle_xyzh.data() : nullptr,
-        held ? obstacleCount(obstacle_xyzh) : 0, 1.0 + tick * .1));
-    ready_seen = ready_seen || output.cmd_vel.vx > 0.0;
-    hold_seen = hold_seen || output.near_field_stop;
-    if (output.recovery_trigger == "execution_stalled") break;
-  }
-  EXPECT_TRUE(ready_seen);
-  EXPECT_TRUE(hold_seen);
-  EXPECT_EQ(output.recovery_trigger, "execution_stalled");
-  EXPECT_TRUE(output.recovery_verified) << output.recovery_reason;
-}
-
 TEST(Executor, ScanPlanningWaitResumesWithoutOuterRecovery) {
-  auto executor = makeScanExecutor(3.0, .6, 0, 2.0);
+  auto executor = makeScanExecutor(3.0, .6);
   executor.setRoute(route({{0, 0, .5}, {5, 0, .5}}));
   auto body = pose(0, 0, .5, 0);
   double now = 1.0;
@@ -3916,136 +2980,6 @@ TEST(Executor, ScanPlanningWaitResumesWithoutOuterRecovery) {
     EXPECT_NE(output.reason, "execution_stalled");
     EXPECT_EQ(output.recovery_trigger, "inactive");
   }
-}
-
-TEST(Executor, IntermittentNearFieldStopsRespectProgressAndGatePause) {
-  auto executor = makeProgressLoop(true, .15, true);
-  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-  lingtu::nav::navigation::ExecutionOutput output;
-  bool ready_seen = false;
-  bool hold_seen = false;
-  for (int tick = 0; tick <= 20; ++tick) {
-    const bool held = tick % 2 == 1;
-    const double x = tick * .02;
-    const std::vector<float> obstacle_xyzh = {
-        static_cast<float>(x + .45), 0.0f, 0.0f, 1.0f};
-    output = executor.tick(routeInput(
-        pose(x, 0, 0, 0), held ? obstacle_xyzh.data() : nullptr,
-        held ? obstacleCount(obstacle_xyzh) : 0, 1.0 + tick * .1));
-    ready_seen = ready_seen || output.cmd_vel.vx > 0.0;
-    hold_seen = hold_seen || output.near_field_stop;
-    EXPECT_NE(output.recovery_trigger, "execution_stalled");
-  }
-  EXPECT_TRUE(ready_seen);
-  EXPECT_TRUE(hold_seen);
-
-  executor.pauseLinearMotion();
-  output = executor.tick(routeInput(pose(.4, 0, 0, 0), nullptr, 0, 100.0));
-  EXPECT_NE(output.recovery_trigger, "execution_stalled")
-      << "an input-gate pause must discard stale execution intent";
-}
-
-TEST(Executor, StallAllowsSlowProgressAtDifferentBodyHeadings) {
-  for (const double yaw : {0.0, M_PI / 2}) {
-    SCOPED_TRACE(yaw);
-    auto executor = makeProgressLoop(false, .03);
-    executor.setRoute(route({{0, 0, 0}, {10 * std::cos(yaw), 10 * std::sin(yaw), 0}}));
-    bool translation_commanded = false;
-    for (int tick = 0; tick <= 80; ++tick) {
-      const double t = tick * .05;
-      const auto output = executor.tick(routeInput(pose(.03 * t * std::cos(yaw),
-                                                        .03 * t * std::sin(yaw), 0, yaw),
-                                                   nullptr, 0, 1.0 + t));
-      translation_commanded = translation_commanded || output.cmd_vel.vx > .02;
-      ASSERT_TRUE(output.path_found) << output.reason;
-      ASSERT_NE(output.reason, "execution_stalled");
-      ASSERT_EQ(output.recovery_trigger, "inactive");
-    }
-    EXPECT_TRUE(translation_commanded);
-  }
-}
-
-TEST(Executor, StallDuringHeadingAlignmentRequiresRotationInRequestedDirection) {
-  for (const bool correct_direction : {false, true}) {
-    SCOPED_TRACE(correct_direction);
-    auto executor = makeProgressLoop();
-    executor.setRoute(route({{0, 0, 0}, {0, 10, 0}}));
-    lingtu::nav::navigation::ExecutionOutput output;
-    auto body = pose(0, 0, 0, 0);
-    bool requested_rotation = false;
-    for (int tick = 0; tick <= 24; ++tick) {
-      const double t = tick * .05;
-      if (tick > 0) {
-        if (correct_direction) {
-          body.position.x += .05 * (std::cos(body.yaw) * output.cmd_vel.vx -
-                                    std::sin(body.yaw) * output.cmd_vel.vy);
-          body.position.y += .05 * (std::sin(body.yaw) * output.cmd_vel.vx +
-                                    std::cos(body.yaw) * output.cmd_vel.vy);
-          body.yaw += .05 * output.cmd_vel.wz;
-        } else {
-          body.yaw -= .05 * .15;
-        }
-      }
-      output = executor.tick(routeInput(body, nullptr, 0, 1.0 + t));
-      requested_rotation = requested_rotation || output.cmd_vel.wz > 0.0;
-      if (output.reason == "execution_stalled") break;
-    }
-    EXPECT_TRUE(requested_rotation);
-    if (correct_direction) {
-      EXPECT_NE(output.reason, "execution_stalled");
-    } else {
-      EXPECT_EQ(output.reason, "execution_stalled");
-      EXPECT_DOUBLE_EQ(output.cmd_vel.wz, 0.0);
-    }
-  }
-}
-
-TEST(Executor, StallDoesNotCountOscillationOrInstantaneousSpeedAsProgress) {
-  auto executor = makeProgressLoop();
-  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-  lingtu::nav::navigation::ExecutionOutput output;
-  for (int tick = 0; tick <= 60; ++tick) {
-    const double t = tick * .05;
-    lingtu::nav::navigation::ExecutionObservation obs;
-    obs.body_velocity_valid = true;
-    obs.body_linear_velocity.x = .4 * std::cos(40 * t);
-    output = executor.tick(routeInput(pose(.01 * std::sin(40 * t), 0, 0, 0),
-                                      nullptr, 0, 1.0 + t, {}, obs));
-    if (output.reason == "execution_stalled") break;
-  }
-  EXPECT_EQ(output.reason, "execution_stalled");
-}
-
-TEST(Executor, StallAllowsFiftyHertzPoseUpdatesAtHundredHertzControl) {
-  auto executor = makeProgressLoop(false, .03);
-  executor.setRoute(route({{0, 0, 0}, {10, 0, 0}}));
-  for (int tick = 0; tick <= 150; ++tick) {
-    const double t = tick * .01;
-    const double pose_time = (tick / 2) * .02;
-    const auto output = executor.tick(routeInput(pose(.03 * pose_time, 0, 0, 0),
-                                                 nullptr, 0, 1.0 + t));
-    ASSERT_NE(output.reason, "execution_stalled");
-    ASSERT_EQ(output.recovery_trigger, "inactive");
-  }
-}
-
-TEST(Executor, RouteHeightIsNotShiftedToRobot) {
-  auto executor = makeLoop(false, 1.0);
-  executor.setRoute(route({
-      {0.0, 0.0, 0.30},
-      {1.0, 0.0, 0.30},
-      {2.0, 0.0, 0.60},
-      {3.0, 0.0, 0.90},
-      {4.0, 0.0, 0.90},
-  }));
-
-  const auto first =
-      executor.tick(routeInput(pose(0.0, 0.0, 0.48, 0.0), nullptr, 0, 1.0));
-  EXPECT_NEAR(first.target.z, 0.30, 1e-6);
-
-  const auto later =
-      executor.tick(routeInput(pose(2.0, 0.0, 0.48, 0.0), nullptr, 0, 1.1));
-  EXPECT_NEAR(later.target.z, 0.90, 0.02);
 }
 
 TEST(Executor, SteepRouteJoinUsesHorizontalProjection) {
@@ -4098,82 +3032,6 @@ TEST(Executor, ScanReportsItsActualLocalTargetOnTheFullReference) {
   for (const auto &point : output.local_path_body) {
     EXPECT_GE(point.x, -1e-6) << "the local route must not fold back to the sparse segment start";
   }
-}
-
-TEST(Executor, OdomLocalFrameUsesOdomRiskAndPublishesMapPaths) {
-  auto loop = makeLoop(true, 2.0, 55.0, 1);
-  const double right_angle = std::acos(-1.0) * 0.5;
-  loop.setRoute(route({
-      {10.0, -3.0, 0.0},
-      {10.0, -2.0, 0.0},
-      {10.0, -1.0, 0.0},
-      {10.0, 0.0, 0.0},
-  }));
-
-  lingtu::nav::navigation::MapFromOdomTransform map_from_odom;
-  map_from_odom.translation = {10.0, -3.0, 0.0};
-  map_from_odom.yaw = right_angle;
-
-  std::vector<float> risk_grid(9 * 9, 0.0f);
-  risk_grid[4 * 9 + 6] = 95.0f;
-  const lingtu::nav::navigation::TraversabilityGridView traversability{
-      risk_grid.data(), 9, 9, 0.25, -1.0, -1.0, 7,
-  };
-
-  const auto out = loop.tick(odomInput(pose(10.0, -3.0, 0.0, right_angle), pose(0.0, 0.0, 0.0, 0.0),
-                                 map_from_odom, nullptr, 0, 1.0, traversability));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_TRUE(out.path_found);
-  EXPECT_TRUE(out.near_field_stop)
-      << "the risk cell is in odom, not at the map-frame vehicle position";
-  EXPECT_EQ(out.target_index, 2u);
-  EXPECT_NEAR(out.target.x, 10.0, 1e-9);
-  EXPECT_NEAR(out.target.y, -1.0, 1e-9);
-  ASSERT_EQ(out.local_path_body.size(), out.local_path_map.size());
-  ASSERT_FALSE(out.local_path_body.empty());
-  for (std::size_t index = 0; index < out.local_path_body.size(); ++index) {
-    const auto &body = out.local_path_body[index];
-    EXPECT_NEAR(out.local_path_map[index].x, 10.0 - body.y, 1e-9);
-    EXPECT_NEAR(out.local_path_map[index].y, -3.0 + body.x, 1e-9);
-    EXPECT_NEAR(out.local_path_map[index].z, body.z, 1e-9);
-  }
-  ASSERT_FALSE(out.local_planner_debug.candidates.empty());
-  const auto &candidate = out.local_planner_debug.candidates.front();
-  ASSERT_FALSE(candidate.path.empty());
-  EXPECT_GT(candidate.path.front().x, 6.0)
-      << "debug candidate path must be published in map, not odom";
-}
-
-TEST(Executor, OdomLocalFrameTransformsMapObstaclesIntoPlannerFrame) {
-  auto loop = makeLoop();
-  const double right_angle = std::acos(-1.0) * 0.5;
-  loop.setRoute(route({
-      {10.0, -3.0, 0.0},
-      {10.0, -2.0, 0.0},
-      {10.0, -1.0, 0.0},
-  }));
-
-  lingtu::nav::navigation::MapFromOdomTransform map_from_odom;
-  map_from_odom.translation = {10.0, -3.0, 0.0};
-  map_from_odom.yaw = right_angle;
-  const std::vector<float> obstacle_xyzh_map = {
-      10.0f,
-      -2.55f,
-      0.0f,
-      1.0f,
-  };
-
-  const auto out =
-      loop.tick(odomInput(pose(10.0, -3.0, 0.0, right_angle), pose(0.0, 0.0, 0.0, 0.0), map_from_odom,
-                    obstacle_xyzh_map.data(), obstacleCount(obstacle_xyzh_map), 1.0));
-
-  EXPECT_TRUE(out.active);
-  EXPECT_TRUE(out.near_field_stop) << "the map-frame obstacle is 0.45 m ahead in odom";
-  EXPECT_EQ(out.reason, "local_near_field_stop");
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vx, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.vy, 0.0);
-  EXPECT_DOUBLE_EQ(out.cmd_vel.wz, 0.0);
 }
 
 TEST(Executor, OdomLocalFrameTransformsCompleteCollisionLayerAndAabb) {
@@ -4299,27 +3157,6 @@ TEST(Executor, OdomLocalFrameFailsSafeForInvalidTransform) {
 }
 
 
-TEST(Executor, TaskSpeedLimitCapsOutputAndResetsWithNextRoute) {
-  auto loop = makeLoop();
-  auto limited = route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}});
-  limited.maxSpeedMps = 0.12;
-  loop.setRoute(limited);
-  bool moved = false;
-  for (int i = 0; i < 20; ++i) {
-    auto out = loop.tick(routeInput(pose(0, 0, 0, 0), nullptr, 0, 1.0 + i * 0.05));
-    const double speed = std::hypot(out.cmd_vel.vx, out.cmd_vel.vy);
-    EXPECT_LE(speed, 0.120001);
-    moved = moved || speed > 0.01;
-  }
-  EXPECT_TRUE(moved);
-  EXPECT_DOUBLE_EQ(loop.activeMaxSpeedMps(), 0.12);
-  loop.setRoute(route({{0, 0, 0}, {3, 0, 0}}));
-  EXPECT_DOUBLE_EQ(loop.activeMaxSpeedMps(), 0.5);
-  limited.maxSpeedMps = 1.0;
-  loop.setRoute(limited);
-  EXPECT_DOUBLE_EQ(loop.activeMaxSpeedMps(), 0.5);
-}
-
 TEST(Executor, ScanTaskSpeedLimitAllowsBoundedMotion) {
   auto executor = makeScanExecutor();
   auto limited = route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}});
@@ -4354,7 +3191,6 @@ TEST(Executor, ScanMeasuredCollisionFeedbackUsesMapCoordinatesExactlyOnce) {
     lingtu::nav::navigation::ExecutorConfig config;
     config.planning_frame = frame;
     config.max_speed = .5;
-    config.recovery.blocked_interval_s = 10;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -4426,7 +3262,6 @@ TEST(Executor, BodyBlocksRouteAndIntent) {
     lingtu::nav::navigation::ExecutorConfig config;
     config.body = body;
     config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -4521,7 +3356,6 @@ TEST(Executor, BodyBlocksCornerTurn) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.body = body;
   config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-  config.recovery.max_attempts = 0;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.scan.voxelResolution = .1;
@@ -4589,11 +3423,11 @@ TEST(Executor, FinalBlockReplansFromCurrentPose) {
   ASSERT_GT(moving.cmd_vel.vx, 0.0);
   const auto route_generation = moving.route_generation;
 
-  executor.reportFinalMotionBlocked(true, now);
+  executor.reportFinalMotionBlocked(true);
   executor.pauseLinearMotion();
   body.position.y = .3;
   now += .05;
-  executor.reportFinalMotionBlocked(false, now);
+  executor.reportFinalMotionBlocked(false);
   const auto next = tick();
   if (next.tracking.active) {
     ASSERT_FALSE(next.local_path_map.empty());
@@ -4617,19 +3451,17 @@ TEST(Executor, FinalBlockReplansFromCurrentPose) {
 }
 
 TEST(Executor, ScanDoesNotInjectRecoveryAfterFinalMotionBlock) {
-  auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
+  auto executor = makeScanExecutor(3.0, 0.6);
   executor.setRoute(route({{0, 0, 0}, {3, 0, 0}}));
   auto input = routeInput(pose(0, 0, 0, 0), nullptr, 0, 1.0, {}, emptyScanObservation(1.0));
   const auto first = awaitScanOutput([&] { return executor.tick(input); });
   ASSERT_TRUE(first.path_found) << first.reason;
-  executor.reportFinalMotionBlocked(true, 1.0);
+  executor.reportFinalMotionBlocked(true);
   for (int i=1; i<=40; ++i) {
     input.timestampS = 1.0 + .05*i;
     const auto output = executor.tick(input);
     EXPECT_EQ(output.recovery_state, 0);
     EXPECT_EQ(output.recovery_action, 0);
-    EXPECT_EQ(output.recovery_attempt, 0);
-    EXPECT_FALSE(output.recovery_exhausted);
     EXPECT_EQ(output.recovery_trigger, "inactive");
     EXPECT_EQ(output.route_generation, first.route_generation);
   }

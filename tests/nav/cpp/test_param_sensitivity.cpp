@@ -45,7 +45,6 @@ static FollowerOutput followPath(
   state.slowFactor = slow_factor;
   state.safetyStop = safety_stop;
   state.params = params;
-  state.standardPathProfile = false;
   return follower.follow(LocalPlan::path(path), state);
 }
 

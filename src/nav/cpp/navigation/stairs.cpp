@@ -231,7 +231,6 @@ StairTraversalOutput StairTraversal::step(const nav_kernel::Pose& body,
       onSurface(flight, body.position, segment.bodyHeight, config_.heightTolerance);
   out.flightId = flight.id;
   out.onFlight = overlaps_flight && !entry_clear && !exit_clear;
-  out.constrainRecovery = out.onFlight || profile_requested_;
   if (out.onFlight || profile_requested_) out.speedLimit = config_.maxSpeed;
 
   if (exit_clear && profile_requested_ && !cancelled_ && !pending_.empty() &&
@@ -355,7 +354,6 @@ StairTraversalOutput StairTraversal::step(const nav_kernel::Pose& body,
   out.phase = feedback.unsupported ? StairPhase::Waiting : phase_;
   out.request = profile;
   out.hold = true;
-  out.constrainRecovery = true;
   out.reason = feedback.unsupported ? "stair_profile_unsupported" : "stair_switching";
   return out;
 }

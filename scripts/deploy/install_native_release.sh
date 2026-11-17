@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Install one verified native release and switch back to the current Product.
+# Install one verified native release.
+# A recorded Product session is switched back onto the new tree. Without that
+# record the installer only stages the release and atomically updates current.
+# It does not start Host.
 
 set -euo pipefail
 
@@ -41,7 +44,9 @@ Usage: install_native_release.sh [--dry-run] [--package-dir DIR]
                                  [--state-dir DIR]
 
 The installer verifies native artifact checksums, stages a versioned release,
-updates the current link, then switches back to the same Product and map.
+and atomically updates the current link. When a Product session record exists
+it switches back to that Product and map. Without a session record it does
+not start Host.
 USAGE
       exit 0
       ;;
@@ -209,6 +214,9 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "Native release verified: ${VERSION}"
   echo "Target: ${TARGET_DIR}"
   echo "Current RunPlan: ${RUN_PLAN_PATH:-none}"
+  if [[ -z "${RUN_PLAN_PATH}" ]]; then
+    echo "No Product session record; dry run will not start Host."
+  fi
   exit 0
 fi
 if [[ "${EUID}" -ne 0 && "${TEST_MODE}" != "1" ]]; then
@@ -379,6 +387,8 @@ if [[ -n "${RUN_PLAN_PATH}" ]]; then
     fi
     exit 1
   fi
+else
+  echo "No Product session record; current link updated. Host was not started."
 fi
 
 echo "Installed LingTu native release ${VERSION} at ${TARGET_DIR}"

@@ -187,10 +187,9 @@ Product 已关闭该评分且不启动独立 traversability 进程；SCAN 的配
 | --- | --- | --- |
 | 目标接收、取消、全局重规划生命周期 | [`endpoint/nav/app/goal/`](../../src/nav/cpp/endpoint/nav/app/goal/) | 管目标身份和全局规划请求，不负责跟踪 |
 | 全局路线 | [`planning/global/octoplanner/`](../../src/nav/cpp/planning/global/octoplanner/) | 从保存 OctoMap 生成 XYZ 引导，使用三维圆柱通道和支撑检查 |
-| 路线推进和局部目标/恢复协调 | [`navigation/executor.cpp`](../../src/nav/cpp/navigation/executor.cpp) | 组织局部规划、跟踪与恢复；终点和恢复旋转的速度由跟踪器生成，不构造 SCAN 网格，也不控制硬件 |
-| 局部轨迹 | [`planning/local/scan/`](../../src/nav/cpp/planning/local/scan/)；CMU 为另一后端 | 结合路线、实时几何与预测生成轨迹，或报告 pending/blocked |
+| 路线推进和局部目标 | [`navigation/executor.cpp`](../../src/nav/cpp/navigation/executor.cpp) | 组织局部规划与跟踪；终点转向速度由跟踪器生成，不构造 SCAN 网格，也不控制硬件 |
+| 局部轨迹与受阻重试 | [`planning/local/scan/`](../../src/nav/cpp/planning/local/scan/) | 结合路线、实时几何与预测生成轨迹；在 FSM 内重试，达到失败上限后报告 NoPath |
 | 跟踪 | [`tracking/follower.cpp`](../../src/nav/cpp/tracking/follower.cpp) | 从局部轨迹和状态产生期望速度，不拥有最终控制权 |
-| 已有阻塞恢复 | [`navigation/recovery.cpp`](../../src/nav/cpp/navigation/recovery.cpp)、`recovery_search.cpp` | 根据阻塞/停滞选择候选，当前不是完整的静止主动避让 |
 | 输入状态、动态观测和预测 | [`endpoint/nav/input/`](../../src/nav/cpp/endpoint/nav/input/) | 组织坐标、新鲜度、障碍与预测，不直接选择产品 |
 | 最终控制权与命令仲裁 | [`endpoint/nav/control/final.cpp`](../../src/nav/cpp/endpoint/nav/control/final.cpp) | `FinalControl` 从输入状态取得当拍数据，负责速度整形、限速、SCAN 实测/候选制动及内部停车状态；`main.cpp` 负责构造和接线 |
 | 已检查命令的硬件适配和停车确认 | `lingtu-driver` | 处理命令新鲜度、限幅、实际驱动与停止确认 |
@@ -207,43 +206,14 @@ Product 已关闭该评分且不启动独立 traversability 进程；SCAN 的配
 终点转向仍是独立的阶段，Executor 提供目标朝向；跟踪器计算角速度，局部规划器
 检查转身扫掠。满足 SCAN 避障配置时，最终仲裁按运行参数检查实测运动和下发速度的制动；
 局部转向不再用固定 `0.1 / 0.5 / 1.0` 另做一次制动判断。部分阶段衔接和遥控动作使用
-局部规划器的几何查询。自主 SCAN 平移恢复使用正式局部规划和样条跟踪；旋转恢复仍
-使用原有转身扫掠检查与角速度生成。
+局部规划器的几何查询。
 
-恢复旋转期望速度由跟踪器生成，Executor 负责发起恢复、协调临时目标和报告状态。
-CMU 平移保留原有恢复路径和跟踪参数；SCAN 平移使用其正式样条跟踪器。物理验收
-结果单独记录。
+### 局部规划与受阻处理
 
-### 局部规划与受阻恢复
-
-2026-11-03 的自主 SCAN 平移恢复使用下列职责划分。
-
-```text
-Recovery    保留原任务，选择一个短距离临时目标，按实测位置判断到达或重试
-Executor    将临时 guide、reference 和身份一起交给已有局部规划接口
-SCAN Task   用正式 FSM 求解、更新碰撞、重规划并返回样条
-Follower    跟踪这条样条，返回候选速度
-FinalControl 检查和仲裁最终命令
-```
-
-Recovery 从原目标方向附近选择有限的侧向、后向候选位置。候选只是规划输入，只有
-SCAN 返回可执行轨迹，执行输出才标记 `recovery_verified`。SCAN 平移分支不再调用
-独立的恢复格搜索，也不再另行验证一条几何路径后直接跟踪。机身朝向固定为此次恢复
-开始时的实测 yaw，临时参考及其 generation 跨 tick 保留，避免异步求解被每帧重启。
-
-临时目标保留原 `Route` 与任务身份。测得抵达后，下一次局部请求恢复原路线；SCAN
-明确无路时换候选，持续没有位置进展时使用既有恢复超时与次数上限。取消、目标替换、
-坐标系变化和人工接管沿原执行清理流程撤销临时请求。候选完成不等于用户任务完成。
-
-恢复旋转保留原有三维转身扫掠检查和角速度生成。CMU 保留原路径搜索与几何路径
-跟踪，它们与 SCAN 样条接口的差别在局部规划能力边界表达。辅助遥控中已有的边界
-脱离分支仍单独使用几何检查，不能统称为 SCAN 求解的恢复轨迹。
-
-实现位于 [`executor.cpp`](../../src/nav/cpp/navigation/executor.cpp)、
-[`recovery.cpp`](../../src/nav/cpp/navigation/recovery.cpp) 与
-[`recovery_search.cpp`](../../src/nav/cpp/navigation/recovery_search.cpp)。
-定向测试覆盖正式异步 SCAN 的临时轨迹复用、实测抵达后恢复原路线、待求解时替换
-目标和取消；编译、测试结果和物理动态障碍结果分别记录，软件接线不能代表实机通过。
+2026-11-17 起，Executor 外层的 Recovery（临时目标平移、旋转恢复、停滞检测）随 CMU
+一并删除。自主 SCAN 在其 FSM 内重试，达到失败上限后报告 `NoPath`，由目标生命周期
+终止任务。辅助遥控仍保留沿操作方向的边界脱离：Executor 用局部规划器的几何查询确认
+短路径，再交给跟踪器；其速度来自 `settings/recovery.yaml` 的 `translation_speed_mps`。
 
 **2026-11-02：正式 navd 暂停楼梯自动接入。** 路线不再读取楼梯标注并附加楼梯段，
 也不再发送楼梯模式切换或等待其恢复。地图和标注保留，试验原型仍供离线研究；普通三维

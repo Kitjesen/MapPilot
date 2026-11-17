@@ -218,9 +218,9 @@ strafe together can request `(vx, vy) = (1, 1)` m/s, a total of approximately
 limit; SCAN and the final command boundary still cap each output axis at 1.0
 m/s and check the actual command's 3D braking space. An explicit lower
 total-speed override still applies. Ordinary translation acceleration is now
-**4.0 m/s²** across Products, for both SCAN planning and tracking. CMU retains
-this same resolved value; direct teleoperation and mapping use it through their
-existing velocity smoother. Turning acceleration is **4.0 rad/s²**. Product
+**4.0 m/s²** across Products, for SCAN planning and tracking. Direct
+teleoperation and mapping use it through their existing velocity smoother.
+Turning acceleration is **4.0 rad/s²**. Product
 motion defaults are resolved once rather than maintained separately in each
 backend. The configured braking deceleration is **4.0 m/s²** for the same
 contract; it remains a command/trajectory parameter and is not a measured

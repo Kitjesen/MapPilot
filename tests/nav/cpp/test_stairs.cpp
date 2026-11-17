@@ -240,7 +240,6 @@ TEST(StairTraversal, FutureFlightDoesNotGateOrdinaryApproachBesideOrBelowIt) {
   auto output = stairs.step(beside, {}, true, 1, {});
   EXPECT_FALSE(output.hold);
   EXPECT_FALSE(output.onFlight);
-  EXPECT_FALSE(output.constrainRecovery);
   EXPECT_EQ(output.speedLimit, 0);
   EXPECT_EQ(output.request, StairProfile::None);
   auto below = pose(0.6, -0.6);

@@ -33,7 +33,7 @@ Host-side Python owns:
 Native C++ `navd` owns:
 
 - saved-map goal admission and global planning;
-- local planning through `LocalPlanner`, using the selected SCAN or CMU algorithm;
+- local planning through `LocalPlanner`, using SCAN;
 - route execution and path or trajectory tracking;
 - recovery, geofence, obstacle, traversability, and freshness gates;
 - final velocity shaping, motion authority, E-stop, and `/nav/cmd_vel` output.
@@ -53,17 +53,10 @@ to `navd` through typed DDS.
 | `adapters/native/` | Native command, operator-motion, exploration, and inspection clients. |
 | `cpp/` | Global/local planning, tracking, safety, DDS endpoint, and native clients. |
 
-The CMU local planner selects the robot-specific path bank under
-`src/nav/cpp/planning/local/cmu/paths/` (`go2/` or `thunder/`) in development.
-Native releases install the same banks under `share/lingtu/cmu_paths/`.
-Each bank carries its own collision `search_radius.txt`; `navd` validates and
-uses that radius when converting obstacle points into correspondence voxels.
-
-The backend is an enhanced CMU-core port, not a byte-for-byte Go2 runtime.
-LingTu retains the CMU candidate bank and selector, while its stateful obstacle
-fusion, route guide, geometric follower, recovery, and final safety remain
-LingTu-owned. The exact compatibility boundary is recorded in the local
-planning contract below.
+SCAN is the only local planner. It does not load a path library. The geometric
+path follower remains for recovery polylines; SCAN trajectories use the spline
+follower. Stateful obstacle fusion, the route guide, recovery, and final safety
+remain LingTu-owned.
 
 ## Product rules
 
@@ -71,7 +64,7 @@ planning contract below.
   tracking, safety, and authority before reaching the driver.
 - OctoPlanner3D is the default saved-map global planner. FAR is an explicit 2-D
   occupancy option; it is not a silent fallback.
-- `LocalPlanner` is the local-planning module; SCAN and CMU are its selectable algorithms.
+- `LocalPlanner` is the local-planning module, and SCAN is its only algorithm.
 - `real` and `sim` differ in endpoints and devices, not in navigation
   ownership. Both use native `navd` rather than a Python planning substitute.
 - `/nav/global_path` and `/nav/local_path` are telemetry. Internal planner-to-

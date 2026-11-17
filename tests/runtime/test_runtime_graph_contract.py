@@ -516,7 +516,7 @@ def test_settings_preserve_variant_whole_section_replacement(settings_root: Path
         "default_variant: inherited\n"
         "variants:\n"
         "  inherited: {}\n"
-        "  selected: {includes: [scan], native_nav: {local_planner: cmu}}\n",
+        "  selected: {includes: [scan], native_nav: {local_planner: scan}}\n",
         encoding="utf-8",
     )
     (root / "settings/limits.yaml").write_text(
@@ -535,7 +535,7 @@ def test_settings_preserve_variant_whole_section_replacement(settings_root: Path
     selected = resolve_product_variant_spec("demo", product, product_variant="selected")
 
     assert inherited["native_nav"] == {"path_follower_max_speed_mps": 1.0}
-    assert selected["native_nav"] == {"local_planner": "cmu"}
+    assert selected["native_nav"] == {"local_planner": "scan"}
     assert selected["parameters"] == {"scan_follower.max_vy_mps": 0.7}
     assert "product_variant" not in product
 
@@ -595,8 +595,8 @@ def test_nav_acceptance_selects_local_planner_without_creating_another_product()
     assert nav["operator_switchable"] is True
     assert nav["default_for_session_mode"] is True
     assert nav["native_nav"]["local_planner"] == "scan"
-    assert nav["native_nav"]["local_planners"] == ["cmu", "scan"]
-    assert mujoco["local_planners"] == ["cmu", "scan"]
+    assert nav["native_nav"]["local_planners"] == ["scan"]
+    assert mujoco["local_planners"] == ["scan"]
 
 
 def test_inspection_reuses_scan_navigation_without_traversability_process() -> None:

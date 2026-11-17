@@ -40,7 +40,7 @@ geometry:
   collision_cylinder_radius: 0.25
   # Historical double-cylinder offset: one quarter of the 0.76 m length.
   collision_cylinder_offset: 0.19
-  # Separate rectangle clearance for CMU; SCAN radius already includes its allowance.
+  # Rectangle clearance kept for recovery geometry. SCAN radius already includes its allowance.
   collision_hard_margin: 0.05
   # Body-relative cylinder Z extent is [-0.10, +0.24] m.
   collision_clearance_below: 0.10

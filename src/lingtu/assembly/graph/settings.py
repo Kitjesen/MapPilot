@@ -12,38 +12,6 @@ import yaml
 SYSTEM_SETTINGS_DIR = Path(__file__).resolve().parents[4] / "config/system/settings"
 
 _GROUPS = {
-    "cmu": {
-        key: f"cmu_{key}"
-        for key in (
-            "ground_height_m",
-            "cost_height_high_m",
-            "cost_height_low_m",
-            "points_per_path",
-            "direction_weight",
-            "direction_threshold_deg",
-            "direction_to_vehicle",
-            "path_scale",
-            "min_path_scale",
-            "path_scale_step",
-            "scale_by_speed",
-            "min_path_range_m",
-            "path_range_step_m",
-            "range_by_speed",
-            "crop_by_goal",
-            "goal_clear_range_m",
-            "slow_path_count",
-            "slow_group_count",
-            "follower_lookahead_m",
-            "follower_yaw_gain",
-            "follower_nominal_dt_s",
-            "follower_switch_time_s",
-            "follower_heading_align_rad",
-            "follower_omni_goal_m",
-            "follower_omni_heading_rad",
-            "follower_stop_distance_m",
-            "follower_slowdown_distance_m",
-        )
-    },
     "teleop": {
         "takeover": "allow_teleop_takeover",
         "planner": "teleop_local_planner",

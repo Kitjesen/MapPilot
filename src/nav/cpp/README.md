@@ -9,7 +9,7 @@ the native CycloneDDS endpoint that runs those algorithms in a Product.
 This tree owns:
 
 - global-route planner adapters;
-- local planning with the CMU and SCAN backends;
+- local planning with the SCAN backend;
 - path and exact B-spline tracking;
 - route execution and local recovery;
 - native navigation clients, bindings, and the `navd` endpoint.
@@ -21,13 +21,13 @@ are direct C++ calls rather than additional processes or DDS nodes.
 
 ## Runtime flow
 
-In autonomy mode, the typed `SelectPlanner` command selects a Product/env-enabled
-local backend while idle. `endpoint/nav/app/planner.cpp` loads the candidate on a
-worker; the endpoint confirms stopping before replacing the Executor, input
-requirements and reported configuration together. Stop/estop cancels adoption,
-and late candidates are discarded. CMU assets load on demand; the 100 Hz SCAN
-clock stays fixed. Public callers use `POST /api/v1/navigation/planner` or
-`robot.navigation.select_planner("cmu")`. This does not switch the Product or SLAM mode.
+In autonomy mode, the typed `SelectPlanner` command selects SCAN while idle.
+`endpoint/nav/app/planner.cpp` loads the candidate on a worker; the endpoint
+confirms stopping before replacing the Executor, input requirements and reported
+configuration together. Stop/estop cancels adoption, and late candidates are
+discarded. SCAN keeps its 100 Hz clock. Public callers use
+`POST /api/v1/navigation/planner` or `robot.navigation.select_planner("scan")`.
+This does not switch the Product or SLAM mode.
 
 ```text
 route generation (event-driven)
@@ -43,7 +43,7 @@ route execution (continuous)
   assisted-teleop intent ---+--> Executor
   odometry -----------------+        |
                                       v
-                            Local Planner (CMU/SCAN)
+                            Local Planner (SCAN)
                          + collision/traversability evidence
                                       |
                             path or exact B-spline
@@ -80,7 +80,7 @@ require an extra DDS boundary.
 | Directory | Responsibility |
 | --- | --- |
 | `planning/global/` | Global planner contract and OctoPlanner3D/FAR adapters |
-| `planning/local/` | Backend-neutral local planner plus CMU and SCAN |
+| `planning/local/` | Local planner facade and the SCAN backend |
 | `navigation/` | Route slicing, frame conversion, recovery state and private candidate search, Planner-to-Follower sequencing |
 | `planning/rolling/` | Portable observed-free rolling-map prefix planning and revalidation |
 | `trajectory/` | Shared uniform B-spline representation and exact evaluation |
@@ -116,17 +116,13 @@ identity checks belong to `endpoint/nav/input/active/` and
 ### Local planning
 
 [`planning/local/planner.hpp`](planning/local/planner.hpp) exposes one
-`nav_kernel::LocalPlanner` configured with one backend. `LocalPlanner` is the
-module name; SCAN and CMU identify its algorithms, not separate execution owners.
+`nav_kernel::LocalPlanner`. SCAN is its only algorithm.
 
-Both backends consume the same `LocalPlanRequest`, including the objective,
-robot state, local environment, identity, and clock. Their executable targets
-differ:
-
-| Backend | Main output | Execution model |
-| --- | --- | --- |
-| CMU | Body-relative `PathTarget` | Follower selects a lookahead point and computes velocity online |
-| SCAN | Exact planning-frame `SplineTarget` (Product composition selects `map`) | Follower evaluates the B-spline at the execution clock and converts control to body velocity |
+SCAN consumes `LocalPlanRequest`, including the objective, robot state, local
+environment, identity, and clock. Its executable target is an exact
+planning-frame `SplineTarget`. The follower evaluates that B-spline at the
+execution clock and converts control to body velocity. Recovery can still
+submit a geometric polyline to the path follower.
 
 SCAN preview geometry is sampled from the spline on demand; it is not a second
 executable result. Assisted teleop uses the selected backend as well: CMU

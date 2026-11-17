@@ -35,7 +35,6 @@
     "apply_timeout_ms": 500
   },
   "paths": {
-    "path_library": "src/nav/cpp/planning/local/cmu/paths/thunder",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {

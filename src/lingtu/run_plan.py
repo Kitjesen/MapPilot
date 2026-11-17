@@ -657,7 +657,7 @@ def _native_environment(value: Any) -> dict[str, str]:
 def _normalized_native_nav(value: Mapping[str, Any] | None) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError("RunPlan launch.native_nav must be an object")
-    native_nav = {**value, "local_planner": value.get("local_planner", "cmu")}
+    native_nav = {**value, "local_planner": value.get("local_planner", "scan")}
     _require_fields(native_nav, frozenset(NATIVE_NAV_ENVIRONMENT), context="RunPlan native_nav")
     normalized: dict[str, Any] = {
         field: _required_value_text(native_nav[field], field=f"native_nav.{field}")

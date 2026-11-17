@@ -702,15 +702,15 @@ void testRecoveryFailureTerminatesSegment() {
   (void)recovery_lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
 
   const auto recovery = recovery_lifecycle.step(RollingSegmentMotionOutcome{
-      RollingSegmentMotionOutcomeKind::kRecoveryExhausted,
+      RollingSegmentMotionOutcomeKind::kPlanningFailed,
       "oscillation",
   });
   const auto recovery_terminal = confirmSafeStop(recovery_lifecycle, recovery).status;
   require(recovery.effects.size() == 2U &&
               recovery_terminal.state == ExplorationSegmentState::kFailed &&
-              recovery_terminal.reason == "segment_local_recovery_exhausted:oscillation" &&
+              recovery_terminal.reason == "segment_local_planning_failed:oscillation" &&
               !recovery_lifecycle.snapshot().active,
-          "recovery exhaustion must fail and release the active segment");
+          "local planning failure must fail and release the active segment");
 
 }
 

@@ -13,7 +13,6 @@ void require(bool condition, const char *message) {
 }
 
 PreparedPlanner wait(PlannerSelection &selection) {
-  // Loading the full CMU text library can exceed 10 s on a busy native Windows host.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   do {
     if (auto prepared = selection.poll()) return std::move(*prepared);
@@ -28,20 +27,14 @@ int main() {
     CliConfig config;
     config.tick_hz = 100.0;
     config.local_planner_backend = nav_kernel::LocalPlannerBackend::Scan;
-    config.path_library_dir = LINGTU_TEST_PATH_LIBRARY;
     config.use_traversability_cost = true;
     PlannerSelection selection;
     require(selection.start(config, "unknown") == "unknown_local_planner", "unknown backend accepted");
+    require(selection.start(config, "cmu") == "unknown_local_planner", "removed backend accepted");
     require(!selection.busy(), "invalid request started work");
-    auto restricted = config;
-    restricted.local_planners = {nav_kernel::LocalPlannerBackend::Scan};
-    require(selection.start(restricted, "cmu") == "planner_not_available", "Product restriction ignored");
     auto wrong_rate = config;
     wrong_rate.tick_hz = 50.0;
     require(selection.start(wrong_rate, "scan") == "scan_requires_100_hz", "SCAN clock changed");
-    auto no_library = config;
-    no_library.path_library_dir.clear();
-    require(selection.start(no_library, "cmu") == "path_library_required", "CMU missing library accepted");
 
     nav_kernel::LocalPlanner initial(buildLocalPlannerParams(config));
     require(initial.configure(), "initial SCAN configure failed");
@@ -50,31 +43,20 @@ int main() {
     old_route.points = {{0, 0, 0}, {2, 0, 0}};
     executor.setRoute(old_route);
 
-    auto invalid = config;
-    invalid.path_library_dir += "/missing";
-    require(selection.start(invalid, "cmu").empty(), "asynchronous load not started");
-    bool load_failed = false;
-    try { (void)wait(selection); } catch (const std::runtime_error &) { load_failed = true; }
-    require(load_failed && !selection.busy(), "bad library did not fail");
-    require(executor.hasRoute(), "failed preparation changed active executor");
-    executor.clear();
-
-    for (const char *name : {"cmu", "scan", "cmu"}) {
-      require(selection.start(config, name).empty(), "selection did not start");
-      require(selection.start(config, name) == "planner_switch_pending", "overlapping load accepted");
-      auto prepared = wait(selection);
-      const bool scan = prepared.config.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
-      const auto gate = inputGateConfig(prepared.config);
-      require(gate.require_local_collision == scan && gate.require_cloud != scan,
-              "new backend retained old input requirements");
-      std::swap(executor, prepared.executor);
-      selection.retire(std::move(prepared.executor));
-      config = std::move(prepared.config);
-      require(!executor.hasRoute(), "new executor inherited old route");
-      const auto idle = executor.tick({});
-      require(idle.cmd_vel.vx == 0.0 && idle.cmd_vel.vy == 0.0 && idle.cmd_vel.wz == 0.0,
-              "selection resumed old motion");
-    }
+    require(selection.start(config, "scan").empty(), "selection did not start");
+    require(selection.start(config, "scan") == "planner_switch_pending", "overlapping load accepted");
+    auto prepared = wait(selection);
+    require(prepared.config.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan,
+            "selection left SCAN");
+    const auto gate = inputGateConfig(prepared.config);
+    require(gate.require_local_collision && !gate.require_cloud && !gate.require_traversability,
+            "SCAN selection changed its collision input");
+    std::swap(executor, prepared.executor);
+    selection.retire(std::move(prepared.executor));
+    require(!executor.hasRoute(), "new executor inherited old route");
+    const auto idle = executor.tick({});
+    require(idle.cmd_vel.vx == 0.0 && idle.cmd_vel.vy == 0.0 && idle.cmd_vel.wz == 0.0,
+            "selection resumed old motion");
     std::puts("planner selection: passed");
     return 0;
   } catch (const std::exception &error) {

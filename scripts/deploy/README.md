@@ -25,9 +25,12 @@ bash scripts/deploy/deploy_robot.sh teleop_avoid
 # Install current Thunder services
 bash scripts/deploy/thunder/install_services.sh field-cpp
 
-# Build the complete native release set, then package it
+# Build the complete native release set, then package it.
 # Match RobotConfig.driver.backend and RobotConfig.camera.capture_driver.
+# LINGTU_NATIVE_RELEASE_SIGNING_KEY must name an Ed25519 PKCS8 PEM.
+# Packaging fails instead of writing an empty signature.
 export LINGTU_DRIVER_BACKEND=go2 LINGTU_CAMERA_DRIVER=realsense_native
+export LINGTU_NATIVE_RELEASE_SIGNING_KEY=/path/to/ed25519-private-key.pem
 make build BUILD_TYPE=Release
 bash scripts/deploy/package_native_release.sh "v$(cat VERSION)" dist
 
@@ -155,6 +158,36 @@ dist/lingtu-2.3.0-aarch64-native-release-manifest.json
 dist/lingtu-2.3.0-aarch64-native-release-system-manifest.json
 ```
 
+The preflight manifest is the outer `*-native-release-manifest.json`. The
+archive's `metadata.json` carries the same three fields, and both are signed:
+
+| Field | Meaning |
+| --- | --- |
+| `architecture` | `aarch64` or `x86_64`. An `arm64` build label is normalized to `aarch64`. |
+| `signature` | Non-empty Ed25519 signature of the document with that field removed. |
+| `requiredLibraries` | Shared libraries actually staged under `lib/`, relative to `lib/`. The packager does not keep a separate name list. |
+
+The system manifest repeats `architecture` and `requiredLibraries`. It is not
+the preflight input and has no signature field. Pass either the outer manifest
+or the archive's `metadata.json` to the read-only gateway preflight. It checks
+those fields, then looks up each library at `/opt/lingtu/current/lib/<name>`.
+It does not start Host or create a session:
+
+```bash
+python3 scripts/deploy/thunder/verify_gateway_grpc_preflight.py \
+  --manifest dist/lingtu-<version>-aarch64-native-release-manifest.json \
+  --json
+```
+
+`LINGTU_GRPC_REQUIRE_API_KEY` must be the string `true`. A Doso ARM64 build
+needs BrainstemClient 0.6 installed before `lingtu_driver` is configured; see
+[the field driver notes](../../src/drivers/real/motion/README.md).
+
+`bash scripts/deploy/thunder/install_services.sh field-cpp` installs
+`lt-host.service` and leaves boot enablement disabled. That unit has no
+`[Install]` section. ProductControl writes `/run/lingtu/session.env` before
+Host starts.
+
 On a prepared target, extract the archive and inspect it before installation:
 
 ```bash
@@ -168,9 +201,14 @@ The installer rejects an already existing release directory of the same
 version. The dry run checks the package and installation inputs; it does not
 load sensors, prove library availability or qualify navigation. Real installation
 can restart the active Product with its retained robot, map and variant.
-Keep the robot stationary and save any needed scans first. On a new machine
-without an active Product record, installation does not select a Product.
-First-time runtime/service setup belongs to
+Keep the robot stationary and save any needed scans first. On a machine with
+no Product session record and no previous `current` symlink, installation
+stages the release and atomically updates the link. It does not call
+ProductControl, so it does not start Host. A `current` path that already
+exists and is not a symlink is left untouched and the install stops. When a
+session record exists, a failed switch restores the previous `current` link.
+This installer does not restart Brainstem, change CAN, or send motion
+commands. First-time runtime/service setup belongs to
 [Getting started](../../docs/getting-started.md#first-robot-installation).
 
 The installer resolves Python once: an explicit `LINGTU_PYTHON`, then the

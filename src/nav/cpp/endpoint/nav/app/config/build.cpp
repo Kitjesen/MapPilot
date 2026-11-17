@@ -26,12 +26,7 @@ nav_kernel::FollowerParams followerParams(const CliConfig &cfg) {
   params.stopDisThre = cfg.path_follower_goal_tolerance_m;
   params.nominalDt = 1.0 / cfg.tick_hz;
   params.spline = cfg.scan_follower;
-  params.cmu = cfg.cmu_follower;
-  const bool uses_local_planner =
-      cfg.control_mode == ControlMode::Autonomy || cfg.teleop_local_planner;
-  return uses_local_planner && cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu
-             ? nav_kernel::cmuFollowerParams(params)
-             : params;
+  return params;
 }
 
 }  // namespace
@@ -63,10 +58,8 @@ CommandSafetyConfig commandSafetyConfig(const CliConfig &cfg) {
   const bool autonomous = cfg.control_mode == ControlMode::Autonomy;
   out.max_speed_mps = autonomous ? cfg.path_follower_max_speed_mps
                                  : cfg.teleop_max_speed_mps;
-  const bool scan_autonomy = autonomous &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
-  out.max_vx_mps = scan_autonomy ? cfg.scan_follower.maxVx : cfg.teleop_max_speed_mps;
-  out.max_vy_mps = scan_autonomy ? cfg.scan_follower.maxVy : cfg.teleop_max_speed_mps;
+  out.max_vx_mps = autonomous ? cfg.scan_follower.maxVx : cfg.teleop_max_speed_mps;
+  out.max_vy_mps = autonomous ? cfg.scan_follower.maxVy : cfg.teleop_max_speed_mps;
   if (cfg.control_mode == ControlMode::Teleop ||
       cfg.control_mode == ControlMode::TeleopAvoid) {
     // Operator motion is limited per body axis.  Its planar norm is allowed
@@ -108,14 +101,9 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   }
 
   out.require_odom = true;
-  out.require_cloud =
-      cfg.check_obstacle &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
-  out.require_traversability = cfg.use_traversability_cost &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
-  out.require_local_collision =
-      cfg.check_obstacle &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan;
+  out.require_cloud = false;
+  out.require_traversability = false;
+  out.require_local_collision = cfg.check_obstacle;
   out.local_collision_max_age_s = cfg.local_collision_max_age_s;
   out.require_localization_health = cfg.control_mode == ControlMode::Autonomy;
   return out;
@@ -208,12 +196,8 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
 }
 
 nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
-  nav_kernel::LocalPlannerParams out = cfg.cmu_planner;
-  const double planner_obstacle_margin_m =
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
-          ? 0.0
-          : cfg.teleop_obstacle_margin_m;
-  out.backend = cfg.local_planner_backend;
+  nav_kernel::LocalPlannerParams out;
+  out.backend = nav_kernel::LocalPlannerBackend::Scan;
   out.scan = cfg.scan_planner;
   out.scan.maxBodyVx = cfg.scan_follower.maxVx;
   out.scan.maxBodyVy = cfg.scan_follower.maxVy;
@@ -224,15 +208,7 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   // local collision snapshot reject a valid standing start before SCAN could
   // evaluate its swept body collision.
   out.localCollisionMaxAge = cfg.local_collision_max_age_s;
-  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
-    // Upstream Go2 autonomous navigation is forward-only.  Planner and
-    // Follower must agree, otherwise a rearward candidate makes the follower
-    // turn around to chase a path that will be replanned on the next frame.
-    out.twoWayDrive = false;
-  }
   out.autonomySpeed = cfg.path_follower_max_speed_mps;
-  // CMU scales its path range by autonomySpeed / maxSpeed. Normalize against
-  // the speed this Product can actually command, not an unrelated 1 m/s.
   out.maxSpeed = std::max(cfg.path_follower_max_speed_mps, 1e-9);
   out.adjacentRange = cfg.corridor_lookahead_m;
   out.vehicleLength = cfg.vehicle_length_m;
@@ -247,23 +223,9 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   // sensor-origin offset by design.
   out.obstacleHeightThre = cfg.local_planner_obstacle_height_min_m;
   out.obstacleHeightMax = cfg.local_planner_obstacle_height_max_m;
-  // The CMU planner's fourth point value is terrain height above local ground.
-  // Its official runtime enables terrain analysis and replaces raw registered
-  // scans with the fresh terrain cloud before candidate scoring.
-  out.useTerrainAnalysis =
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
   // SCAN's configured double cylinder is already the complete hard footprint.
-  // CMU uses the physical rectangle and one explicit configured margin.
-  // Live-obstacle overlay radius is not robot geometry.
-  out.footprintPadding = planner_obstacle_margin_m;
-  // CMU already rejects colliding candidates through its correspondence table
-  // and exact candidate sweep.  A second post-selection near-field gate can
-  // otherwise report pathFound=true and then suppress that same path forever.
-  if (cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu) {
-    out.nearFieldStopDis = 0.0;
-  }
-  out.useTraversabilityCost = cfg.use_traversability_cost &&
-      cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Cmu;
+  out.footprintPadding = 0.0;
+  out.useTraversabilityCost = false;
   out.traversabilityHardCost = cfg.traversability_hard_cost;
   out.traversabilitySoftCost = cfg.traversability_soft_cost;
   out.traversabilityWeight = cfg.traversability_weight;
@@ -273,7 +235,6 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
 }
 
 void applyPlannerGeometry(CliConfig &cfg) {
-  if (cfg.local_planner_backend != nav_kernel::LocalPlannerBackend::Scan) return;
   auto &octo = cfg.octoplanner_options;
   octo.robot_radius = cfg.collision_cylinder_radius_m;
   octo.body_offset_m = cfg.collision_cylinder_offset_m;
@@ -287,9 +248,7 @@ void applyPlannerGeometry(CliConfig &cfg) {
 lingtu::nav::navigation::ExecutorConfig
 buildExecutorConfig(const CliConfig &cfg) {
   lingtu::nav::navigation::ExecutorConfig out;
-  out.planning_frame = cfg.local_planner_backend == nav_kernel::LocalPlannerBackend::Scan
-                           ? lingtu::nav::navigation::PlanningFrame::Map
-                           : lingtu::nav::navigation::PlanningFrame::Odom;
+  out.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
   out.max_speed = cfg.path_follower_max_speed_mps;
   out.corridor_lookahead_m = cfg.corridor_lookahead_m;
   out.waypoint_reached_m = cfg.waypoint_reached_m;
@@ -303,19 +262,7 @@ buildExecutorConfig(const CliConfig &cfg) {
   out.stairs.bodyLength = cfg.vehicle_length_m;
   out.stairs.bodyWidth = cfg.vehicle_width_m;
   out.stairs.maxSpeed = std::min(0.15, cfg.path_follower_max_speed_mps);
-  out.recovery.behavior_order = cfg.recovery_order;
-  out.recovery.blocked_interval_s = cfg.recovery_blocked_interval_s;
-  out.recovery.rotation_timeout_s = cfg.recovery_rotation_timeout_s;
-  out.recovery.translation_timeout_s = cfg.recovery_translation_timeout_s;
-  out.recovery.max_attempts = cfg.recovery_max_attempts;
   out.recovery.translation_speed_mps = cfg.recovery_translation_speed_mps;
-  out.recovery.rotation_rate_rad_s = cfg.recovery_rotation_rate_rad_s;
-  out.recovery.min_rotation_rad = cfg.recovery_min_rotation_rad;
-  out.recovery.max_rotation_rad = cfg.recovery_max_rotation_rad;
-  out.recovery.rotation_candidate_step_rad =
-      cfg.recovery_rotation_candidate_step_rad;
-  out.recovery.rotation_sample_step_rad =
-      cfg.recovery_rotation_sample_step_rad;
   return out;
 }
 

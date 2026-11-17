@@ -43,13 +43,10 @@ struct CliConfig {
       std::string_view(::lingtu::settings::global::native_nav::global::planner) == "far"
           ? GlobalPlannerBackend::Far
           : GlobalPlannerBackend::OctoPlanner3D};
-  nav_kernel::LocalPlannerBackend local_planner_backend{
-      std::string_view(::lingtu::settings::control::standalone::native_nav::local_planner) == "scan"
-          ? nav_kernel::LocalPlannerBackend::Scan
-          : nav_kernel::LocalPlannerBackend::Cmu};
+  nav_kernel::LocalPlannerBackend local_planner_backend{nav_kernel::LocalPlannerBackend::Scan};
   int domain_id{0};
   std::vector<nav_kernel::LocalPlannerBackend> local_planners{
-      nav_kernel::LocalPlannerBackend::Cmu, nav_kernel::LocalPlannerBackend::Scan};
+      nav_kernel::LocalPlannerBackend::Scan};
   bool use_simulation_clock{false};
   double tick_hz{::lingtu::settings::control::native_nav::tick_hz};
   double control_loop_deadline_miss_ratio_limit{::lingtu::settings::control::native_nav::control_loop_deadline_miss_ratio_limit};
@@ -76,20 +73,9 @@ struct CliConfig {
   double path_follower_heading_align_exit_rad{::lingtu::settings::follower::native_nav::follower::align_exit_rad};
   nav_kernel::SplineFollowerParams scan_follower{};
   nav_kernel::ScanPlannerParams scan_planner{};
-  nav_kernel::LocalPlannerParams cmu_planner{};
-  nav_kernel::CmuFollowerProfile cmu_follower{};
   double local_collision_max_age_s{::lingtu::settings::local::parameters::local_collision_max_age_s};
-  std::vector<nav_kernel::RecoveryAction> recovery_order = navigation::defaultRecoveryOrder();
-  double recovery_blocked_interval_s{::lingtu::settings::recovery::native_nav::recovery::blocked_interval_s};
-  double recovery_rotation_timeout_s{::lingtu::settings::recovery::native_nav::recovery::rotation_timeout_s};
-  double recovery_translation_timeout_s{::lingtu::settings::recovery::native_nav::recovery::translation_timeout_s};
-  int recovery_max_attempts{::lingtu::settings::recovery::standalone::native_nav::recovery_max_attempts};
+  // Assisted-teleop boundary departure speed.
   double recovery_translation_speed_mps{::lingtu::settings::recovery::native_nav::recovery::translation_speed_mps};
-  double recovery_rotation_rate_rad_s{::lingtu::settings::recovery::native_nav::recovery::rotation_rate_rad_s};
-  double recovery_min_rotation_rad{::lingtu::settings::recovery::native_nav::recovery::min_rotation_rad};
-  double recovery_max_rotation_rad{::lingtu::settings::recovery::native_nav::recovery::max_rotation_rad};
-  double recovery_rotation_candidate_step_rad{::lingtu::settings::recovery::native_nav::recovery::rotation_candidate_step_rad};
-  double recovery_rotation_sample_step_rad{::lingtu::settings::recovery::native_nav::recovery::rotation_sample_step_rad};
   std::string product;
   std::string product_session_id;
   double status_s{::lingtu::settings::control::native_nav::status_s};

@@ -40,11 +40,6 @@ from lingtu.products import ProductLifecycle, product_name
 from lingtu.run_plan import RunPlan
 from runtime.host import HostBuilder
 
-_CMU_PROFILES = {
-    "doso/thunder_v4": "thunder",
-    "unitree/go2": "go2",
-}
-
 _SIM_TRUTH_SLAM_CONFIG = "src/localization/ltlio/config/sim_mid360.yaml"
 _SIM_LTLIO_SLAM_CONFIG = "src/localization/ltlio/config/sim_mid360_slam.yaml"
 
@@ -646,26 +641,6 @@ def _process_environment(
     local_planners = [name for name in local_planners if name in qualified]
     if "nav" in roles:
         environment["LINGTU_NAV_LOCAL_PLANNERS"] = ",".join(local_planners)
-    cmu_selectable = (
-        lifecycle["native_control_mode"] == "autonomy"
-        and "cmu" in local_planners and env_spec.robot in _CMU_PROFILES
-    )
-    cmu_planning_enabled = native_environment.get("LINGTU_NAV_LOCAL_PLANNER_BACKEND") == "cmu" and (
-        "traversability" in roles or native_environment.get("LINGTU_TELEOP_LOCAL_PLANNER") == "1"
-    )
-    if cmu_planning_enabled or cmu_selectable:
-        try:
-            profile = _CMU_PROFILES[env_spec.robot]
-        except KeyError as exc:
-            raise ValueError(
-                f"Robot {env_spec.robot!r} has no CMU path library"
-            ) from exc
-        root = (
-            "share/lingtu/cmu_paths"
-            if env_spec.name == "real"
-            else "src/nav/cpp/planning/local/cmu/paths"
-        )
-        environment["LINGTU_LOCAL_PLANNER_PATHS"] = f"{root}/{profile}"
     if process_control == "subprocess":
         # SimProcessManager injects runtime identity after publishing the RunPlan.
         environment.pop("LINGTU_PRODUCT", None)

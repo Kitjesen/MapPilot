@@ -21,7 +21,7 @@ variants:
       - native_slam_mapping
       - frontier_or_tare_goal_source
       - rolling_map_segment_execution
-      - local_planner_collision_and_traversability_scoring
+      - local_planner_collision_scoring
       - final_cmd_vel_single_writer
     slam_mode: mapping
     requires_map: false
@@ -32,10 +32,12 @@ variants:
       run_startup_checks: true
     includes: [control, lidar, slam, maps, limits, follower, global, local, explore]
     native_nav:
-      local_planner: cmu
-      local_planners: [cmu, scan]
+      local_planner: scan
+      local_planners: [scan]
+      tick_hz: 100.0
       follower:
         max_yaw_rate_rad_s: 1.0
+      use_traversability_cost: false
   map:
     topics:
       - /lidar/raw_frame
@@ -54,7 +56,7 @@ variants:
       - tare_frontier_or_viewpoint_goal_source
       - octoplanner3d_global_planning
       - rolling_map_segment_execution
-      - local_planner_collision_and_traversability_scoring
+      - local_planner_collision_scoring
       - final_cmd_vel_single_writer
       - operator_motion_typed_dds_interface
       - native_operator_motion_authority
@@ -75,10 +77,12 @@ variants:
       run_startup_checks: true
     includes: [control, lidar, slam, maps, limits, follower, global, local, explore, teleop]
     native_nav:
-      local_planner: cmu
-      local_planners: [cmu, scan]
+      local_planner: scan
+      local_planners: [scan]
+      tick_hz: 100.0
       follower:
         max_yaw_rate_rad_s: 1.0
+      use_traversability_cost: false
       teleop:
         takeover: true
         planner: true

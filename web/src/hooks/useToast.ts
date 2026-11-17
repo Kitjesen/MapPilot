@@ -9,7 +9,7 @@ let _id = 0
 
 function operatorToastMessage(message: string): string {
   const locale = /[\u3400-\u9fff]/.test(message) ? 'zh' : 'en'
-  const clean = message.replace(/\b(local_no_path|local_blocked|local_near_field_stop|execution_stalled|local_recovery_exhausted|empty_path)(?::[^\s，。；;)]*)?/g, code => {
+  const clean = message.replace(/\b(local_no_path|local_blocked|local_near_field_stop|execution_stalled|empty_path)(?::[^\s，。；;)]*)?/g, code => {
     const base = code.split(':', 1)[0]
     return operatorReasonMessage(base, locale)
   })
