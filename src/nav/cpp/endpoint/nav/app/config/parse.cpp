@@ -485,12 +485,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.sensor_offset_x_m, "LINGTU_NAV_SENSOR_OFFSET_X_M");
   applyEnvDouble(cfg.sensor_offset_y_m, "LINGTU_NAV_SENSOR_OFFSET_Y_M");
   applyEnvDouble(cfg.sensor_offset_z_m, "LINGTU_NAV_SENSOR_OFFSET_Z_M");
-  applyEnvDouble(cfg.octoplanner_options.robot_radius, "LINGTU_NAV_OCTO_ROBOT_RADIUS_M");
-  applyEnvDouble(cfg.octoplanner_options.body_offset_m, "LINGTU_NAV_OCTO_BODY_OFFSET_M");
-  applyEnvDouble(cfg.octoplanner_options.body_clearance_below_m,
-                 "LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M");
-  applyEnvDouble(cfg.octoplanner_options.body_clearance_above_m,
-                 "LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M");
   applyEnvInt(cfg.octoplanner_options.max_iterations, "LINGTU_NAV_OCTO_MAX_ITERATIONS");
   applyEnvInt(cfg.octoplanner_options.snap_search_radius_cells,
               "LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS");
@@ -703,14 +697,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.teleop_planner_horizon_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--teleop-planner-max-deviation-deg") {
       cfg.teleop_planner_max_deviation_deg = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-robot-radius-m") {
-      cfg.octoplanner_options.robot_radius = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-offset-m") {
-      cfg.octoplanner_options.body_offset_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-clearance-below-m") {
-      cfg.octoplanner_options.body_clearance_below_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-clearance-above-m") {
-      cfg.octoplanner_options.body_clearance_above_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-max-iterations") {
       cfg.octoplanner_options.max_iterations = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-snap-radius-cells") {
@@ -1051,10 +1037,6 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.collision_clearance_below_m = std::max(0.0, cfg.collision_clearance_below_m);
   cfg.collision_clearance_above_m = std::max(0.0, cfg.collision_clearance_above_m);
   auto &octo = cfg.octoplanner_options;
-  octo.robot_radius = std::max(0.0, octo.robot_radius);
-  octo.body_offset_m = std::max(0.0, octo.body_offset_m);
-  octo.body_clearance_below_m = std::max(0.0, octo.body_clearance_below_m);
-  octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);
   octo.snap_search_radius_cells = std::max(0, octo.snap_search_radius_cells);
   octo.support_depth_cells = std::max(1, octo.support_depth_cells);

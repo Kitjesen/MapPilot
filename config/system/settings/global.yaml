@@ -63,6 +63,9 @@ native_nav:
   far_max_search_expansions: 500000
   far_simplify_path: true
 
+# Fallbacks for fields a Product or RobotConfig normally supplies. Both the
+# RunPlan compiler and the generated native defaults read them; they are not
+# a second runtime profile.
 standalone:
   native_nav:
     global:

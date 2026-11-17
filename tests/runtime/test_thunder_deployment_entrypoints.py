@@ -871,7 +871,7 @@ def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> 
     assert "Environment=LINGTU_NAV_STATUS_S=" not in text
     assert "EnvironmentFile=/run/lingtu/session.env" in text
     assert "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES" not in text
-    assert "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640" in text
+    assert "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=" not in text
     assert 'applyEnvDouble(cfg.status_s, "LINGTU_NAV_STATUS_S")' in config
     assert '"LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"' in config
 
@@ -932,8 +932,15 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "OCTOPLANNER_MAP_PATH=" not in text
     assert "FAR_OCCUPANCY_PATH=" not in text
     assert "LINGTU_NAV_CONTROL_MODE=" not in text
-    assert "LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S=1.5" in text
-    assert "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS=5000" in text
+    # session.env (the RunPlan) overrides Environment=, so the unit sets paths only.
+    service_names = [
+        line.removeprefix("Environment=").split("=", 1)[0]
+        for line in text.splitlines()
+        if line.startswith("Environment=")
+    ]
+    assert service_names and all(
+        name == "LINGTU_REPO" or name.endswith(("_FILE", "_DIR")) for name in service_names
+    ), service_names
     assert "LINGTU_NAV_STATUS_FILE=/dev/shm/lingtu/nav_endpoint_status.json" in text
     assert "User=lingtu" in text
     assert "Group=lingtu" in text

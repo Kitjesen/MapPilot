@@ -2157,8 +2157,6 @@ def test_sim_mujoco_saved_map_navigation_products_compile_exact_native_chain(
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] == "0.23"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] == "0.05"
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.35"
-    assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] == "0.05"
-    assert plan.native_process_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] == "0.35"
     assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"] == "0.435"
     assert plan.native_process_environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_TOLERANCE_M"] == "0.1"
     expected_processes = [
@@ -2681,12 +2679,11 @@ def test_compiled_run_plan_returns_defensive_config_copies() -> None:
     assert product.native_nav["control_mode"] == "autonomy"
 
 
-def test_nav_octoplanner_radius_comes_from_native_nav_contract() -> None:
+def test_nav_global_body_comes_only_from_the_collision_cylinder() -> None:
     plan = compile_run_plan("nav", "sim", env_config={"backend": "mujoco"})
 
-    assert float(plan.native_process_environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == pytest.approx(
-        float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"])
-    )
+    assert "LINGTU_NAV_OCTO_ROBOT_RADIUS_M" not in plan.native_process_environment
+    assert float(plan.native_process_environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) > 0
 
 
 def test_product_compile_defers_startup_preflight(monkeypatch) -> None:

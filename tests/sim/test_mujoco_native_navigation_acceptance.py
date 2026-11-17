@@ -809,7 +809,8 @@ def test_multifloor_global_guide_uses_stair_compatible_support_model():
     constraints = manifest["planner_constraints"]
 
     assert manifest["start"] == [7.0, -0.8, 0.55, 3.141592653589793]
-    assert constraints["robot_radius_m"] == 0.35
+    # navd derives the global body from the SCAN collision cylinder.
+    assert "robot_radius_m" not in constraints
     assert constraints["direct_support_only"] is False
     assert constraints["obstacle_clearance_radius_cells"] == 4
 
@@ -3731,11 +3732,8 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
     start_args = acceptance._sensor_start_args(manifest["start"])
     assert start_args[start_args.index("--start-yaw-deg") + 1] == "180.0"
     constraints = manifest["planner_constraints"]
-    assert constraints["robot_radius_m"] == 0.35
     assert constraints["obstacle_clearance_radius_cells"] == 4
     assert constraints["obstacle_clearance_weight"] == 2.0
-    assert constraints["body_clearance_below_m"] == 0.15
-    assert constraints["body_clearance_above_m"] == 0.30
     assert constraints["support_height_m"] == 0.55
     assert constraints["max_step_height_m"] == 0.23
     assert constraints["max_slope"] == 0.65
@@ -3785,7 +3783,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
         ROOT / "config" / "acceptance" / "mujoco" / "industrial_park_60m.json"
     )
 
-    assert manifest["planner_constraints"]["robot_radius_m"] == 0.95
+    assert "robot_radius_m" not in manifest["planner_constraints"]
     assert manifest["navigation_runtime"]["corridor_lookahead_m"] == 1.2
     assert manifest["sensor_runtime"].get("publish_odom_prior") is not True
     assert "odom_prior_velocity_window_s" not in manifest["sensor_runtime"]
@@ -4439,8 +4437,8 @@ def test_multifloor_manifest_locks_runtime_octoplanner3d_constraints():
     assert manifest["start"][:3] == [7.0, -0.8, 0.55]
     assert manifest["goal"][:3] == [7.4, 2.8, 4.15]
     constraints = manifest["planner_constraints"]
-    assert constraints["body_clearance_below_m"] == 0.15
-    assert constraints["body_clearance_above_m"] == 0.30
+    # The global body follows the SCAN collision cylinder, not a manifest key.
+    assert "body_clearance_below_m" not in constraints
     assert constraints["support_height_m"] == 0.55
     assert constraints["max_step_height_m"] == 0.23
     assert constraints["max_slope"] == 0.65
