@@ -328,6 +328,25 @@ impl Checker<'_> {
             && self.support_patch(cell)
     }
 
+    // A support voxel is one map cell thick. Body clearance that reaches the
+    // physical surface therefore overlaps the top of the voxel the stance is
+    // standing on. That overlap is terrain. Cells above the stance's support
+    // band remain obstacles.
+    fn is_support_terrain(&self, cell: SurfaceCell, support_z: Option<i32>) -> bool {
+        if self.config.support_height <= 0.0 {
+            return false;
+        }
+        support_z.is_some_and(|limit| cell.z <= limit && self.observed_support(cell))
+    }
+
+    fn segment_support_z(&self, from: LtMlsPoint, to: LtMlsPoint) -> Option<i32> {
+        match (self.floor(from), self.floor(to)) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(z), None) | (None, Some(z)) => Some(z),
+            (None, None) => None,
+        }
+    }
+
     fn floor(&self, point: LtMlsPoint) -> Option<i32> {
         let cell = self.cell(point);
         let (low, high) = self.support_range(point);
@@ -406,6 +425,7 @@ impl Checker<'_> {
     fn body_query(&self, point: LtMlsPoint, radius: f64) -> u32 {
         let c = self.config;
         let (below, above) = self.body_extent();
+        let support_z = self.floor(point);
         let low = self.cell(LtMlsPoint {
             x: point.x - radius,
             y: point.y - radius,
@@ -437,7 +457,8 @@ impl Checker<'_> {
                         {
                             continue;
                         }
-                        if !self.exempt(SurfaceCell::new(x, y, z)) {
+                        let cell = SurfaceCell::new(x, y, z);
+                        if !self.exempt(cell) && !self.is_support_terrain(cell, support_z) {
                             return ROUTE_OCCUPIED;
                         }
                     }
@@ -453,7 +474,10 @@ impl Checker<'_> {
                     if self.preblocked.contains(&cell) {
                         return ROUTE_NO_GO;
                     }
-                    if self.occupied.contains(&cell) && !self.exempt(cell) {
+                    if self.occupied.contains(&cell)
+                        && !self.exempt(cell)
+                        && !self.is_support_terrain(cell, support_z)
+                    {
                         return ROUTE_OCCUPIED;
                     }
                 }
@@ -557,6 +581,7 @@ impl Checker<'_> {
     fn occupied_sweep(&self, from: LtMlsPoint, to: LtMlsPoint) -> Option<LtMlsPoint> {
         let c = self.config;
         let (below, above) = self.body_extent();
+        let support_z = self.segment_support_z(from, to);
         let bottom = from.z.min(to.z) - below;
         let top = from.z.max(to.z) + above;
         let low = self.cell(LtMlsPoint {
@@ -575,7 +600,8 @@ impl Checker<'_> {
             }
             for y in low.y..=high.y {
                 for &z in self.occupied_z(x, y, low.z, high.z) {
-                    if self.exempt(SurfaceCell::new(x, y, z)) {
+                    let cell = SurfaceCell::new(x, y, z);
+                    if self.exempt(cell) || self.is_support_terrain(cell, support_z) {
                         continue;
                     }
                     let minimum = point_at_cell(x, y, z, c.resolution);
@@ -611,6 +637,7 @@ impl Checker<'_> {
     fn occupied_sweep_dense(&self, from: LtMlsPoint, to: LtMlsPoint) -> Option<LtMlsPoint> {
         let c = self.config;
         let (below, above) = self.body_extent();
+        let support_z = self.segment_support_z(from, to);
         let bottom = from.z.min(to.z) - below;
         let top = from.z.max(to.z) + above;
         let low = self.cell(LtMlsPoint {
@@ -629,8 +656,10 @@ impl Checker<'_> {
             }
             for y in low.y..=high.y {
                 for z in low.z..=high.z {
-                    if !self.occupied.contains(&SurfaceCell::new(x, y, z))
-                        || self.exempt(SurfaceCell::new(x, y, z))
+                    let cell = SurfaceCell::new(x, y, z);
+                    if !self.occupied.contains(&cell)
+                        || self.exempt(cell)
+                        || self.is_support_terrain(cell, support_z)
                     {
                         continue;
                     }
@@ -757,6 +786,7 @@ impl Checker<'_> {
             }
         }
         let reach = c.body_offset + c.robot_radius;
+        let support_z = self.floor(point);
         let low = self.cell(LtMlsPoint {
             x: point.x - reach,
             y: point.y - reach,
@@ -775,7 +805,11 @@ impl Checker<'_> {
                 for z in low.z..=high.z {
                     let cell = SurfaceCell::new(x, y, z);
                     let blocked = self.preblocked.contains(&cell);
-                    if !blocked && (!self.occupied.contains(&cell) || self.exempt(cell)) {
+                    if !blocked
+                        && (!self.occupied.contains(&cell)
+                            || self.exempt(cell)
+                            || self.is_support_terrain(cell, support_z))
+                    {
                         continue;
                     }
                     let min = point_at_cell(x, y, z, c.resolution);
@@ -1350,6 +1384,28 @@ mod tests {
         ] {
             assert_eq!(check(&state, &route, c, &[]).valid, 1);
         }
+    }
+
+    #[test]
+    fn support_voxel_overlap_is_terrain() {
+        let floor: Vec<_> = (0..8).map(|x| SurfaceCell::new(x, 0, 0)).collect();
+        let mut c = config();
+        c.resolution = 0.2;
+        c.robot_radius = 0.4;
+        c.below = 0.25;
+        c.above = 0.35;
+        c.support_height = 0.45;
+        c.support_tolerance = 0.11;
+        c.max_slope = 0.0;
+        c.body_offset = 0.25;
+        let route = [point(0.4, 0.1, 0.44), point(0.8, 0.1, 0.65)];
+        assert_eq!(check(&state(floor.clone()), &route, c, &[]).valid, 1);
+        let mut blocked = floor;
+        blocked.push(SurfaceCell::new(3, 0, 2));
+        assert_eq!(
+            check(&state(blocked), &route, c, &[]).failure_kind,
+            ROUTE_OCCUPIED
+        );
     }
 
     #[test]

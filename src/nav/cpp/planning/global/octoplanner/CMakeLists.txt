@@ -335,6 +335,11 @@ if(BUILD_TESTING)
 
   add_executable(octoplanner3d_no_air_climb_smoke no_air_climb_smoke.cpp)
   add_executable(octoplanner3d_no_go_smoke no_go_smoke.cpp)
+  add_executable(octoplanner3d_official_park_mls_smoke official_park_mls_smoke.cpp)
+  target_link_libraries(octoplanner3d_official_park_mls_smoke PRIVATE octoplanner3d_runtime)
+  add_test(NAME octoplanner3d_official_park_mls_smoke
+    COMMAND octoplanner3d_official_park_mls_smoke
+      "${CMAKE_CURRENT_SOURCE_DIR}/testdata/industrial_park_scan.ot")
   add_executable(octoplanner3d_prepared_cache_smoke prepared_cache_smoke.cpp)
   target_include_directories(octoplanner3d_prepared_cache_smoke PRIVATE "${LINGTU_NAV_CPP_DIR}/../../maps/include")
   target_link_libraries(octoplanner3d_prepared_cache_smoke PRIVATE octoplanner3d_runtime octomap_vendor octomath_vendor)
