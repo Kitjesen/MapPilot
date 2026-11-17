@@ -35,14 +35,8 @@ bool triggerMatchesSnapshot(const GoalReplanTrigger &trigger, const GoalPlanSnap
                                             *snapshot.active_map_identity);
 }
 
-bool validLocalRecoveryTrigger(const GoalReplanTrigger &trigger) {
-  switch (trigger.kind) {
-    case GoalReplanTriggerKind::kLocalRecoveryExhausted:
-      return true;
-    case GoalReplanTriggerKind::kLocalPlanningBlocked:
-      return trigger.blocked_point.has_value() && trigger.obstacle_generation != 0U;
-  }
-  return false;
+bool validReplanTrigger(const GoalReplanTrigger &trigger) {
+  return trigger.blocked_point.has_value() && trigger.obstacle_generation != 0U;
 }
 
 bool sameBlockedGoal(const GoalReplanIdentity &left, const GoalReplanIdentity &right) {
@@ -967,7 +961,7 @@ GoalReplanRuntimeCoordinator::handleTerminalFailureOutcome(
   }
 
   if (inspection && event.outcome.replan_trigger &&
-      validLocalRecoveryTrigger(*event.outcome.replan_trigger) &&
+      validReplanTrigger(*event.outcome.replan_trigger) &&
       !event.outcome.inspection_arrival_intent) {
     return std::nullopt;
   }
@@ -1107,7 +1101,7 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
                            true);
     return result;
   }
-  const bool valid_trigger = validLocalRecoveryTrigger(trigger);
+  const bool valid_trigger = validReplanTrigger(trigger);
   if (!valid_trigger) {
     observeAndCancel(*current, frame.steady_now_s, "replan_trigger_payload_invalid");
     result.handled = true;
@@ -1477,7 +1471,7 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
                              true);
       return result;
     }
-    const bool valid_pending_trigger = validLocalRecoveryTrigger(*pending_replan_trigger_);
+    const bool valid_pending_trigger = validReplanTrigger(*pending_replan_trigger_);
     if (!valid_pending_trigger) {
       (void)bounded_.completeReplan(*current, input.steady_now_s, false);
       result.reason = "replan_trigger_payload_stale";
@@ -1493,25 +1487,20 @@ GoalReplanRuntimeCoordinator::advancePlanningCycle(const GoalReplanRuntimeFrameI
       blocked_goal_ = trigger.goal;
       blocked_regions_.clear();
     }
-    if (trigger.kind == GoalReplanTriggerKind::kLocalPlanningBlocked) {
-      const auto region = blockedRegion(trigger, replan_admission);
-      if (!region) {
-        (void)bounded_.completeReplan(*current, input.steady_now_s, false);
-        result.reason = "local_blockage_at_start";
-        attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
-                               result.reason, true);
-        return result;
-      }
-      blocked_regions_.push_back(*region);
-      blocked_obstacle_generation_ = trigger.obstacle_generation;
+    const auto region = blockedRegion(trigger, replan_admission);
+    if (!region) {
+      (void)bounded_.completeReplan(*current, input.steady_now_s, false);
+      result.reason = "local_blockage_at_start";
+      attachDeferredTerminal(result, lingtu::message::NavigationGoalState::Failed,
+                             result.reason, true);
+      return result;
     }
-    if (!blocked_regions_.empty()) {
-      auto &overlay = replan_admission.temporary_overlay;
-      overlay.revision = ++blocked_overlay_revision_;
-      overlay.frame_epoch = replan_admission.frame_epoch;
-      overlay.obstacle_generation = blocked_obstacle_generation_;
-      overlay.blocked_regions = blocked_regions_;
-    }
+    blocked_regions_.push_back(*region);
+    auto &overlay = replan_admission.temporary_overlay;
+    overlay.revision = ++blocked_overlay_revision_;
+    overlay.frame_epoch = replan_admission.frame_epoch;
+    overlay.obstacle_generation = trigger.obstacle_generation;
+    overlay.blocked_regions = blocked_regions_;
     const GoalPlanSubmitResult started = goal_plan_.replanActive(replan_admission);
     if (!started.accepted) {
       (void)bounded_.completeReplan(*current, input.steady_now_s, false);

@@ -262,7 +262,6 @@ class GoalReplanRuntimeCoordinator {
   std::optional<GoalReplanIdentity> blocked_goal_;
   std::vector<lingtu::nav::plan::GlobalPlanBlockedRegion> blocked_regions_;
   std::uint64_t blocked_overlay_revision_{0U};
-  std::uint64_t blocked_obstacle_generation_{0U};
   std::uint64_t next_terminal_intent_id_{1U};
   std::uint64_t pending_terminal_intent_id_{0U};
   std::string pending_terminal_task_id_;

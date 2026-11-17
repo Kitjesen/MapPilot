@@ -64,7 +64,6 @@ _TUNING_ENVIRONMENT = {
     "traversability_weight": "LINGTU_NAV_TRAVERSABILITY_WEIGHT",
     "max_obstacle_points": "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS",
     "local_planner_threads": "LINGTU_NAV_LOCAL_PLANNER_THREADS",
-    "local_planner_debug_candidates": "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES",
     "local_map_debug_points": "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS",
     "live_obstacle_decay_s": "LINGTU_NAV_LIVE_OBSTACLE_DECAY_S",
     "live_obstacle_ray_clearing": "LINGTU_NAV_LIVE_OBSTACLE_RAY_CLEARING",
@@ -89,7 +88,7 @@ _FAR_ENVIRONMENT = {
 }
 _TUNING_INTEGER_FIELDS = frozenset({
     "max_obstacle_points", "local_planner_threads",
-    "local_planner_debug_candidates", "local_map_debug_points",
+    "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
     "far_corner_separation_cells", "far_snap_search_radius_cells",
     "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",

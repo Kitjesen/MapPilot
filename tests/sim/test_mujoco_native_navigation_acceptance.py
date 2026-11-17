@@ -3388,7 +3388,7 @@ def test_native_navigation_video_shows_local_planner_decision_layers():
     assert '"local_candidates"' in renderer_source
     assert '"planner_local_map"' in renderer_source
     assert '"--nav-status-json", str(nav_status)' in acceptance_source
-    assert '"--local-planner-debug-candidates"' in acceptance_source
+    assert '"--local-planner-debug-candidates"' not in acceptance_source
     assert '"--local-map-debug-points"' in acceptance_source
     assert "render_native_navigation_video(" in acceptance_source
 

@@ -217,15 +217,6 @@ std::vector<nav_kernel::Vec3> Executor::bodyPathToMap(
   return out;
 }
 
-nav_kernel::LocalPlannerDebugSnapshot Executor::debugSnapshotToMap(
-    const nav_kernel::Pose& odom_map_body,
-    nav_kernel::LocalPlannerDebugSnapshot snapshot) const {
-  for (auto& candidate : snapshot.candidates) {
-    candidate.path = bodyPathToMap(odom_map_body, candidate.path);
-  }
-  return snapshot;
-}
-
 bool Executor::atGoal(const nav_kernel::Pose& body) const {
   if (route.empty()) return false;
   const bool task_goal = requested_goal_ &&
@@ -321,10 +312,7 @@ nav_kernel::LocalPlan Executor::planLocal(
     const MapFromOdomTransform &map_from_odom,
     nav_kernel::LocalPlannerDebugSnapshot *debug) {
   nav_kernel::LocalPlan plan = local_planner_.plan(request);
-  nav_kernel::Pose map_body;
-  map_body.position = map_from_odom.mapPointFromOdom(request.robot.pose.position);
-  map_body.yaw = nav_kernel::normalizeAngle(map_from_odom.yaw + request.robot.pose.yaw);
-  *debug = debugSnapshotToMap(map_body, local_planner_.debugSnapshot());
+  *debug = local_planner_.debugSnapshot();
   if (debug->collisionEvidence && config_.planning_frame == PlanningFrame::Odom) {
     auto &evidence = *debug->collisionEvidence;
     evidence.rejectedPosition = map_from_odom.mapPointFromOdom(evidence.rejectedPosition);

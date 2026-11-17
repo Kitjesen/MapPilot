@@ -870,10 +870,9 @@ def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> 
     assert "LINGTU_INSPECTION_DIR=/var/lib/lingtu/inspection" in text
     assert "Environment=LINGTU_NAV_STATUS_S=" not in text
     assert "EnvironmentFile=/run/lingtu/session.env" in text
-    assert "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES=18" in text
+    assert "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES" not in text
     assert "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640" in text
     assert 'applyEnvDouble(cfg.status_s, "LINGTU_NAV_STATUS_S")' in config
-    assert '"LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES"' in config
     assert '"LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS"' in config
 
 

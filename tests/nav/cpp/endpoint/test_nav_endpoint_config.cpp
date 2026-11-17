@@ -720,20 +720,14 @@ void testLocalPlannerVisualizationIsExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
       });
-  require(defaults.local_planner_debug_candidate_limit == 0,
-          "candidate debug snapshots must be disabled by default");
   require(defaults.local_map_debug_point_limit == 0,
           "local-map debug snapshots must be disabled by default");
 
   const auto enabled = parse({
       "navd",
-      "--local-planner-debug-candidates",
-      "99",
       "--local-map-debug-points",
       "640",
   });
-  require(enabled.local_planner_debug_candidate_limit == 36,
-          "candidate debug snapshots must clamp to the 36 library rotations");
   require(enabled.local_map_debug_point_limit == 640, "local-map debug point limit must parse");
 }
 

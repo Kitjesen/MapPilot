@@ -286,10 +286,12 @@ struct Fixture {
   }
 
   GoalReplanRuntimeAutonomyEvent recoveryEvent() const {
+    // A located blockage well clear of the start; lifecycle tests ignore its overlay.
     GoalReplanTrigger trigger;
-    trigger.kind = GoalReplanTriggerKind::kLocalRecoveryExhausted;
     trigger.reason = "local_recovery_exhausted";
     trigger.goal = activeIdentity();
+    trigger.blocked_point = lingtu::nav::plan::GlobalPlanPoint{2.0, 0.0, 0.0};
+    trigger.obstacle_generation = 9U;
     return {
         AutonomyTickOutcome{AutonomyTickOutcomeKind::kGoalFailed, "local_recovery_exhausted", false,
                             trigger},

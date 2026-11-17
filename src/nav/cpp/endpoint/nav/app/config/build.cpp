@@ -159,7 +159,6 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.stop_confirmation_timeout_s = cfg.stop_confirmation_timeout_s;
   out.stop_confirmation_evidence =
       cfg.control_mode == ControlMode::Autonomy ? "zero_output_and_odometry" : "zero_output";
-  out.local_planner_debug_candidate_limit = cfg.local_planner_debug_candidate_limit;
   out.local_map_debug_point_limit = cfg.local_map_debug_point_limit;
   out.planner_obstacle_height_min_m = cfg.local_planner_obstacle_height_min_m;
   out.planner_obstacle_height_max_m = cfg.local_planner_obstacle_height_max_m;
@@ -230,7 +229,6 @@ nav_kernel::LocalPlannerParams buildLocalPlannerParams(const CliConfig &cfg) {
   out.traversabilitySoftCost = cfg.traversability_soft_cost;
   out.traversabilityWeight = cfg.traversability_weight;
   out.scoringThreads = static_cast<int>(cfg.local_planner_threads);
-  out.debugCandidateLimit = static_cast<int>(cfg.local_planner_debug_candidate_limit);
   return out;
 }
 

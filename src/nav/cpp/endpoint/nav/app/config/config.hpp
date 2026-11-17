@@ -105,7 +105,6 @@ struct CliConfig {
   double local_planner_obstacle_height_max_m{::lingtu::settings::local::native_nav::local_planner_obstacle_height_max_m};
   std::size_t max_obstacle_points{::lingtu::settings::local::native_nav::max_obstacle_points};
   std::size_t local_planner_threads{::lingtu::settings::local::native_nav::local_planner_threads};
-  std::size_t local_planner_debug_candidate_limit{::lingtu::settings::local::native_nav::local_planner_debug_candidates};
   std::size_t local_map_debug_point_limit{::lingtu::settings::local::native_nav::local_map_debug_points};
   double obstacle_voxel_size_m{::lingtu::settings::local::native_nav::obstacle_voxel_size_m};
   double live_obstacle_decay_s{::lingtu::settings::local::native_nav::live_obstacle_decay_s};

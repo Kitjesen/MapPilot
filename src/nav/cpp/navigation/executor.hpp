@@ -235,9 +235,6 @@ class Executor {
                                                      double timestamp_s);
   std::vector<nav_kernel::Vec3> bodyPathToMap(const nav_kernel::Pose &odom_map_body,
                                               const std::vector<nav_kernel::Vec3> &body_path) const;
-  nav_kernel::LocalPlannerDebugSnapshot
-  debugSnapshotToMap(const nav_kernel::Pose &odom_map_body,
-                     nav_kernel::LocalPlannerDebugSnapshot snapshot) const;
   double slowFactor(int slow_down) const;
   bool atGoal(const nav_kernel::Pose &body) const;
 

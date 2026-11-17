@@ -446,8 +446,6 @@ CliConfig parseArgs(int argc, char **argv) {
                  "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M");
   applyEnvSize(cfg.max_obstacle_points, "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS");
   applyEnvSize(cfg.local_planner_threads, "LINGTU_NAV_LOCAL_PLANNER_THREADS");
-  applyEnvSize(cfg.local_planner_debug_candidate_limit,
-               "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES");
   applyEnvSize(cfg.local_map_debug_point_limit, "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS");
   const auto obstacle_voxel_size = envOrEmpty("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M");
   bool explicit_obstacle_voxel_size = !obstacle_voxel_size.empty();
@@ -626,8 +624,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.max_obstacle_points = parseSize(next(), arg.c_str());
     } else if (arg == "--local-planner-threads") {
       cfg.local_planner_threads = parseSize(next(), arg.c_str());
-    } else if (arg == "--local-planner-debug-candidates") {
-      cfg.local_planner_debug_candidate_limit = parseSize(next(), arg.c_str());
     } else if (arg == "--local-map-debug-points") {
       cfg.local_map_debug_point_limit = parseSize(next(), arg.c_str());
     } else if (arg == "--obstacle-voxel-size-m") {
@@ -813,7 +809,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "[--segment-max-grid-cells N] [--segment-risk-stop C] "
           "[--segment-risk-resume C] [--segment-map-max-age-s S] "
           "[--max-obstacle-points N] [--publish-cmd-vel true|false] "
-          "[--local-planner-debug-candidates N] [--local-map-debug-points N] "
+          "[--local-map-debug-points N] "
           "[--obstacle-voxel-size-m M] [--live-obstacle-decay-s S] "
           "[--live-obstacle-inflation-radius-m M] "
           "[--live-obstacle-ray-clearing true|false] "
@@ -1021,8 +1017,6 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error("local planner obstacle height maximum must be at least the minimum");
   }
   cfg.local_planner_threads = std::clamp<std::size_t>(cfg.local_planner_threads, 1, 4);
-  cfg.local_planner_debug_candidate_limit = std::min<std::size_t>(
-      cfg.local_planner_debug_candidate_limit, static_cast<std::size_t>(nav_kernel::kRotDirs));
   cfg.local_map_debug_point_limit = std::min<std::size_t>(cfg.local_map_debug_point_limit, 4096);
   cfg.obstacle_voxel_size_m = std::max(0.02, cfg.obstacle_voxel_size_m);
   cfg.live_obstacle_decay_s = std::max(0.0, cfg.live_obstacle_decay_s);

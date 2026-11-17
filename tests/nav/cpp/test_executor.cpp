@@ -26,8 +26,7 @@ lingtu::nav::navigation::Executor makeConfiguredExecutor(
 
 lingtu::nav::navigation::Executor makeLoop(bool use_traversability = false,
                                             double corridor_lookahead_m = 2.0,
-                                            double teleop_max_deviation_deg = 55.0,
-                                            int debug_candidate_limit = 0) {
+                                            double teleop_max_deviation_deg = 55.0) {
   lingtu::nav::navigation::ExecutorConfig config;
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
@@ -37,7 +36,6 @@ lingtu::nav::navigation::Executor makeLoop(bool use_traversability = false,
   planner.useTerrainAnalysis = true;
   planner.useTraversabilityCost = use_traversability;
   planner.traversabilityNearFieldStop = use_traversability;
-  planner.debugCandidateLimit = debug_candidate_limit;
   planner.autonomySpeed = 0.5;
   planner.maxSpeed = 1.0;
   config.follower.maxSpeed = 0.5;

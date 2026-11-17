@@ -15,7 +15,6 @@ native_nav:
   local_planner_obstacle_height_max_m: 1.20
   max_obstacle_points: 20000
   local_planner_threads: 2
-  local_planner_debug_candidates: 0
   local_map_debug_points: 0
   obstacle_voxel_size_m: 0.05
   scan_motion_voxel_size_m: 0.08  # SCAN dynamic observations use their own motion layer.

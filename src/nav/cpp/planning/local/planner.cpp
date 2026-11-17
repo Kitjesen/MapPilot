@@ -376,24 +376,6 @@ const char *localPlannerBackendName(LocalPlannerBackend) {
   return "scan";
 }
 
-const char *localCandidateStateName(LocalCandidateState state) {
-  switch (state) {
-    case LocalCandidateState::Feasible:
-      return "feasible";
-    case LocalCandidateState::CollisionBlocked:
-      return "collision_blocked";
-    case LocalCandidateState::RotationBlocked:
-      return "rotation_blocked";
-    case LocalCandidateState::TerrainCost:
-      return "terrain_cost";
-    case LocalCandidateState::TerrainBlocked:
-      return "terrain_blocked";
-    case LocalCandidateState::DirectionRejected:
-      return "direction_rejected";
-  }
-  return "direction_rejected";
-}
-
 const char *localPlanStatusName(LocalPlanStatus status) {
   switch (status) {
     case LocalPlanStatus::Ready:
