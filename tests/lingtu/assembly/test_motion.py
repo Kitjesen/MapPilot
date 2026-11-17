@@ -165,19 +165,7 @@ def test_native_nav_compiles_follower_and_recovery_settings() -> None:
             "path_follower_max_yaw_rate_rad_s": 0.70,
             "path_follower_heading_align_enter_rad": 0.80,
             "path_follower_heading_align_exit_rad": 0.30,
-            "recovery": {
-                "behavior_order": ["rotate", "translate"],
-                "blocked_interval_s": 1.25,
-                "rotation_timeout_s": 2.75,
-                "translation_timeout_s": 1.75,
-                "max_attempts": 4,
-                "translation_speed_mps": 0.12,
-                "rotation_rate_rad_s": 0.40,
-                "min_rotation_rad": 0.25,
-                "max_rotation_rad": 1.10,
-                "rotation_candidate_step_rad": 0.15,
-                "rotation_sample_step_rad": 0.05,
-            },
+            "recovery": {"translation_speed_mps": 0.12},
         }
     )
 
@@ -187,25 +175,12 @@ def test_native_nav_compiles_follower_and_recovery_settings() -> None:
     assert compiled.parameters["path_follower_max_yaw_rate_rad_s"] == 0.70
     assert compiled.parameters["path_follower_heading_align_enter_rad"] == 0.80
     assert compiled.parameters["path_follower_heading_align_exit_rad"] == 0.30
-    assert compiled.native_nav["recovery"]["behavior_order"] == (
-        "rotate",
-        "translate",
-    )
+    assert compiled.native_nav["recovery"] == {"translation_speed_mps": 0.12}
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2"] == "0.3"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "0.7"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD"] == "0.8"
     assert compiled.environment["LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD"] == "0.3"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_ORDER"] == "rotate,translate"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S"] == "1.25"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S"] == "2.75"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S"] == "1.75"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_MAX_ATTEMPTS"] == "4"
     assert compiled.environment["LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS"] == "0.12"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S"] == "0.4"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_MIN_ROTATION_RAD"] == "0.25"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_MAX_ROTATION_RAD"] == "1.1"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD"] == "0.15"
-    assert compiled.environment["LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD"] == "0.05"
 
 
 def test_operator_motion_requirement_is_derived_from_native_policy_for_every_product() -> None:

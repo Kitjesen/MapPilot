@@ -51,8 +51,6 @@ lingtu::nav::navigation::Executor makeLoop(bool use_traversability = false,
 
 lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m = 3.0,
                                                    double vehicle_length_m = 0.6,
-                                                   int recovery_max_attempts = 3,
-                                                   double recovery_blocked_interval_s = 2.0,
                                                    lingtu::nav::navigation::PlanningFrame frame =
                                                        lingtu::nav::navigation::PlanningFrame::Map,
                                                    double yaw_acceleration =
@@ -62,8 +60,6 @@ lingtu::nav::navigation::Executor makeScanExecutor(double corridor_lookahead_m =
   nav_kernel::LocalPlannerParams planner;
   config.corridor_lookahead_m = corridor_lookahead_m;
   config.max_speed = 0.5;
-  config.recovery.max_attempts = recovery_max_attempts;
-  config.recovery.blocked_interval_s = recovery_blocked_interval_s;
   planner.backend = nav_kernel::LocalPlannerBackend::Scan;
   planner.checkObstacle = true;
   planner.useTerrainAnalysis = true;
@@ -360,7 +356,6 @@ TEST(Executor, ScanArrivalBeforeEnd) {
     config.max_speed = config.follower.maxSpeed = 1.0;
     config.follower.maxAccel = .75;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -404,7 +399,6 @@ TEST(Executor, PointArrivalAndPoseBraking) {
     config.max_speed = config.follower.maxSpeed = 1.0;
     config.follower.maxAccel = 2.0;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -474,7 +468,7 @@ TEST(Executor, PointArrivalAndPoseBraking) {
 
 
 TEST(Executor, PoseArrivalAfterStop) {
-  auto executor = makeScanExecutor(3.0, .6, 0);
+  auto executor = makeScanExecutor(3.0, .6);
   auto guide = route({{0, 0, .5}, {2, 0, .5}}, std::nullopt, .15);
   auto model = std::make_shared<lingtu::nav::collision::Body>();
   model->margin_m = 0;
@@ -517,7 +511,6 @@ TEST(Executor, ScanSettlingDriftRetainsTerminalSplineWithoutTurningBack) {
     config.planning_frame = frame;
     config.max_speed = config.follower.maxSpeed = .5;
     config.follower.nominalDt = .02;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -605,7 +598,7 @@ TEST(Executor, ScanUsesSeparatePlanarAndHeightGoalTolerances) {
 }
 
 TEST(Executor, ScanReceivesPrediction) {
-  auto executor = makeScanExecutor(3.0, .6, 3, .1);
+  auto executor = makeScanExecutor(3.0, .6);
   executor.setRoute({{{0, 0, .5}, {3, 0, .5}}});
   const nav_kernel::PredictedObstacle crossing{{1.0, -.2, .5},
                                                 {1.0, .2, .5}, .05, .1, 1};
@@ -1621,9 +1614,7 @@ TEST(Executor, ScanLeftAndRightRemainBodyRelativeAtDifferentHeadings) {
 TEST(Executor, ScanTeleopHonorsExplicitYawWhileTranslating) {
   for (const double yaw_acceleration : {0.0, nav_kernel::FollowerParams{}.maxYawAccelRadS2}) {
     SCOPED_TRACE(yaw_acceleration);
-    auto executor = makeScanExecutor(3.0, 0.6, 3, 2.0,
-                                     lingtu::nav::navigation::PlanningFrame::Map,
-                                     yaw_acceleration);
+    auto executor = makeScanExecutor(3.0, 0.6, lingtu::nav::navigation::PlanningFrame::Map, yaw_acceleration);
     double now = 1.0;
     const auto tick = [&]() {
       return executor.tick(intentInput(pose(0.0, 0.0, 0.0, 0.0), {0.25, 0.0, -0.3},
@@ -1847,7 +1838,7 @@ TEST(Executor, ScanTeleopIntentReceivesCollisionSnapshot) {
 }
 
 TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-4, -4, -1}, {4, 4, 1}, 0.1);
   // The rear cylinder starts in the first cell. Forward leaves it into free
   // cells, while a left request enters a separate occupied cell.
@@ -1896,7 +1887,7 @@ TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
   EXPECT_DOUBLE_EQ(std::hypot(left.cmd_vel.vx, left.cmd_vel.vy), 0.0);
   EXPECT_DOUBLE_EQ(left.cmd_vel.wz, 0.0);
 
-  auto yaw_executor = makeScanExecutor(3.0, 0.6, 0);
+  auto yaw_executor = makeScanExecutor(3.0, 0.6);
   now += 0.05;
   const auto with_yaw = awaitScanOutput([&] {
     return yaw_executor.tick(intentInput(pose(0, 0, 0, 0), {0.25, 0.0, 0.1},
@@ -1909,7 +1900,7 @@ TEST(Executor, ScanOccupiedStartDepartsOnlyInTheFreshRequestedDirection) {
 }
 
 TEST(Executor, ScanBoundaryDepartureRespectsLowerRequestedSpeed) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-4, -4, -1}, {4, 4, 1}, 0.1);
   collision.occupy({-0.18, 0.0, 0.0});
   auto observation = emptyScanObservation(1.0);
@@ -1935,7 +1926,7 @@ TEST(Executor, ScanBoundaryDepartureRespectsLowerRequestedSpeed) {
 }
 
 TEST(Executor, ScanFreeStartPlannerFailureDoesNotBecomeDepartureRecovery) {
-  auto executor = makeScanExecutor(3.0, 0.6, 0);
+  auto executor = makeScanExecutor(3.0, 0.6);
   lingtu::nav::tests::CollisionBitmap collision({-1, -1, -1}, {1, 1, 1}, 0.1);
   for (int x = -10; x < 10; ++x) {
     for (int y = -10; y < 10; ++y) {
@@ -2266,7 +2257,7 @@ TEST(Executor, SpeedLimitSurvivesPoseStageTransition) {
 }
 
 TEST(Executor, AcceptedMotionAndNewRouteClearFinalBrakingRejection) {
-  auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
+  auto executor = makeScanExecutor(3.0, 0.6);
   const auto path = route({{0.0, 0.0, 0.0}, {3.0, 0.0, 0.0}});
   executor.setRoute(path);
   executor.reportFinalMotionBlocked(true);
@@ -2341,7 +2332,6 @@ TEST(Executor, ScanOccupiedStartHoldsWithoutRecovery) {
   part.half_size = {.3, .1, .1};
   model->parts.push_back(part);
   config.body = model;
-  config.recovery.blocked_interval_s = 0;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.checkObstacle = true;
@@ -2652,8 +2642,6 @@ TEST(Executor, ScanInitializationFailureReportsCauseAndStops) {
 TEST(Executor, ScanDoesNotAddAnExecutorStallLatch) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-  config.recovery.max_attempts = 0;
-  config.recovery.blocked_interval_s = 0.5;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.scan.voxelResolution = 0.10;
@@ -2689,7 +2677,7 @@ TEST(Executor, StairHeadingFollowsFlightInBothPlanningFramesAndDirections) {
     for (const bool descending : {false, true}) {
       SCOPED_TRACE(static_cast<int>(frame));
       SCOPED_TRACE(descending);
-      auto executor = makeScanExecutor(3, .6, 3, 2, frame);
+      auto executor = makeScanExecutor(3, .6, frame);
       StairFlight flight;
       flight.id = "diagonal-stairs";
       flight.axis = {std::cos(axis_yaw), std::sin(axis_yaw), 0};
@@ -2758,7 +2746,7 @@ TEST(Executor, ScanStairKeepsPlannerOwnershipAndStopsForCollision) {
   using namespace lingtu::nav::navigation;
   for (const bool descending : {false, true}) {
     SCOPED_TRACE(descending);
-    auto executor = makeScanExecutor(3.0, .6, 3, .5);
+    auto executor = makeScanExecutor(3.0, .6);
     StairFlight flight;
     flight.id = "stairs";
     flight.lateralMin = -1.0;
@@ -2950,7 +2938,7 @@ namespace {
 }  // namespace
 
 TEST(Executor, ScanPlanningWaitResumesWithoutOuterRecovery) {
-  auto executor = makeScanExecutor(3.0, .6, 0, 2.0);
+  auto executor = makeScanExecutor(3.0, .6);
   executor.setRoute(route({{0, 0, .5}, {5, 0, .5}}));
   auto body = pose(0, 0, .5, 0);
   double now = 1.0;
@@ -3206,7 +3194,6 @@ TEST(Executor, ScanMeasuredCollisionFeedbackUsesMapCoordinatesExactlyOnce) {
     lingtu::nav::navigation::ExecutorConfig config;
     config.planning_frame = frame;
     config.max_speed = .5;
-    config.recovery.blocked_interval_s = 10;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -3278,7 +3265,6 @@ TEST(Executor, BodyBlocksRouteAndIntent) {
     lingtu::nav::navigation::ExecutorConfig config;
     config.body = body;
     config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-    config.recovery.max_attempts = 0;
     nav_kernel::LocalPlannerParams params;
     params.backend = nav_kernel::LocalPlannerBackend::Scan;
     params.scan.voxelResolution = .1;
@@ -3373,7 +3359,6 @@ TEST(Executor, BodyBlocksCornerTurn) {
   lingtu::nav::navigation::ExecutorConfig config;
   config.body = body;
   config.planning_frame = lingtu::nav::navigation::PlanningFrame::Map;
-  config.recovery.max_attempts = 0;
   nav_kernel::LocalPlannerParams params;
   params.backend = nav_kernel::LocalPlannerBackend::Scan;
   params.scan.voxelResolution = .1;
@@ -3469,7 +3454,7 @@ TEST(Executor, FinalBlockReplansFromCurrentPose) {
 }
 
 TEST(Executor, ScanDoesNotInjectRecoveryAfterFinalMotionBlock) {
-  auto executor = makeScanExecutor(3.0, 0.6, 3, 0.1);
+  auto executor = makeScanExecutor(3.0, 0.6);
   executor.setRoute(route({{0, 0, 0}, {3, 0, 0}}));
   auto input = routeInput(pose(0, 0, 0, 0), nullptr, 0, 1.0, {}, emptyScanObservation(1.0));
   const auto first = awaitScanOutput([&] { return executor.tick(input); });

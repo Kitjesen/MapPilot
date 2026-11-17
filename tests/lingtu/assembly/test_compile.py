@@ -325,7 +325,6 @@ def test_real_motion_budget_respects_robot_limits(product: str) -> None:
     ):
         assert float(environment[key]) == 0.4
     assert float(environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.hypot(0.5, 0.5))
-    assert float(environment["LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S"]) == 0.4
     if product != "teleop":
         assert float(environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == 0.5
         assert float(environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == 0.5

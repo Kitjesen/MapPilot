@@ -20,7 +20,7 @@ implementations under `envs/`. ProductControl resolves them once before startup.
 | 路线跟踪、到达判断、跟踪增益 | `settings/follower.yaml` |
 | 遥控速度、输入有效期、辅助规划 | `settings/teleop.yaml` |
 | 相机采集、图像传输和视频 | `settings/camera.yaml` |
-| 遇阻恢复顺序、超时和速度 | `settings/recovery.yaml` |
+| 辅助遥控边界脱离速度 | `settings/recovery.yaml` |
 | 控制频率、输入有效期、停止确认、速度平滑 | `settings/control.yaml` |
 | 雷达和 IMU 采样、Livox SDK 通信 | `settings/lidar.yaml` |
 | SLAM 运行、定位、建图和电梯参数 | `settings/slam.yaml` |
@@ -421,8 +421,8 @@ SCAN.
 
 SCAN tuning uses the existing Product `parameters` mapping and session
 `parameter_overrides` / `--set` interface. Values come from the component YAML.
-The remaining `standalone` entries describe explicit mode choices, such as a
-bare endpoint not enabling recovery; they do not define another motion budget.
+The remaining `standalone` entries describe explicit mode choices for a bare
+endpoint; they do not define another motion budget.
 Python parameter specifications declare names, types, bounds and environment
 keys. The resolved values are saved in
 `RunPlan.launch.parameters` and rendered into the native process environment.
@@ -448,11 +448,9 @@ Product motion limits. Explicit parameter values override these defaults:
 Env overrides, then Product parameters, then session overrides. Planner
 constraints, follower axis limits, and final command safety limits retain
 their separate roles; an explicit SCAN override does not raise the final
-Product command limit. CMU planning/tracking settings are grouped under `cmu`
-in `local.yaml` and `follower.yaml` and passed through the existing native
-environment input. CMU tracking does not replace those values with fixed numbers.
+Product command limit.
 
-`local_collision.max_age_s` is Endpoint input policy, shared with recovery.
+`local_collision.max_age_s` is Endpoint input policy.
 Robot geometry still comes from RobotConfig. Map resolution and upstream FSM
 cadences remain part of the SCAN port contract. C++ parameter-struct initializers
 reference the generated YAML constants; Product runs receive resolved settings

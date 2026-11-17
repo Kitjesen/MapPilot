@@ -39,8 +39,6 @@ native_nav:
   smoothing: false
   follower:
     max_yaw_rate_rad_s: 1.0
-  recovery:
-    max_attempts: 0
 processes:
   - lidar
   - imu

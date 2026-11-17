@@ -262,19 +262,7 @@ buildExecutorConfig(const CliConfig &cfg) {
   out.stairs.bodyLength = cfg.vehicle_length_m;
   out.stairs.bodyWidth = cfg.vehicle_width_m;
   out.stairs.maxSpeed = std::min(0.15, cfg.path_follower_max_speed_mps);
-  out.recovery.behavior_order = cfg.recovery_order;
-  out.recovery.blocked_interval_s = cfg.recovery_blocked_interval_s;
-  out.recovery.rotation_timeout_s = cfg.recovery_rotation_timeout_s;
-  out.recovery.translation_timeout_s = cfg.recovery_translation_timeout_s;
-  out.recovery.max_attempts = cfg.recovery_max_attempts;
   out.recovery.translation_speed_mps = cfg.recovery_translation_speed_mps;
-  out.recovery.rotation_rate_rad_s = cfg.recovery_rotation_rate_rad_s;
-  out.recovery.min_rotation_rad = cfg.recovery_min_rotation_rad;
-  out.recovery.max_rotation_rad = cfg.recovery_max_rotation_rad;
-  out.recovery.rotation_candidate_step_rad =
-      cfg.recovery_rotation_candidate_step_rad;
-  out.recovery.rotation_sample_step_rad =
-      cfg.recovery_rotation_sample_step_rad;
   return out;
 }
 

@@ -74,17 +74,8 @@ struct CliConfig {
   nav_kernel::SplineFollowerParams scan_follower{};
   nav_kernel::ScanPlannerParams scan_planner{};
   double local_collision_max_age_s{::lingtu::settings::local::parameters::local_collision_max_age_s};
-  std::vector<nav_kernel::RecoveryAction> recovery_order = navigation::defaultRecoveryOrder();
-  double recovery_blocked_interval_s{::lingtu::settings::recovery::native_nav::recovery::blocked_interval_s};
-  double recovery_rotation_timeout_s{::lingtu::settings::recovery::native_nav::recovery::rotation_timeout_s};
-  double recovery_translation_timeout_s{::lingtu::settings::recovery::native_nav::recovery::translation_timeout_s};
-  int recovery_max_attempts{::lingtu::settings::recovery::standalone::native_nav::recovery_max_attempts};
+  // Assisted-teleop boundary departure speed.
   double recovery_translation_speed_mps{::lingtu::settings::recovery::native_nav::recovery::translation_speed_mps};
-  double recovery_rotation_rate_rad_s{::lingtu::settings::recovery::native_nav::recovery::rotation_rate_rad_s};
-  double recovery_min_rotation_rad{::lingtu::settings::recovery::native_nav::recovery::min_rotation_rad};
-  double recovery_max_rotation_rad{::lingtu::settings::recovery::native_nav::recovery::max_rotation_rad};
-  double recovery_rotation_candidate_step_rad{::lingtu::settings::recovery::native_nav::recovery::rotation_candidate_step_rad};
-  double recovery_rotation_sample_step_rad{::lingtu::settings::recovery::native_nav::recovery::rotation_sample_step_rad};
   std::string product;
   std::string product_session_id;
   double status_s{::lingtu::settings::control::native_nav::status_s};

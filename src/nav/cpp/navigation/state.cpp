@@ -55,11 +55,6 @@ Executor::Executor(ExecutorConfig config, nav_kernel::LocalPlanner planner)
   config_.follower.twoWayDrive = local_planner_.params().twoWayDrive;
   config_.recovery.translation_speed_mps =
       std::clamp(config_.recovery.translation_speed_mps, 0.0, config_.max_speed);
-  config_.recovery.rotation_rate_rad_s = std::max(0.0, config_.recovery.rotation_rate_rad_s);
-  config_.recovery.blocked_interval_s = std::max(0.0, config_.recovery.blocked_interval_s);
-  config_.recovery.stuck_linear_progress_m =
-      std::max(0.0, config_.recovery.stuck_linear_progress_m);
-  config_.recovery.stuck_yaw_progress_rad = std::max(0.0, config_.recovery.stuck_yaw_progress_rad);
   active_goal_reached_m_ = config_.goal_reached_m;
   active_max_speed_mps_ = config_.max_speed;
   stage_yaw_tolerance_ = kPoseYawToleranceRad;

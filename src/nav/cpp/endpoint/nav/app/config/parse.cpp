@@ -72,40 +72,6 @@ nav_kernel::LocalPlannerBackend parseLocalPlannerBackend(
 
 std::string trim(const std::string &raw);
 
-std::vector<nav_kernel::RecoveryAction> parseRecoveryOrder(
-    const std::string& raw, const char* name) {
-  std::vector<nav_kernel::RecoveryAction> order;
-  std::size_t start = 0;
-  while (start <= raw.size()) {
-    const std::size_t comma = raw.find(',', start);
-    std::string value = trim(raw.substr(
-        start, comma == std::string::npos ? std::string::npos : comma - start));
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) {
-                     return static_cast<char>(std::tolower(c));
-                   });
-    nav_kernel::RecoveryAction action = nav_kernel::RecoveryAction::None;
-    if (value == "translate") {
-      action = nav_kernel::RecoveryAction::Translate;
-    } else if (value == "rotate") {
-      action = nav_kernel::RecoveryAction::Rotate;
-    } else {
-      throw std::runtime_error(
-          std::string(name) + " expects a comma-separated subset of translate,rotate");
-    }
-    if (std::find(order.begin(), order.end(), action) != order.end()) {
-      throw std::runtime_error(std::string(name) + " must not repeat an action");
-    }
-    order.push_back(action);
-    if (comma == std::string::npos) break;
-    start = comma + 1U;
-  }
-  if (order.empty()) {
-    throw std::runtime_error(std::string(name) + " must not be empty");
-  }
-  return order;
-}
-
 nav_kernel::VelocityFeedbackMode parseVelocityFeedbackMode(const std::string &raw,
                                                            const char *name) {
   std::string value = raw;
@@ -180,47 +146,7 @@ void applyGeometryOption(CliConfig &cfg, const std::string &arg,
     cfg.sensor_offset_z_m = value;
 }
 
-bool isRecoveryOption(const std::string& arg) {
-  return arg == "--recovery-order" ||
-         arg == "--recovery-blocked-interval-s" ||
-         arg == "--recovery-rotation-timeout-s" ||
-         arg == "--recovery-translation-timeout-s" ||
-         arg == "--recovery-max-attempts" ||
-         arg == "--recovery-translation-speed-mps" ||
-         arg == "--recovery-rotation-rate-rad-s" ||
-         arg == "--recovery-min-rotation-rad" ||
-         arg == "--recovery-max-rotation-rad" ||
-         arg == "--recovery-rotation-candidate-step-rad" ||
-         arg == "--recovery-rotation-sample-step-rad";
-}
-
 int parseInt(const std::string &raw, const char *name);
-
-void applyRecoveryOption(CliConfig& cfg, const std::string& arg,
-                         const std::string& raw) {
-  if (arg == "--recovery-order")
-    cfg.recovery_order = parseRecoveryOrder(raw, arg.c_str());
-  else if (arg == "--recovery-blocked-interval-s")
-    cfg.recovery_blocked_interval_s = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-rotation-timeout-s")
-    cfg.recovery_rotation_timeout_s = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-translation-timeout-s")
-    cfg.recovery_translation_timeout_s = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-max-attempts")
-    cfg.recovery_max_attempts = parseInt(raw, arg.c_str());
-  else if (arg == "--recovery-translation-speed-mps")
-    cfg.recovery_translation_speed_mps = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-rotation-rate-rad-s")
-    cfg.recovery_rotation_rate_rad_s = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-min-rotation-rad")
-    cfg.recovery_min_rotation_rad = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-max-rotation-rad")
-    cfg.recovery_max_rotation_rad = parseDouble(raw, arg.c_str());
-  else if (arg == "--recovery-rotation-candidate-step-rad")
-    cfg.recovery_rotation_candidate_step_rad = parseDouble(raw, arg.c_str());
-  else
-    cfg.recovery_rotation_sample_step_rad = parseDouble(raw, arg.c_str());
-}
 
 int parseInt(const std::string &raw, const char *name) {
   const std::string value = trim(raw);
@@ -280,14 +206,6 @@ void applyEnvBool(bool &target, const char *name) {
   const std::string value = envOrEmpty(name);
   if (!value.empty()) {
     target = parseBool(value, name);
-  }
-}
-
-void applyEnvRecoveryOrder(std::vector<nav_kernel::RecoveryAction>& target,
-                           const char* name) {
-  const std::string value = envOrEmpty(name);
-  if (!value.empty()) {
-    target = parseRecoveryOrder(value, name);
   }
 }
 
@@ -465,27 +383,8 @@ CliConfig parseArgs(int argc, char **argv) {
                  "LINGTU_NAV_SCAN_MAX_YAW_RATE_RAD_S");
   applyEnvDouble(cfg.scan_follower.finishDistance,
                  "LINGTU_NAV_SCAN_FINISH_DISTANCE_M");
-  applyEnvRecoveryOrder(cfg.recovery_order, "LINGTU_NAV_RECOVERY_ORDER");
-  applyEnvDouble(cfg.recovery_blocked_interval_s,
-                 "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S");
-  applyEnvDouble(cfg.recovery_rotation_timeout_s,
-                 "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S");
-  applyEnvDouble(cfg.recovery_translation_timeout_s,
-                 "LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S");
-  applyEnvInt(cfg.recovery_max_attempts,
-              "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS");
   applyEnvDouble(cfg.recovery_translation_speed_mps,
                  "LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS");
-  applyEnvDouble(cfg.recovery_rotation_rate_rad_s,
-                 "LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S");
-  applyEnvDouble(cfg.recovery_min_rotation_rad,
-                 "LINGTU_NAV_RECOVERY_MIN_ROTATION_RAD");
-  applyEnvDouble(cfg.recovery_max_rotation_rad,
-                 "LINGTU_NAV_RECOVERY_MAX_ROTATION_RAD");
-  applyEnvDouble(cfg.recovery_rotation_candidate_step_rad,
-                 "LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD");
-  applyEnvDouble(cfg.recovery_rotation_sample_step_rad,
-                 "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD");
   applyEnvBool(cfg.velocity_smoother_enabled, "LINGTU_NAV_SMOOTHER_ENABLED");
   applyEnvVelocityFeedbackMode(cfg.velocity_smoother.feedback_mode,
                                "LINGTU_NAV_SMOOTHER_FEEDBACK_MODE");
@@ -717,8 +616,8 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.path_follower_heading_align_enter_rad = parseDouble(next(), arg.c_str());
     } else if (arg == "--path-follower-heading-align-exit-rad") {
       cfg.path_follower_heading_align_exit_rad = parseDouble(next(), arg.c_str());
-    } else if (isRecoveryOption(arg)) {
-      applyRecoveryOption(cfg, arg, next());
+    } else if (arg == "--recovery-translation-speed-mps") {
+      cfg.recovery_translation_speed_mps = parseDouble(next(), arg.c_str());
     } else if (arg == "--status-s") {
       cfg.status_s = parseDouble(next(), arg.c_str());
     } else if (arg == "--stop-confirmation-timeout-s") {
@@ -1014,15 +913,7 @@ CliConfig parseArgs(int argc, char **argv) {
       !std::isfinite(cfg.scan_follower.maxVy) ||
       !std::isfinite(cfg.scan_follower.maxYawRateRadS) ||
       !std::isfinite(cfg.scan_follower.finishDistance) ||
-      !std::isfinite(cfg.recovery_blocked_interval_s) ||
-      !std::isfinite(cfg.recovery_rotation_timeout_s) ||
-      !std::isfinite(cfg.recovery_translation_timeout_s) ||
       !std::isfinite(cfg.recovery_translation_speed_mps) ||
-      !std::isfinite(cfg.recovery_rotation_rate_rad_s) ||
-      !std::isfinite(cfg.recovery_min_rotation_rad) ||
-      !std::isfinite(cfg.recovery_max_rotation_rad) ||
-      !std::isfinite(cfg.recovery_rotation_candidate_step_rad) ||
-      !std::isfinite(cfg.recovery_rotation_sample_step_rad) ||
       !std::isfinite(cfg.corridor_lookahead_m) ||
       !std::isfinite(cfg.local_planner_obstacle_height_max_m) ||
       !std::isfinite(cfg.teleop_planner_horizon_m) ||
@@ -1101,19 +992,8 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error(
         "path follower heading alignment exit angle must be below enter angle");
   }
-  if (cfg.recovery_blocked_interval_s < 0.0 ||
-      cfg.recovery_rotation_timeout_s <= 0.0 ||
-      cfg.recovery_translation_timeout_s <= 0.0 ||
-      cfg.recovery_max_attempts < 0 ||
-      cfg.recovery_translation_speed_mps < 0.0 ||
-      cfg.recovery_rotation_rate_rad_s <= 0.0 ||
-      cfg.recovery_min_rotation_rad <= 0.0 ||
-      cfg.recovery_max_rotation_rad < cfg.recovery_min_rotation_rad ||
-      cfg.recovery_max_rotation_rad > M_PI ||
-      cfg.recovery_rotation_candidate_step_rad <= 0.0 ||
-      cfg.recovery_rotation_sample_step_rad <= 0.0 ||
-      cfg.recovery_rotation_sample_step_rad > cfg.recovery_min_rotation_rad) {
-    throw std::runtime_error("invalid recovery motion configuration");
+  if (cfg.recovery_translation_speed_mps < 0.0) {
+    throw std::runtime_error("recovery translation speed must not be negative");
   }
   if (cfg.path_follower_min_speed_mps > cfg.path_follower_max_speed_mps) {
     throw std::runtime_error("path follower minimum speed must not exceed maximum speed");

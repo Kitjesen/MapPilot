@@ -216,28 +216,8 @@ void testCompiledProductMotionContractParses() {
       "0.80",
       "--path-follower-heading-align-exit-rad",
       "0.30",
-      "--recovery-order",
-      "rotate,translate",
-      "--recovery-blocked-interval-s",
-      "1.25",
-      "--recovery-rotation-timeout-s",
-      "2.75",
-      "--recovery-translation-timeout-s",
-      "1.75",
-      "--recovery-max-attempts",
-      "4",
       "--recovery-translation-speed-mps",
       "0.12",
-      "--recovery-rotation-rate-rad-s",
-      "0.40",
-      "--recovery-min-rotation-rad",
-      "0.25",
-      "--recovery-max-rotation-rad",
-      "1.10",
-      "--recovery-rotation-candidate-step-rad",
-      "0.15",
-      "--recovery-rotation-sample-step-rad",
-      "0.05",
   });
   require(cfg.product == "nav", "compiled product identity must parse");
   require(std::abs(cfg.waypoint_reached_m - 0.20) < 1e-12, "waypoint threshold must parse");
@@ -270,23 +250,8 @@ void testCompiledProductMotionContractParses() {
               std::abs(status.follower_goal_tolerance_m - 0.05) < 1e-12 &&
               std::abs(status.nominal_dt_s - 1.0 / cfg.tick_hz) < 1e-12,
           "status must report the effective follower contract");
-  require(executor_config.recovery.behavior_order.size() == 2U &&
-              executor_config.recovery.behavior_order[0] ==
-                  nav_kernel::RecoveryAction::Rotate &&
-              executor_config.recovery.behavior_order[1] ==
-                  nav_kernel::RecoveryAction::Translate,
-          "compiled ExecutorConfig must retain recovery action order");
-  require(std::abs(executor_config.recovery.blocked_interval_s - 1.25) < 1e-12 &&
-              std::abs(executor_config.recovery.rotation_timeout_s - 2.75) < 1e-12 &&
-              std::abs(executor_config.recovery.translation_timeout_s - 1.75) < 1e-12 &&
-              executor_config.recovery.max_attempts == 4 &&
-              std::abs(executor_config.recovery.translation_speed_mps - 0.12) < 1e-12 &&
-              std::abs(executor_config.recovery.rotation_rate_rad_s - 0.40) < 1e-12 &&
-              std::abs(executor_config.recovery.min_rotation_rad - 0.25) < 1e-12 &&
-              std::abs(executor_config.recovery.max_rotation_rad - 1.10) < 1e-12 &&
-              std::abs(executor_config.recovery.rotation_candidate_step_rad - 0.15) < 1e-12 &&
-              std::abs(executor_config.recovery.rotation_sample_step_rad - 0.05) < 1e-12,
-          "compiled ExecutorConfig must retain bounded recovery motion settings");
+  require(std::abs(executor_config.recovery.translation_speed_mps - 0.12) < 1e-12,
+          "compiled ExecutorConfig must retain the boundary-departure speed");
 }
 
 void testDynamicObstacleThresholdsParse() {
@@ -323,24 +288,19 @@ void testCompiledProductMotionContractRejectsMinimumAboveMaximum() {
   require(rejected, "minimum native path follower speed must not exceed maximum");
 }
 
-void testRecoveryConfigurationRejectsInvalidOrderAndAngles() {
-  bool duplicate_rejected = false;
-  try {
-    (void)parse({"navd", "--recovery-order",
-                 "rotate,rotate"});
-  } catch (const std::runtime_error &) {
-    duplicate_rejected = true;
+void testRecoveryConfigurationRejectsNegativeSpeedAndRemovedOptions() {
+  for (const std::vector<std::string> &args : std::vector<std::vector<std::string>>{
+           {"navd", "--recovery-translation-speed-mps", "-0.1"},
+           {"navd", "--recovery-order", "rotate"},
+       }) {
+    bool rejected = false;
+    try {
+      (void)parse(args);
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "negative recovery speed and removed recovery options must fail startup");
   }
-  require(duplicate_rejected, "recovery order must not repeat an action");
-
-  bool angle_range_rejected = false;
-  try {
-    (void)parse({"navd", "--recovery-min-rotation-rad",
-                 "1.0", "--recovery-max-rotation-rad", "0.5"});
-  } catch (const std::runtime_error &) {
-    angle_range_rejected = true;
-  }
-  require(angle_range_rejected, "recovery minimum angle must not exceed maximum");
 }
 
 void testUnsafeNegativeValuesClampToZero() {
@@ -1681,7 +1641,7 @@ int main() {
     testSimulationRunPlanIdentityFailsClosed();
     testLegacyNativeProfileSelectorIsRejected();
     testCompiledProductMotionContractRejectsMinimumAboveMaximum();
-    testRecoveryConfigurationRejectsInvalidOrderAndAngles();
+    testRecoveryConfigurationRejectsNegativeSpeedAndRemovedOptions();
     testUnsafeNegativeValuesClampToZero();
     testSafetyThresholdOrderingFailsClosed();
     testInputFutureToleranceIsProfileConfigurable();

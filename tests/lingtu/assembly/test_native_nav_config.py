@@ -158,17 +158,7 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
         "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": "1",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD": "0.785398163397448",
         "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": "0.35",
-        "LINGTU_NAV_RECOVERY_ORDER": "translate,rotate",
-        "LINGTU_NAV_RECOVERY_BLOCKED_INTERVAL_S": "2",
-        "LINGTU_NAV_RECOVERY_ROTATION_TIMEOUT_S": "2.5",
-        "LINGTU_NAV_RECOVERY_TRANSLATION_TIMEOUT_S": "1.5",
-        "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS": "3",
         "LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS": "0.5",
-        "LINGTU_NAV_RECOVERY_ROTATION_RATE_RAD_S": "0.8",
-        "LINGTU_NAV_RECOVERY_MIN_ROTATION_RAD": "0.2",
-        "LINGTU_NAV_RECOVERY_MAX_ROTATION_RAD": "1.2",
-        "LINGTU_NAV_RECOVERY_ROTATION_CANDIDATE_STEP_RAD": "0.2",
-        "LINGTU_NAV_RECOVERY_ROTATION_SAMPLE_STEP_RAD": "0.05",
         "LINGTU_PRODUCT": "nav",
         "LINGTU_NAV_USE_TRAVERSABILITY_COST": "0",
         "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER": "1",
@@ -188,11 +178,11 @@ def test_nav_product_compiles_native_endpoint_motion_parameters() -> None:
     assert expected_environment.items() <= payload["environment"].items()
     assert payload["native_nav"]["global_planner"] == "octoplanner3d"
     assert payload["native_nav"]["local_planner"] == "scan"
-    assert payload["native_nav"]["recovery"]["behavior_order"] == (
-        "translate",
-        "rotate",
+    assert payload["native_nav"]["recovery"] == {"translation_speed_mps": 0.5}
+    assert not any(
+        key.startswith("LINGTU_NAV_RECOVERY_") and key != "LINGTU_NAV_RECOVERY_TRANSLATION_SPEED_MPS"
+        for key in payload["environment"]
     )
-    assert payload["native_nav"]["recovery"]["max_attempts"] == 3
 
 
 def test_go2_double_cylinders_cover_declared_outline() -> None:
@@ -688,12 +678,8 @@ def test_native_nav_config_preserves_control_contract() -> None:
                 "path_follower_heading_align_exit_rad": 0.4,
             }
         },
-        {"native_nav": {"recovery": {"behavior_order": ["rotate", "rotate"]}}},
-        {
-            "native_nav": {
-                "recovery": {"min_rotation_rad": 1.0, "max_rotation_rad": 0.5}
-            }
-        },
+        {"native_nav": {"recovery": {"translation_speed_mps": -0.1}}},
+        {"native_nav": {"recovery": {"max_attempts": 3}}},
     ],
 )
 def test_native_nav_config_rejects_incoherent_motion_parameters(overrides) -> None:
@@ -743,4 +729,4 @@ def test_teleop_avoid_compiles_assisted_planner_parameters() -> None:
     assert payload["environment"]["LINGTU_NAV_CHECK_OBSTACLE"] == "1"
     assert payload["environment"]["LINGTU_NAV_USE_TRAVERSABILITY_COST"] == "0"
     assert payload["environment"]["LINGTU_TELEOP_LOCAL_PLANNER"] == "1"
-    assert payload["environment"]["LINGTU_NAV_RECOVERY_MAX_ATTEMPTS"] == "0"
+    assert "LINGTU_NAV_RECOVERY_MAX_ATTEMPTS" not in payload["environment"]
