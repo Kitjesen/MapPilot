@@ -491,23 +491,6 @@ struct LocalPlannerDebugSnapshot {
   std::vector<LocalPlanCandidate> candidates;
 };
 
-// Capabilities exposed by the local planner. Navigation execution depends on
-// this contract instead of inspecting the backend enum. SCAN owns the complete
-// reference and consumes the 3D collision and prediction inputs.
-struct LocalPlannerCapabilities {
-  bool ownsReferencePath{false};
-  bool consumesTraversability{false};
-  bool consumesPredictions{false};
-  bool supportsBoundaryDeparture{false};
-  bool consumesCollisionMap{false};
-};
-
-// Keep backend-specific capability derivation in the local-planner boundary.
-// Navigation and recovery consume this contract instead of branching on the
-// selected backend enum themselves.
-[[nodiscard]] LocalPlannerCapabilities plannerCapabilities(
-    const LocalPlannerParams &params) noexcept;
-
 inline constexpr int kPathNum = 343;
 inline constexpr int kGroupNum = 7;
 inline constexpr int kRotDirs = 36;
@@ -526,7 +509,6 @@ class LocalPlanner {
   // SCAN needs no external path library. The argument is ignored.
   bool configure(const std::string &pathLibraryDir = {});
   bool configured() const;
-  [[nodiscard]] LocalPlannerCapabilities capabilities() const noexcept;
   LocalPlannerDebugSnapshot debugSnapshot() const;
 
   LocalPlan plan(const LocalPlanRequest &request);

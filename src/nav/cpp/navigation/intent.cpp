@@ -9,37 +9,7 @@ namespace {
 
 constexpr double kTeleopIntentToleranceRad = 10.0 * M_PI / 180.0;
 
-void applyTeleopRotation(ExecutionOutput &output, const RecoveryOutput &recovery,
-                         double rotation_rate_rad_s) {
-  output.recovery_state = recovery.state;
-  output.recovery_action = static_cast<int>(recovery.action);
-  output.recovery_attempt = recovery.attempt;
-  output.recovery_candidate_count = recovery.candidate_count;
-  output.recovery_rotation_target_rad = recovery.rotation_target_rad;
-  output.recovery_verified = recovery.verified;
-  output.recovery_progress = recovery.progress;
-  output.recovery_reason = recovery.reason;
-  output.recovery_exhausted = recovery.exhausted;
-  output.path_found = false;
-  output.near_field_stop = true;
-  output.local_path_body.clear();
-  output.local_path_map.clear();
-  output.cmd_vel = {};
-  if (recovery.active && recovery.verified && recovery.direct_command) {
-    output.cmd_vel = nav_kernel::Follower::rotationCommand(
-        recovery.rotation_direction, rotation_rate_rad_s);
-  }
-  output.reason = recovery.reason;
-}
-
-
 }  // namespace
-
-void Executor::resetTeleopRotation() {
-  teleop_recovery_.reset();
-  teleop_recovery_intent_rad_.reset();
-}
-
 
 void Executor::resetTeleopBoundaryDeparture() {
   recovery_follower_.reset();
@@ -68,12 +38,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
 
   const double speed_norm = std::max(0.0, std::min(1.0, requested_speed / config_.max_speed));
   const double input_direction_body = std::atan2(intent.vy, intent.vx);
-  if (teleop_recovery_intent_rad_.has_value() &&
-      std::abs(nav_kernel::normalizeAngle(
-          input_direction_body - *teleop_recovery_intent_rad_)) >
-          kTeleopIntentToleranceRad) {
-    resetTeleopRotation();
-  }
   const double configured_horizon = std::max(0.5, config_.teleop_intent_horizon_m);
   const bool teleop_direction_changed =
       teleop_reference_.has_value() &&
@@ -115,7 +79,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
         input_direction_body,
     };
     resetTeleopBoundaryDeparture();
-    resetTeleopRotation();
   }
   teleop_reference_->operatorTurning = operator_turning;
 
@@ -175,8 +138,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
       odom_map_body, intent_route, nullptr, generation, kinematics, observation,
       obstacle_xyzh, obstacle_count, timestamp_s,
       traj_frozen_, traversability,
-      local_planner_.capabilities().consumesTraversability,
-      &motion_intent);
+      false, &motion_intent);
   const auto tracking = follower_.diagnostics().tracking;
   if (tracking.active)
     plan_request.execution = {tracking.trajectoryId, tracking.sampleTimeS,
@@ -186,16 +148,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   plan_request.maxLinearSpeedMps = std::min(
       std::min(requested_speed, config_.max_speed),
       std::hypot(config_.follower.spline.maxVx, config_.follower.spline.maxVy));
-
-  if (teleop_recovery_.active()) {
-    resetTeleopBoundaryDeparture();
-    const RecoveryOutput recovery = teleop_recovery_.step(plan_request);
-    applyTeleopRotation(output, recovery, config_.recovery.rotation_rate_rad_s);
-    output.recovery_trigger = "active";
-    follower_.stopLinear();
-    traj_frozen_ = false;
-    return output;
-  }
 
   const MapFromOdomTransform identity_transform{};
   nav_kernel::LocalPlan plan =
@@ -254,7 +206,7 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
   const bool plan_unusable =
       !plan_ready || near_field_stop || !spline_trackable || !path_trackable;
   const bool aegis_exit_candidate =
-      local_planner_.capabilities().supportsBoundaryDeparture && planner_input_valid &&
+      planner_input_valid &&
       plan_status != nav_kernel::LocalPlanStatus::Pending &&
       plan_unusable && config_.recovery.translation_speed_mps > 1e-6 &&
       std::abs(intent.wz) <= 1e-6 && observation.collision.valid();
@@ -306,19 +258,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     }
   }
   resetTeleopBoundaryDeparture();
-  const bool recovery_needed =
-      !local_planner_.capabilities().supportsBoundaryDeparture && planner_input_valid &&
-      plan_status != nav_kernel::LocalPlanStatus::Pending && plan_unusable;
-  if (recovery_needed) {
-    teleop_recovery_intent_rad_ = input_direction_body;
-    const RecoveryOutput recovery = teleop_recovery_.step(plan_request);
-    applyTeleopRotation(output, recovery, config_.recovery.rotation_rate_rad_s);
-    output.recovery_trigger = "local_blocked";
-    follower_.stopLinear();
-    traj_frozen_ = false;
-    return output;
-  }
-
   if (!plan_ready) {
     const bool pending = plan_status == nav_kernel::LocalPlanStatus::Pending;
     output.near_field_stop = near_field_stop || pending;
@@ -333,8 +272,6 @@ ExecutionOutput Executor::tickIntent(const nav_kernel::Pose &odom_map_body,
     follower_.stopLinear();
     return output;
   }
-
-  resetTeleopRotation();
 
   nav_kernel::FollowerState follower_state;
   follower_state.requestedSpeed = speed_norm;

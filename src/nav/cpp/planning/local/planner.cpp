@@ -333,10 +333,6 @@ class LocalPlanner::Impl {
 
   bool configured() const { return configured_; }
 
-  LocalPlannerCapabilities capabilities() const noexcept {
-    return plannerCapabilities(params_);
-  }
-
   LocalPlannerDebugSnapshot debugSnapshot() const {
     LocalPlannerDebugSnapshot snapshot = last_debug_;
     if (task_)
@@ -375,17 +371,6 @@ class LocalPlanner::Impl {
   LocalPlannerDebugSnapshot last_debug_{};
   bool configured_{false};
 };
-
-LocalPlannerCapabilities plannerCapabilities(
-    const LocalPlannerParams &) noexcept {
-  return {
-      true,   // ownsReferencePath
-      false,  // consumesTraversability
-      true,   // consumesPredictions
-      true,   // supportsBoundaryDeparture
-      true,   // consumesCollisionMap
-  };
-}
 
 const char *localPlannerBackendName(LocalPlannerBackend) {
   return "scan";
@@ -445,10 +430,6 @@ bool LocalPlanner::configure(const std::string &path_library_dir) {
 
 bool LocalPlanner::configured() const {
   return impl_->configured();
-}
-
-LocalPlannerCapabilities LocalPlanner::capabilities() const noexcept {
-  return impl_->capabilities();
 }
 
 LocalPlannerDebugSnapshot LocalPlanner::debugSnapshot() const {

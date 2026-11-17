@@ -73,8 +73,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         test_body_terrain
         test_scan_spline_velocity_bounds
         test_local_plan_task
-        test_recovery_rotation
-        test_recovery_sequence
         test_local_planner_core)
       lingtu_add_nav_gtest(${test_name} "${test_name}.cpp")
     endforeach()
@@ -100,7 +98,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
 
     target_link_libraries(test_far_planner PRIVATE lingtu_nav_far)
     target_link_libraries(test_far_c_api PRIVATE lingtu_nav_far_c_api)
-    target_link_libraries(test_recovery_rotation PRIVATE lingtu_nav_navigation)
     target_link_libraries(test_local_planner_core PRIVATE lingtu_nav_navigation)
     set_target_properties(test_far_c_api PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
@@ -111,7 +108,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     target_link_libraries(test_pose_route PRIVATE lingtu_nav_navigation)
     lingtu_add_nav_gtest(test_stairs test_stairs.cpp)
     target_link_libraries(test_stairs PRIVATE lingtu_nav_navigation)
-    target_link_libraries(test_recovery_sequence PRIVATE lingtu_nav_navigation)
   else()
     message(STATUS
       "GTest was not found; portable nav targets will build without tests")

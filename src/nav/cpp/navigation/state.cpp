@@ -6,16 +6,6 @@
 #include <utility>
 
 namespace lingtu::nav::navigation {
-namespace {
-
-RecoveryConfig teleopRotationConfig(RecoveryConfig config) {
-  config.behavior_order = {nav_kernel::RecoveryAction::Rotate};
-  return config;
-}
-
-
-}  // namespace
-
 nav_kernel::LocalKinematicState Executor::planningKinematics(
     const nav_kernel::Pose& planning_body,
     const ExecutionObservation& observation,
@@ -59,7 +49,6 @@ nav_kernel::LocalKinematicState Executor::planningKinematics(
 Executor::Executor(ExecutorConfig config, nav_kernel::LocalPlanner planner)
     : config_(std::move(config)),
       local_planner_(std::move(planner)),
-      teleop_recovery_(local_planner_.params(), teleopRotationConfig(config_.recovery)),
       stairs_(config_.stairs) {
   config_.goal_height_tolerance_m = std::max(0.0, config_.goal_height_tolerance_m);
   config_.follower.maxSpeed = config_.max_speed;
@@ -257,7 +246,6 @@ void Executor::resetMotion() {
   recovery_follower_.reset();
   resetLocalPlanning(true);
   reference.clear();
-  resetTeleopRotation();
   teleop_reference_.reset();
   velocity_stamp_s_ = -1.0;
 }
@@ -296,7 +284,6 @@ void Executor::replanTeleop() {
 void Executor::stopLinearMotion() {
   resetLocalPlanning();
   resetTeleopBoundaryDeparture();
-  resetTeleopRotation();
   teleop_reference_.reset();
 }
 

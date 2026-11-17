@@ -95,7 +95,6 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
                                                TraversabilityGridView traversability,
                                                ExecutionObservation observation) {
   ExecutionOutput output;
-  resetTeleopRotation();
   if (intent_mode_) resetMotion();
   if (route.empty()) {
     resetLocalPlanning();

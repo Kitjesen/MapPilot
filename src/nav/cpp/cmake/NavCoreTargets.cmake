@@ -168,8 +168,6 @@ if(NOT TARGET lingtu_nav_navigation)
     "${LINGTU_NAV_NAVIGATION_DIR}/executor.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/intent.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/pose_route.cpp"
-    "${LINGTU_NAV_NAVIGATION_DIR}/recovery.cpp"
-    "${LINGTU_NAV_NAVIGATION_DIR}/recovery_search.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/route.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/stairs.cpp"
     "${LINGTU_NAV_NAVIGATION_DIR}/state.cpp")

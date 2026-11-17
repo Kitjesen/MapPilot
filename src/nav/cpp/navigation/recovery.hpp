@@ -4,9 +4,7 @@
 
 #include "planning/local/planner.hpp"
 
-#include <memory>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 #include <vector>
 
@@ -40,45 +38,6 @@ struct RecoveryConfig {
   std::vector<nav_kernel::RecoveryAction> behavior_order = defaultRecoveryOrder();
   double stuck_linear_progress_m{0.05};
   double stuck_yaw_progress_rad{0.05};
-};
-
-// Owns temporary recovery goals, retries and odometry-based completion.
-// SCAN plans translation trajectories; rotation and CMU retain geometric checks.
-struct RecoveryOutput {
-  int state{0};  // 0 idle/searching, 1 rotating, 2 translating
-  bool active{false};
-  bool exhausted{false};
-  bool verified{false};
-  bool direct_command{false};
-  nav_kernel::RecoveryAction action{nav_kernel::RecoveryAction::None};
-  std::string reason{"inactive"};
-  double progress{0.0};
-  int attempt{0};
-  int candidate_count{0};
-  int rotation_direction{0};
-  double rotation_target_rad{0.0};
-  std::vector<nav_kernel::Vec3> path_body;
-  std::vector<nav_kernel::Vec3> path_world;
-};
-
-class Recovery {
- public:
-  Recovery(const nav_kernel::LocalPlannerParams& planner_params,
-           const RecoveryConfig& config);
-  ~Recovery();
-
-  Recovery(Recovery&&) noexcept;
-  Recovery& operator=(Recovery&&) noexcept;
-  Recovery(const Recovery&) = delete;
-  Recovery& operator=(const Recovery&) = delete;
-
-  RecoveryOutput step(const nav_kernel::LocalPlanRequest& request);
-  void reset();
-  [[nodiscard]] bool active() const;
-
- private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace lingtu::nav::navigation
