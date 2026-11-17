@@ -46,7 +46,8 @@ def test_scan_run_plan_keeps_one_meter_per_second_body_axis_limits(product: str)
     environment = plan.native_process_environment
     assert float(environment["LINGTU_NAV_SCAN_MAX_VX_MPS"]) == 1.0
     assert float(environment["LINGTU_NAV_SCAN_MAX_VY_MPS"]) == 1.0
-    assert float(environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"]) == pytest.approx(2.0**0.5)
+    expected_planner_speed = 1.0 if product == "nav" else 2.0**0.5
+    assert float(environment["LINGTU_NAV_SCAN_PLANNER_MAX_VELOCITY_MPS"]) == pytest.approx(expected_planner_speed)
     assert float(environment["LINGTU_DRIVER_MAX_LINEAR_MPS"]) == 1.0
 
 
