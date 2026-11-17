@@ -320,7 +320,7 @@ def test_product_control_defaults_teleop_avoid_to_scan_and_keeps_cmu_available()
     assert cmu.native_nav["local_planner"] == "cmu"
 
 
-def test_product_control_defaults_real_nav_to_scan_and_keeps_cmu_available() -> None:
+def test_product_control_defaults_real_nav_to_scan_and_rejects_cmu() -> None:
     control = ProductControl(
         FakeRunner(),  # type: ignore[arg-type]
         robot="unitree/go2",
@@ -329,10 +329,10 @@ def test_product_control_defaults_real_nav_to_scan_and_keeps_cmu_available() -> 
     )
 
     default = control._resolve("nav")
-    cmu = control._resolve("nav", local_planner="cmu")
 
     assert default.native_nav["local_planner"] == "scan"
-    assert cmu.native_nav["local_planner"] == "cmu"
+    with pytest.raises(ValueError, match="local planner"):
+        control._resolve("nav", local_planner="cmu")
 
 
 def test_product_control_resolves_explore_variants_separately() -> None:

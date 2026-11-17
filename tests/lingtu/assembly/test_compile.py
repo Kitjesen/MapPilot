@@ -855,11 +855,11 @@ def test_real_cmu_override_selects_go2_path_library() -> None:
     assert plan.native_process_environment["LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M"] == "0.05"
 
 
-def test_navigation_prepares_selectable_planner_assets_without_changing_default() -> None:
+def test_navigation_exposes_scan_only_without_cmu_assets() -> None:
     plan = _compile_real("nav")
     assert plan.native_nav["local_planner"] == "scan"
-    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "cmu,scan"
-    assert plan.native_process_environment["LINGTU_LOCAL_PLANNER_PATHS"] == "share/lingtu/cmu_paths/go2"
+    assert plan.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
+    assert "LINGTU_LOCAL_PLANNER_PATHS" not in plan.native_process_environment
     inspection = _compile_real("inspection")
     assert inspection.native_process_environment["LINGTU_NAV_LOCAL_PLANNERS"] == "scan"
     assert "LINGTU_LOCAL_PLANNER_PATHS" not in inspection.native_process_environment
