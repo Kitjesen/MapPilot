@@ -238,8 +238,9 @@ implements search, selects a local target, or edits a generated trajectory.
 The global-to-local contract is one identified map-frame reference polyline,
 not a sequence of goals. LocalPlanner selects its local target, trajectory, and detours;
 pose updates do not create routes. Persistent blockage can request one bounded
-replacement through the goal lifecycle. Global search does not inspect LocalPlanner's
-private failures, and local planning does not rewrite the saved map.
+replacement through the goal lifecycle; a blockage located on the route is passed
+to that search as a request-scoped temporary overlay. Global search does not inspect
+LocalPlanner's private failures, and local planning does not rewrite the saved map.
 
 `LocalPlanner` names the module. SCAN is its default algorithm; CMU remains an
 explicit alternative. The execution layer depends on the module interface.

@@ -152,7 +152,23 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
                                 ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
                                 : AutonomyTickOutcomeKind::kGoalFailed;
       result.outcome.reason = output.reason;
-      result.outcome.terminal_failure_intent = true;
+      // A located blockage asks for one global route that avoids it; without
+      // a location a replan would return the same route, so the goal fails.
+      if (!input.rolling_segment_active && output.blocked_point &&
+          output.blocked_obstacle_generation != 0U) {
+        GoalReplanTrigger trigger;
+        trigger.kind = GoalReplanTriggerKind::kLocalPlanningBlocked;
+        trigger.reason = output.reason;
+        if (input.active_goal_identity) {
+          trigger.goal = *input.active_goal_identity;
+        }
+        trigger.blocked_point = lingtu::nav::plan::GlobalPlanPoint{
+            output.blocked_point->x, output.blocked_point->y, output.blocked_point->z};
+        trigger.obstacle_generation = output.blocked_obstacle_generation;
+        result.outcome.replan_trigger = std::move(trigger);
+      } else {
+        result.outcome.terminal_failure_intent = true;
+      }
     } else if (output.recovery_exhausted) {
       result.outcome.reason = output.reason.empty() ? "local_recovery_exhausted" : output.reason;
       result.outcome.kind = input.rolling_segment_active

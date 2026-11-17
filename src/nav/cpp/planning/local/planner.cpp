@@ -499,6 +499,48 @@ bool LocalPlanner::boundaryDepartureClear(const LocalPlanRequest &request,
       grid.boundaryDepartureFree(body, target);
 }
 
+std::optional<Vec3> LocalPlanner::firstBlockedReferencePoint(
+    const LocalPlanRequest &request) const {
+  const auto &route = request.reference;
+  if (!route.valid()) return std::nullopt;
+  const local::scan::Grid grid(impl_->params(), request);
+  if (!grid.valid()) return std::nullopt;
+  const Vec3 &robot = request.robot.pose.position;
+  int start = 0;
+  double nearest = std::numeric_limits<double>::infinity();
+  for (int i = 0; i < route.count; ++i) {
+    const double d = std::hypot(route.points[i].x - robot.x, route.points[i].y - robot.y,
+                                route.points[i].z - robot.z);
+    if (d < nearest) {
+      nearest = d;
+      start = i;
+    }
+  }
+  // Sparse global routes are sampled so an obstacle inside the window is not
+  // skipped by a segment whose far end lies outside it.
+  const double step = std::max(impl_->params().scan.voxelResolution, 0.1);
+  // Start on the route rather than at the measured pose, which may itself be
+  // inside the inflated grid after the planner stopped next to an obstacle.
+  Vec3 previous = route.points[start];
+  for (int i = start + 1; i < route.count; ++i) {
+    const Vec3 &a = route.points[i - 1];
+    const Vec3 &b = route.points[i];
+    const double length = std::hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+    if (length <= 1e-9) continue;
+    const double yaw = std::atan2(b.y - a.y, b.x - a.x);
+    const int samples = std::max(1, static_cast<int>(std::ceil(length / step)));
+    for (int k = 1; k <= samples; ++k) {
+      const double t = static_cast<double>(k) / samples;
+      const Vec3 next{a.x + t * (b.x - a.x), a.y + t * (b.y - a.y), a.z + t * (b.z - a.z)};
+      const int state = grid.segmentInflatedOccupancy(previous, yaw, next, yaw);
+      if (state < 0) return std::nullopt;
+      if (state > 0) return next;
+      previous = next;
+    }
+  }
+  return std::nullopt;
+}
+
 void LocalPlanner::pause() {
   impl_->pause();
 }

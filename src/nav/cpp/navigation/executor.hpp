@@ -47,6 +47,11 @@ struct ExecutionOutput {
   bool trajectory_frozen{false};
   bool recovery_exhausted{false};
   bool planning_failed{false};
+  // Planning-frame route point found occupied when planning_failed was set,
+  // with the live obstacle generation that observed it; empty when the
+  // failure could not be placed on the route.
+  std::optional<nav_kernel::Vec3> blocked_point;
+  std::uint64_t blocked_obstacle_generation{0};
   // Public failure names are owned by the producing boundary:
   // local_no_path/local_blocked/local_near_field_stop come from the local
   // planner; execution_stalled is emitted only after Executor observes that

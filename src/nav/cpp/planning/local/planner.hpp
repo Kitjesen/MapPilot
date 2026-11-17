@@ -562,6 +562,11 @@ class LocalPlanner {
                                 const std::vector<Pose> &poses) const;
   [[nodiscard]] bool boundaryDepartureClear(const LocalPlanRequest &request,
                                             const Vec3 &target) const;
+  // First reference point ahead of the robot whose approach is occupied in the
+  // live collision grid. Stops without a result where the reference leaves
+  // the observed window, so unobserved space is never reported as blocked.
+  [[nodiscard]] std::optional<Vec3> firstBlockedReferencePoint(
+      const LocalPlanRequest &request) const;
   void pause();
   void reset();
 

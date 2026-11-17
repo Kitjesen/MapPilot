@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 #include <string>
 
 #include "control/autonomy.hpp"
@@ -256,6 +257,12 @@ class GoalReplanRuntimeCoordinator {
   BoundedGoalReplanController bounded_;
   std::optional<GoalReplanTrigger> pending_replan_trigger_;
   bool replacement_plan_in_progress_{false};
+  // Blockages SCAN located for one goal on one map. Every later replacement
+  // search for that goal keeps avoiding them; a new goal starts empty.
+  std::optional<GoalReplanIdentity> blocked_goal_;
+  std::vector<lingtu::nav::plan::GlobalPlanBlockedRegion> blocked_regions_;
+  std::uint64_t blocked_overlay_revision_{0U};
+  std::uint64_t blocked_obstacle_generation_{0U};
   std::uint64_t next_terminal_intent_id_{1U};
   std::uint64_t pending_terminal_intent_id_{0U};
   std::string pending_terminal_task_id_;

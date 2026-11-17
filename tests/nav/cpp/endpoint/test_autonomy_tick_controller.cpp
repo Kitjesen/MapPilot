@@ -1239,7 +1239,7 @@ void testReachedOutcomesDistinguishInspectionArrival() {
           "rolling reach must not notify inspection as a generic arrival");
 }
 
-void testPlannerExhaustionTerminatesWithoutGlobalRetry() {
+void testUnlocatedPlannerExhaustionTerminatesWithoutGlobalRetry() {
   Fixture fixture;
   fixture.next_output.active = true;
   fixture.next_output.planning_failed = true;
@@ -1248,9 +1248,37 @@ void testPlannerExhaustionTerminatesWithoutGlobalRetry() {
   const auto result = controller.tick(fixture.input(true, true, false));
   require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
               result.outcome.terminal_failure_intent && !result.outcome.replan_trigger,
-          "SCAN exhaustion must terminate instead of triggering another global plan");
+          "unlocated SCAN exhaustion must terminate: a replan would return the same route");
   require(near(result.publish.command.vx,0) && near(result.publish.command.vy,0) &&
               near(result.publish.command.wz,0), "exhausted planner must not move");
+}
+
+void testLocatedPlannerExhaustionRequestsBlockedReplan() {
+  Fixture fixture;
+  fixture.next_output.active = true;
+  fixture.next_output.planning_failed = true;
+  fixture.next_output.reason = "local_no_path";
+  fixture.next_output.blocked_point = nav_kernel::Vec3{3.0, 0.5, 0.35};
+  fixture.next_output.blocked_obstacle_generation = 7U;
+  AutonomyTickController controller(fixture.actions, fixture.control());
+  const auto result = controller.tick(fixture.input(true, true, false));
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              !result.outcome.terminal_failure_intent && result.outcome.replan_trigger &&
+              result.outcome.replan_trigger->kind == GoalReplanTriggerKind::kLocalPlanningBlocked &&
+              result.outcome.replan_trigger->blocked_point &&
+              near(result.outcome.replan_trigger->blocked_point->x, 3.0) &&
+              result.outcome.replan_trigger->obstacle_generation == 7U,
+          "located SCAN exhaustion must request a replan around the blockage");
+  require(near(result.publish.command.vx,0) && near(result.publish.command.vy,0) &&
+              near(result.publish.command.wz,0), "exhausted planner must not move");
+
+  Fixture rolling;
+  rolling.next_output = fixture.next_output;
+  AutonomyTickController rolling_controller(rolling.actions, rolling.control());
+  const auto rolling_result = rolling_controller.tick(rolling.input(true, true, true));
+  require(rolling_result.outcome.kind == AutonomyTickOutcomeKind::kRollingRecoveryExhausted &&
+              !rolling_result.outcome.replan_trigger,
+          "rolling segments keep their own exhaustion handling");
 }
 
 }  // namespace
@@ -1274,7 +1302,8 @@ int main() {
     testUnpublishedCommandDoesNotAdvanceSmootherCommit();
     testVerifiedRecoveryCommandUsesPlannerDecision();
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
-    testPlannerExhaustionTerminatesWithoutGlobalRetry();
+    testUnlocatedPlannerExhaustionTerminatesWithoutGlobalRetry();
+    testLocatedPlannerExhaustionRequestsBlockedReplan();
     testRecoveryMotionIsNotPreemptedByTaskReplanning();
     testReachedOutcomesDistinguishInspectionArrival();
     testBrakingStopReportsBothCauses();

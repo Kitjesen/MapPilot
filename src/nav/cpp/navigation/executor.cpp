@@ -650,6 +650,10 @@ ExecutionOutput Executor::tickInPlanningFrame(const nav_kernel::Pose &map_body,
   if (!plan_ready) {
     output.planning_failed = planner_capabilities.ownsReferencePath &&
                              plan_status == nav_kernel::LocalPlanStatus::NoPath;
+    if (output.planning_failed) {
+      output.blocked_point = local_planner_.firstBlockedReferencePoint(plan_request);
+      output.blocked_obstacle_generation = plan_request.identity.obstacleGeneration;
+    }
     output.reason = plan_status == nav_kernel::LocalPlanStatus::Pending
                         ? "local_plan_pending"
                         : nav_kernel::localPlanStatusName(plan_status);
