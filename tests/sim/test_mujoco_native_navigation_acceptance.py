@@ -1265,7 +1265,7 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
     for field in ("world", "start", "goal", "map_dir", "asset_builder", "slam_runtime"):
         assert scan[field] == cmu[field]
     assert scan["start"] == [3.0, 4.0, 0.6, 0.0]
-    assert scan["navigation_runtime"]["path_follower_max_speed_mps"] >= 0.5
+    assert scan["navigation_runtime"]["path_follower_max_speed_mps"] == 1.0
     assert scan["slam_runtime"]["provider"] == "mujoco_navigation_fixture"
     assert scan["driver_runtime"] == cmu["driver_runtime"]
     assert scan["driver_runtime"]["heartbeat_timeout_ms"] == 10000
@@ -1291,7 +1291,7 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
     assert scan["sensor_runtime"]["physics_timestep_s"] == 0.005
     assert scan["sensor_runtime"]["physics_integrator"] == "euler"
     assert scan["sensor_runtime"]["publisher_write_mode"] == "async_fifo"
-    assert scan["thresholds"]["min_mujoco_truth_peak_xy_speed_mps"] >= 0.5
+    assert scan["thresholds"]["min_mujoco_truth_peak_xy_speed_mps"] == 0.9
 
     assert scan["thresholds"]["require_traversability"] is False
     assert scan["navigation_runtime"]["use_traversability_cost"] is False
@@ -1322,17 +1322,17 @@ def test_local_planner_manifests_share_one_truth_lidar_baseline() -> None:
 
     follower_args = acceptance._path_follower_args(scan["navigation_runtime"])
     assert "--path-follower-goal-tolerance-m" not in follower_args
-    assert follower_args[follower_args.index("--path-follower-max-speed-mps") + 1] == "0.6"
+    assert follower_args[follower_args.index("--path-follower-max-speed-mps") + 1] == "1.0"
     assert follower_args[follower_args.index("--path-follower-max-accel-mps2") + 1] == "1.0"
     assert follower_args[follower_args.index("--path-follower-max-yaw-rate-rad-s") + 1] == "0.8"
     assert follower_args[follower_args.index("--path-follower-heading-align-enter-rad") + 1] == "1.0"
     assert follower_args[follower_args.index("--path-follower-heading-align-exit-rad") + 1] == "0.5"
     assert acceptance._mujoco_truth_speed_blocker(
-        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.49}},
+        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.89}},
         scan["thresholds"],
     ) == "mujoco_truth_peak_xy_speed_below_threshold"
     assert acceptance._mujoco_truth_speed_blocker(
-        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.51}},
+        {"mujoco_truth_velocity": {"max_xy_speed_mps": 0.91}},
         scan["thresholds"],
     ) is None
 
