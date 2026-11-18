@@ -33,6 +33,9 @@ struct GoalPlanRequest {
   std::optional<lingtu::nav::plan::MapIdentity> expected_map_identity;
   std::optional<GoalPlanTarget> target;
   std::string decode_error;
+  // Activate the replacement path while the previous task keeps moving,
+  // instead of stopping first. A failed replacement leaves the previous path active.
+  bool continue_motion{false};
 };
 
 struct GoalPlanAdmissionContext {
@@ -312,6 +315,7 @@ class GoalPlanController {
   GoalPlanOrigin planning_origin_{GoalPlanOrigin::kExternal};
   std::optional<GoalPlanTarget> planning_target_;
   double planning_source_stamp_s_{0.0};
+  bool planning_continue_motion_{false};
   std::string active_task_id_;
   std::string active_request_id_;
   std::uint64_t active_goal_epoch_{0U};

@@ -329,7 +329,8 @@ class LINGTU_NAV_CLIENT_API Client {
         double max_speed_mps = 0.0,
         double acceptance_radius_m = 0.0,
         const std::string& map_id = {},
-        std::int64_t map_content_epoch = 0);
+        std::int64_t map_content_epoch = 0,
+        bool continue_motion = false);
     [[nodiscard]] PlanResult preview(
         double x,
         double y,

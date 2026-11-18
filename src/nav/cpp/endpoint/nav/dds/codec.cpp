@@ -94,6 +94,7 @@ commandIngressRequestFromDds(const lingtu_dds_NavigationCommandRequest &message)
   payload.local_planner = stringValue(message.local_planner);
   payload.map_id = stringValue(message.map_id);
   payload.map_content_epoch = message.map_content_epoch;
+  payload.continue_motion = message.continue_motion;
   return request;
 }
 

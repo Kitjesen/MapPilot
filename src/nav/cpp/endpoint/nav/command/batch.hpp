@@ -26,6 +26,7 @@ struct GoalSample {
   bool has_orientation{false};
   double max_speed_mps{0.0};
   double acceptance_radius_m{0.0};
+  bool continue_motion{false};
 };
 
 struct NavigationCommandSample {

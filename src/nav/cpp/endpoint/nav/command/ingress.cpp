@@ -49,6 +49,7 @@ std::string CommandPayload::canonical() const {
   appendString(output, local_planner);
   appendString(output, map_id);
   appendUint64(output, static_cast<std::uint64_t>(map_content_epoch));
+  appendUint64(output, continue_motion ? 1U : 0U);
   return output;
 }
 

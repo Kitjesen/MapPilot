@@ -1769,6 +1769,39 @@ def test_saved_map_identity_crosses_ctypes_boundary(tmp_path):
         client.close()
 
 
+def test_continue_motion_goal_crosses_ctypes_boundary(tmp_path):
+    library = _Library()
+    library.lingtu_nav_client_capabilities = _Function(
+        lambda: _DEFAULT_CAPABILITIES | native_abi.NATIVE_COMMAND_CAP_NAVIGATION_CONTINUE_MOTION
+    )
+    received = []
+
+    def continued(handle, task, request, x, y, z, yaw, map_id, epoch, speed, radius, flag, timeout, receipt):
+        received.append((map_id, epoch, speed, radius, flag))
+        return library._start_task_with_receipt(handle, task, request, x, y, z, yaw, timeout, receipt)
+
+    library.lingtu_nav_client_start_task_with_receipt_v4 = _Function(continued)
+    client = NativeNavigationClient(tmp_path / "client.so", library=library)
+    try:
+        receipt = client.start_task(
+            1, 2, 0, None, task_id="follow-b", request_id="follow-req-b", continue_motion=True,
+        )
+        assert receipt.accepted
+        assert received == [(b"", 0, 0.0, 0.0, 1)]
+    finally:
+        client.close()
+
+
+def test_continue_motion_goal_requires_native_capability(tmp_path):
+    client = NativeNavigationClient(tmp_path / "client.so", library=_Library())
+    try:
+        with pytest.raises(native_abi.NativeCommandClientError, match="continue-motion"):
+            client.start_task(1, 2, 0, None, task_id="follow-b", request_id="follow-req-b",
+                              continue_motion=True)
+    finally:
+        client.close()
+
+
 def test_semantic_view_query_crosses_ctypes_boundary_without_motion(tmp_path):
     library = _Library()
     client = NativeNavigationClient(tmp_path / "client.so", library=library)

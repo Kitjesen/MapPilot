@@ -916,6 +916,38 @@ int main() {
   require(sequential_controller.snapshot().active_request_id == "goal-active-b",
           "sequential-goal test did not leave B active");
 
+  // Visual following replaces its goal every update; continue_motion activates
+  // the new path immediately instead of stopping behind the terminal barrier.
+  Recorder continue_recorder;
+  GoalPlanController continue_controller(successfulPlan, continue_recorder.actions());
+  require(continue_controller.submit(active_a_request, admission).accepted &&
+              waitForCompletion(continue_controller,
+                                GoalPlanAdvanceContext{admission.frame_epoch, {}, 37.0})
+                  .path_activated,
+          "continue-motion test could not activate A");
+  auto continue_b_request = active_b_request;
+  continue_b_request.continue_motion = true;
+  require(continue_controller.submit(continue_b_request, admission).accepted,
+          "continue-motion test could not start B");
+  require(continue_recorder.activations.size() == 1U &&
+              continue_controller.snapshot().active_request_id == active_a_request.request_id,
+          "continue-motion test dropped A while B was still planning");
+  const auto continued = waitForCompletion(
+      continue_controller, GoalPlanAdvanceContext{admission.frame_epoch, {}, 38.0});
+  require(continued.path_activated && !continued.terminal_after_stop.has_value(),
+          "continue-motion replacement stopped before activating B");
+  require(continue_recorder.activations.size() == 2U &&
+              continue_controller.snapshot().active_request_id == "goal-active-b",
+          "continue-motion test did not leave B active");
+  const auto &continue_statuses = continue_recorder.statuses;
+  require(continue_statuses.size() == 5U &&
+              continue_statuses[3].request_id == active_a_request.request_id &&
+              continue_statuses[3].state == NavigationGoalState::Cancelled &&
+              continue_statuses[3].reason == "superseded_by_new_goal" &&
+              continue_statuses[4].request_id == "goal-active-b" &&
+              continue_statuses[4].state == NavigationGoalState::PathActive,
+          "continue-motion replacement did not supersede A and activate B");
+
   Recorder active_hold_recorder;
   GoalPlanController active_hold_controller(successfulPlan, active_hold_recorder.actions());
   require(active_hold_controller.submit(active_a_request, admission).accepted,

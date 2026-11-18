@@ -195,6 +195,7 @@ class Commands(Module, layer=3):
         acceptance_radius_m: float | None = None,
         map_id: str | None = None,
         map_content_epoch: int = 0,
+        continue_motion: bool = False,
     ) -> NavigationCommandReceipt:
         kwargs: dict[str, Any] = {
             "task_id": task_id,
@@ -204,6 +205,8 @@ class Commands(Module, layer=3):
         }
         if map_id is not None or map_content_epoch:
             kwargs.update(map_id=map_id, map_content_epoch=map_content_epoch)
+        if continue_motion:
+            kwargs["continue_motion"] = True
         return self._navigation_client.start_task(x, y, z, yaw, **kwargs)
 
     @rpc
