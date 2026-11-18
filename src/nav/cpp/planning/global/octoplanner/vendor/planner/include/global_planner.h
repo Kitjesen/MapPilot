@@ -102,6 +102,9 @@ struct PlannerConfig
   double body_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
+  // Off: occupancy is checked at the route centre only; SCAN owns the body.
+  // No-go regions and external preblocked cells still use the body extent.
+  bool body_collision{::lingtu::settings::global::native_nav::global::body_collision};
   int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
   int snap_search_radius_cells{::lingtu::settings::global::native_nav::global::snap_search_radius_cells};
   double terminal_goal_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_tolerance_m};
@@ -127,9 +130,10 @@ struct PlannerConfig
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
 
-  std::array<double,22> preparation() const {
+  std::array<double,23> preparation() const {
     return {surface_closing_radius_m,
       search_resolution_m,robot_radius,body_offset_m,body_clearance_below_m,body_clearance_above_m,
+      double(body_collision),
       double(ground_support),double(direct_support_only),double(support_depth_cells),
       support_height_m,support_height_tolerance_m,double(support_patch_radius_cells),
       double(support_patch_min_samples),double(enable_preblocked_costmap),
@@ -434,6 +438,7 @@ private:
   double robot_radius_ = 0.20;
   double body_offset_m_ = 0.0;
   double body_clearance_below_m_ = 0.0;
+  bool body_collision_ = true;
   double body_clearance_above_m_ = 0.0;
   int max_iterations_ = PlannerConfig{}.max_iterations;
   int snap_search_radius_cells_ = PlannerConfig{}.snap_search_radius_cells;

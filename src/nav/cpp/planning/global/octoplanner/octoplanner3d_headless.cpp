@@ -384,6 +384,10 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "snap_search_radius_cells",
     options.snap_search_radius_cells);
+  options.body_collision = optionalBool(
+    body,
+    "body_collision",
+    options.body_collision);
   options.ground_support = optionalBool(
     body,
     "ground_support",
@@ -510,6 +514,8 @@ void emitConstraints(const PlannerOptions & options)
             << "\"body_clearance_above_m\":" << options.body_clearance_above_m << ','
             << "\"max_iterations\":" << options.max_iterations << ','
             << "\"snap_search_radius_cells\":" << options.snap_search_radius_cells << ','
+            << "\"body_collision\":"
+            << (options.body_collision ? "true" : "false") << ','
             << "\"ground_support\":"
             << (options.ground_support ? "true" : "false") << ','
             << "\"direct_support_only\":"

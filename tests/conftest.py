@@ -8,6 +8,7 @@ import sys
 import tempfile
 import uuid
 import warnings
+import zlib
 from pathlib import Path
 
 import pytest
@@ -84,3 +85,19 @@ def pytest_configure(config: pytest.Config) -> None:
     """Set a Windows basetemp before pytest's tmpdir factory is configured."""
     if _should_assign_windows_basetemp(config):
         config.option.basetemp = _make_windows_basetemp()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep one CI shard: every test file lands in exactly one of N shards."""
+    count = int(os.environ.get("LINGTU_TEST_SHARD_COUNT", "1"))
+    if count <= 1:
+        return
+    index = int(os.environ["LINGTU_TEST_SHARD_INDEX"])
+    kept: list[pytest.Item] = []
+    dropped: list[pytest.Item] = []
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        (kept if zlib.crc32(path.encode()) % count == index else dropped).append(item)
+    items[:] = kept
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)

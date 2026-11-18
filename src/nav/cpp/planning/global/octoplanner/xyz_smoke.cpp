@@ -19,6 +19,7 @@ int main() try {
   r::PlanRequest request;
   request.start = {-1, 0, .35, {}};
   request.goal = {1, 0, .35, 1.2};
+  request.options.body_collision = true;
   request.options.robot_radius = .12;
   request.options.body_clearance_below_m = .1;
   request.options.body_clearance_above_m = .2;

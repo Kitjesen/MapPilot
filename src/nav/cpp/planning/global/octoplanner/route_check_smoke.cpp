@@ -37,6 +37,7 @@ std::shared_ptr<octomap::OcTree> scene(bool wall = false, bool gap = false,
 
 PlannerConfig configuration() {
   PlannerConfig c;
+  c.body_collision = true;
   c.robot_radius = .32;
   c.body_clearance_below_m = .05;
   c.body_clearance_above_m = .35;

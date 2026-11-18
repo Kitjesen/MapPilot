@@ -18,6 +18,11 @@ native_nav:
     search_resolution_m: 0.10  # Nominal XY spacing; exhausted searches retry at map resolution.
     surface_closing_radius_m: 0.20
 
+    # Global routes check support, steps, slope, no-go regions and occupancy
+    # at the route centre. Exact body-to-voxel contact is SCAN's job: it checks
+    # the body against live data. true restores the global body cylinder.
+    body_collision: false
+
     # Direct-only mode requires observed support in the same column.
     ground_support: true
     direct_support_only: false

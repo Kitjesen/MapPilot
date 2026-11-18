@@ -59,6 +59,7 @@ std::shared_ptr<octomap::OcTree> makeMap(bool step, bool wall = false)
 global_planner::PlannerConfig config()
 {
   global_planner::PlannerConfig result;
+  result.body_collision = true;
   result.robot_radius = 0.04;
   result.snap_search_radius_cells = 0;
   result.support_depth_cells = 2;
@@ -287,6 +288,7 @@ void checkTerminalToleranceBoundary()
   octoplanner3d::runtime::PlanRequest request;
   request.start = {start.x, start.y, start.z};
   request.goal = {request_goal.x, request_goal.y, request_goal.z};
+  request.options.body_collision = options.body_collision;
   request.options.robot_radius = options.robot_radius;
   request.options.snap_search_radius_cells = options.snap_search_radius_cells;
   request.options.support_depth_cells = options.support_depth_cells;

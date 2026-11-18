@@ -183,6 +183,7 @@ typedef struct LtMlsMetricConfig {
   double goal_tolerance;
   double goal_xy_tolerance;
   double goal_z_tolerance;
+  uint8_t skip_body_collision;
 } LtMlsMetricConfig;
 
 typedef int32_t (*LtMlsCancelCheck)(void* context);
