@@ -203,6 +203,8 @@ Args parseArgs(int argc, char ** argv)
       args.config.body_clearance_below_m = parseDouble(next(), option);
     else if (option == "--body-clearance-above")
       args.config.body_clearance_above_m = parseDouble(next(), option);
+    else if (option == "--body-collision")
+      args.config.body_collision = parseBool(next(), option);
     else if (option == "--direct-support-only")
       args.config.direct_support_only = parseBool(next(), option);
     else if (option == "--support-depth-cells")
@@ -514,6 +516,7 @@ void writeSegmentFailures(const std::vector<Verification::SegmentFailure> & fail
 bool runSelfTest(const PlannerConfig & base_config)
 {
   PlannerConfig config = base_config;
+  config.body_collision = true;  // The self-test exercises the body checks.
   config.robot_radius = 0.10;
   std::vector<PointPose> clear_path, blocked_path;
   for (int x = -8; x <= 7; ++x) {

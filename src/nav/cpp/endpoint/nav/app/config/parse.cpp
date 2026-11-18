@@ -488,6 +488,8 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvInt(cfg.octoplanner_options.max_iterations, "LINGTU_NAV_OCTO_MAX_ITERATIONS");
   applyEnvInt(cfg.octoplanner_options.snap_search_radius_cells,
               "LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS");
+  applyEnvBool(cfg.octoplanner_options.body_collision,
+               "LINGTU_NAV_OCTO_BODY_COLLISION");
   applyEnvBool(cfg.octoplanner_options.ground_support,
                "LINGTU_NAV_OCTO_GROUND_SUPPORT");
   applyEnvBool(cfg.octoplanner_options.direct_support_only,
@@ -701,6 +703,9 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.octoplanner_options.max_iterations = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-snap-radius-cells") {
       cfg.octoplanner_options.snap_search_radius_cells = parseInt(next(), arg.c_str());
+    } else if (arg == "--octo-body-collision") {
+      cfg.octoplanner_options.body_collision =
+          parseBool(next(), "--octo-body-collision");
     } else if (arg == "--octo-ground-support") {
       cfg.octoplanner_options.ground_support =
           parseBool(next(), "--octo-ground-support");

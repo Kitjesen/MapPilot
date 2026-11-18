@@ -30,10 +30,14 @@ jobs:
           tools/
           scripts/
 
-  test:
-    name: Framework Tests
+  test-shard:
+    name: Framework Tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -52,6 +56,19 @@ jobs:
         env:
           PYTHONPATH: src
           LIBGL_ALWAYS_SOFTWARE: '1'
+          LINGTU_TEST_SHARD_COUNT: '4'
+          LINGTU_TEST_SHARD_INDEX: ${{ matrix.shard }}
+
+  # Keeps the single "Framework Tests" check that branch protection and
+  # reviewers already rely on; it passes only when every shard passed.
+  test:
+    name: Framework Tests
+    if: always()
+    needs: test-shard
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every shard
+        run: test "${{ needs.test-shard.result }}" = "success"
 
   windows-toolchain:
     name: Windows toolchain contracts

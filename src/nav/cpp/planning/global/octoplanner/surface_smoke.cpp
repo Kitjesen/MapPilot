@@ -21,6 +21,7 @@ struct OctoPlannerGridQueryTest {
     const auto nodes = tree->size();
 
     PlannerConfig config;
+    config.body_collision = true;
     config.robot_radius=.1; config.body_clearance_below_m=.1; config.body_clearance_above_m=.25;
     config.support_height_m=.35; config.support_height_tolerance_m=.05;
     config.direct_support_only=false;

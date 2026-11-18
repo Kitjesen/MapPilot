@@ -35,7 +35,7 @@ int main() try {
   r::PlanRequest request;
   request.start={-2.025,.125,.325};request.goal={2.025,.125,.325};
   auto& options=request.options;
-  options.robot_radius=.1;options.body_clearance_below_m=.1;options.body_clearance_above_m=.2;
+  options.body_collision=true;options.robot_radius=.1;options.body_clearance_below_m=.1;options.body_clearance_above_m=.2;
   options.support_height_m=.35;options.support_height_tolerance_m=.05;
   options.max_step_height=.15;options.max_slope=.6;options.max_iterations=20000;
   options.snap_search_radius_cells=4;options.enable_preblocked_costmap=false;
@@ -155,7 +155,7 @@ int main() try {
   }
   for (const auto& entry : std::filesystem::directory_iterator(directory/".nav")) {
     auto payload = bytes(entry.path());
-    const std::string format = "lingtu.navigation.prepared.9";
+    const std::string format = "lingtu.navigation.prepared.10";
     const auto offset = payload.find(format);
     if (offset == std::string::npos) continue;
     payload[offset + format.size() - 1] = '6';

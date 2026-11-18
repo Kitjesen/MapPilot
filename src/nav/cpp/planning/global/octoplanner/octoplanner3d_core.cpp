@@ -281,6 +281,7 @@ global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
   config.terminal_goal_xy_tolerance_m = nonnegativeOrDefault(
     options.terminal_goal_xy_tolerance_m, config.terminal_goal_tolerance_m);
   config.terminal_goal_z_tolerance_m = nonnegativeOrDefault(options.terminal_goal_z_tolerance_m, 0.75);
+  config.body_collision = options.body_collision;
   config.ground_support = options.ground_support;
   config.direct_support_only = options.direct_support_only;
   config.support_depth_cells =
