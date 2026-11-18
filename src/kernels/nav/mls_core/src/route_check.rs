@@ -712,6 +712,7 @@ impl Checker<'_> {
         to: LtMlsPoint,
         support: bool,
         yaw: f64,
+        actual_start: bool,
     ) -> Option<(u32, LtMlsPoint)> {
         let c = self.config;
         if self.cancelled() {
@@ -755,6 +756,12 @@ impl Checker<'_> {
             if failure == ROUTE_OK {
                 continue;
             }
+            if failure == ROUTE_UNSUPPORTED
+                && actual_start
+                && self.departure_without_support(point, from, yaw)
+            {
+                continue;
+            }
             if failure != ROUTE_UNSUPPORTED
                 || (to.z - from.z).abs() < 1e-7
                 || self.oriented_query(point, yaw, false, !self.preblocked.is_empty()) != ROUTE_OK
@@ -777,6 +784,24 @@ impl Checker<'_> {
         }
         None
     }
+    fn departure_without_support(&self, point: LtMlsPoint, from: LtMlsPoint, yaw: f64) -> bool {
+        if self.floor(point).is_some() {
+            return false;
+        }
+        let offset = self.config.body_offset;
+        if offset <= 0.0 {
+            return false;
+        }
+        [-1.0, 1.0].into_iter().any(|sign| {
+            let center = LtMlsPoint {
+                x: from.x + sign * yaw.cos() * offset,
+                y: from.y + sign * yaw.sin() * offset,
+                z: from.z,
+            };
+            (point.x - center.x).hypot(point.y - center.y) <= self.config.robot_radius + EPSILON
+        })
+    }
+
     fn rotation(&self, point: LtMlsPoint, from_yaw: f64, to_yaw: f64) -> Option<(u32, LtMlsPoint)> {
         if self.config.body_offset == 0.0 || from_yaw == to_yaw {
             return None;
@@ -1223,7 +1248,7 @@ impl Checker<'_> {
             if failure != ROUTE_OK {
                 return route_failure(failure, index as i32, self.cell(to));
             }
-            if let Some((failure, point)) = self.sweep(from, to, true, heading) {
+            if let Some((failure, point)) = self.sweep(from, to, true, heading, actual_start) {
                 return route_failure(failure, index as i32, self.cell(point));
             }
             previous_heading = Some(heading);

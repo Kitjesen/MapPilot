@@ -910,7 +910,7 @@ std::vector<DynamicCluster> MotionLayer::dynamicClusters(std::size_t max_cluster
     }
     const auto &track = cluster_tracks_[i];
     const double unseen_s = std::max(0.0, current_stamp_s_ - track.last_seen_s);
-    if (unseen_s <= config_.dynamic_track_ttl_s) {
+    if (unseen_s <= config_.dynamic_track_ttl_s + 1e-9) {
       next_tracks.push_back(track);
       if (track.confirmed) {
         const double ttl = std::max(1e-6, config_.dynamic_track_ttl_s);

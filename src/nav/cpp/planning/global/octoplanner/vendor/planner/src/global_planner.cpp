@@ -1677,7 +1677,7 @@ namespace global_planner
             for (int dy = -n; dy <= n; ++dy) {
                 for (int dz = minimum_dz; dz <= maximum_dz; ++dz) {
                     const double x = dx * r, y = dy * r, z = dz * r;
-                    if (x * x + y * y + (cylinder ? 0.0 : z * z) <= radius_sq)
+                    if ((cylinder ? x * x + y * y + z * z : x * x + y * y) <= radius_sq)
                         body_offsets_.push_back({dx, dy, dz});
                 }
             }
