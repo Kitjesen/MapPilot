@@ -532,6 +532,17 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        if (has_start_) {
+            TraversabilityFailure start_failure = TraversabilityFailure::None;
+            const octomap::point3d start(
+                start_point_.x, start_point_.y, start_point_.z);
+            if (!isStartConnectionAllowed(start, start, &start_failure)) {
+                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                endpoint_resolution_.start_failure = start_failure;
+                search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                return false;
+            }
+        }
         EdgeCost clearance_cost;
         if(obstacle_clearance_weight_>0 && obstacle_clearance_radius_cells_>0) {
             clearance_cost=[&](const PointPose &from,const PointPose &to) {
