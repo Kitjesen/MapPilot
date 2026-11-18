@@ -532,6 +532,10 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        endpoint_resolution_.start_raw_outside_bounds = !isInsideMetricBounds(
+            worldToGrid(start_point_.x, start_point_.y, start_point_.z));
+        endpoint_resolution_.goal_raw_outside_bounds = !isInsideMetricBounds(
+            worldToGrid(goal_point_.x, goal_point_.y, goal_point_.z));
         if (has_start_) {
             TraversabilityFailure start_failure = TraversabilityFailure::None;
             const octomap::point3d start(
