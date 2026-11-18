@@ -179,7 +179,7 @@ def test_python_ci_installs_locked_extras_and_runs_the_synced_environment() -> N
     assert "uv.lock" in triggers["push"]["paths"]
     assert "docker/**" in triggers["push"]["paths"]
     for job_name, expected_extras in {
-        "test": {"dev", "sim-recording", "nlp", "agent", "llm"},
+        "test-shard": {"dev", "sim-recording", "nlp", "agent", "llm"},
         "windows-toolchain": {"dev"},
     }.items():
         steps = workflow["jobs"][job_name]["steps"]
@@ -193,6 +193,10 @@ def test_python_ci_installs_locked_extras_and_runs_the_synced_environment() -> N
         assert extras == expected_extras
         test = next(command for command in commands if "pytest" in command)
         assert test[test.index("uv"):test.index("python")] == ["uv", "run", "--locked", "--no-sync"]
+    aggregate = workflow["jobs"]["test"]
+    assert aggregate["needs"] == "test-shard"
+    assert aggregate["if"] == "always()"
+    assert aggregate["steps"] == [{"name": "Require every shard", "run": 'test "${{ needs.test-shard.result }}" = "success"'}]
 
 
 def test_container_installs_are_locked_and_survive_source_cleanup() -> None:
