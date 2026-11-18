@@ -785,7 +785,7 @@ impl Checker<'_> {
         None
     }
     fn departure_without_support(&self, point: LtMlsPoint, from: LtMlsPoint, yaw: f64) -> bool {
-        if self.floor(point).is_some() {
+        if self.surface_below(point) {
             return false;
         }
         let offset = self.config.body_offset;
@@ -800,6 +800,13 @@ impl Checker<'_> {
             };
             (point.x - center.x).hypot(point.y - center.y) <= self.config.robot_radius + EPSILON
         })
+    }
+
+    fn surface_below(&self, point: LtMlsPoint) -> bool {
+        let cell = self.cell(point);
+        self.surface
+            .get(&(cell.x, cell.y))
+            .is_some_and(|levels| levels.iter().any(|&z| z <= cell.z))
     }
 
     fn rotation(&self, point: LtMlsPoint, from_yaw: f64, to_yaw: f64) -> Option<(u32, LtMlsPoint)> {

@@ -308,9 +308,11 @@ private:
   void anchorPlanningLattice(const PointPose & point, double resolution = 0.0);
   octomap::point3d planningPoint(const GridIndex & idx) const;
   TraversabilityFailure queryWorld(const octomap::point3d &point, double radius,
-                                   bool require_support, bool check_body = true, double yaw = 0.0) const;
+                                   bool require_support, bool check_body = true, double yaw = 0.0,
+                                   bool allow_center_occupancy = false) const;
   TraversabilityFailure queryCylinder(const octomap::point3d &point, double radius,
-                                      bool require_support, bool check_body, bool check_center = true) const;
+                                      bool require_support, bool check_body, bool check_center = true,
+                                      bool allow_center_occupancy = false) const;
   TraversabilityFailure queryBase(const octomap::point3d &point, bool require_support) const;
   bool sweptBodyFree(const octomap::point3d &from, const octomap::point3d &to,
                      octomap::point3d *failed_point, double yaw = 0.0) const;
