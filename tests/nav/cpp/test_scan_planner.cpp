@@ -6339,3 +6339,30 @@ TEST(ScanRouteContinuity, RecordedMovingRetimeKeepsFlatCurveSimple) {
     EXPECT_LE(maximumBacktrack, .02);
   }
 }
+
+namespace {
+
+TEST(ScanBlockedReference, ReportsFirstOccupiedPointOnASparseRoute) {
+  // One long global segment; the obstacle lies in its interior.
+  RequestFixture fixture({{0.0, 0.0, 0.4}, {4.0, 0.0, 0.4}});
+  fixture.request.reference = {fixture.route.data(), static_cast<int>(fixture.route.size()), 1};
+  const nav_kernel::LocalPlanner planner(scanParams());
+  EXPECT_FALSE(planner.firstBlockedReferencePoint(fixture.request));
+
+  fixture.bitmap.occupy({2.0, 0.0, 0.4});
+  fixture.refreshCollision(2);
+  const auto blocked = planner.firstBlockedReferencePoint(fixture.request);
+  ASSERT_TRUE(blocked);
+  EXPECT_GT(blocked->x, 1.0);
+  EXPECT_LE(blocked->x, 2.0);
+  EXPECT_NEAR(blocked->y, 0.0, 1e-9);
+}
+
+TEST(ScanBlockedReference, UnobservedRouteBeyondTheWindowIsNotBlocked) {
+  RequestFixture fixture({{0.0, 0.0, 0.4}, {8.0, 0.0, 0.4}});
+  fixture.request.reference = {fixture.route.data(), static_cast<int>(fixture.route.size()), 1};
+  const nav_kernel::LocalPlanner planner(scanParams());
+  EXPECT_FALSE(planner.firstBlockedReferencePoint(fixture.request));
+}
+
+}  // namespace

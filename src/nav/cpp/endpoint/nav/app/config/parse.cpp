@@ -446,8 +446,6 @@ CliConfig parseArgs(int argc, char **argv) {
                  "LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M");
   applyEnvSize(cfg.max_obstacle_points, "LINGTU_NAV_DDS_MAX_OBSTACLE_POINTS");
   applyEnvSize(cfg.local_planner_threads, "LINGTU_NAV_LOCAL_PLANNER_THREADS");
-  applyEnvSize(cfg.local_planner_debug_candidate_limit,
-               "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES");
   applyEnvSize(cfg.local_map_debug_point_limit, "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS");
   const auto obstacle_voxel_size = envOrEmpty("LINGTU_NAV_OBSTACLE_VOXEL_SIZE_M");
   bool explicit_obstacle_voxel_size = !obstacle_voxel_size.empty();
@@ -487,12 +485,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvDouble(cfg.sensor_offset_x_m, "LINGTU_NAV_SENSOR_OFFSET_X_M");
   applyEnvDouble(cfg.sensor_offset_y_m, "LINGTU_NAV_SENSOR_OFFSET_Y_M");
   applyEnvDouble(cfg.sensor_offset_z_m, "LINGTU_NAV_SENSOR_OFFSET_Z_M");
-  applyEnvDouble(cfg.octoplanner_options.robot_radius, "LINGTU_NAV_OCTO_ROBOT_RADIUS_M");
-  applyEnvDouble(cfg.octoplanner_options.body_offset_m, "LINGTU_NAV_OCTO_BODY_OFFSET_M");
-  applyEnvDouble(cfg.octoplanner_options.body_clearance_below_m,
-                 "LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M");
-  applyEnvDouble(cfg.octoplanner_options.body_clearance_above_m,
-                 "LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M");
   applyEnvInt(cfg.octoplanner_options.max_iterations, "LINGTU_NAV_OCTO_MAX_ITERATIONS");
   applyEnvInt(cfg.octoplanner_options.snap_search_radius_cells,
               "LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS");
@@ -626,8 +618,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.max_obstacle_points = parseSize(next(), arg.c_str());
     } else if (arg == "--local-planner-threads") {
       cfg.local_planner_threads = parseSize(next(), arg.c_str());
-    } else if (arg == "--local-planner-debug-candidates") {
-      cfg.local_planner_debug_candidate_limit = parseSize(next(), arg.c_str());
     } else if (arg == "--local-map-debug-points") {
       cfg.local_map_debug_point_limit = parseSize(next(), arg.c_str());
     } else if (arg == "--obstacle-voxel-size-m") {
@@ -707,14 +697,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.teleop_planner_horizon_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--teleop-planner-max-deviation-deg") {
       cfg.teleop_planner_max_deviation_deg = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-robot-radius-m") {
-      cfg.octoplanner_options.robot_radius = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-offset-m") {
-      cfg.octoplanner_options.body_offset_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-clearance-below-m") {
-      cfg.octoplanner_options.body_clearance_below_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--octo-body-clearance-above-m") {
-      cfg.octoplanner_options.body_clearance_above_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-max-iterations") {
       cfg.octoplanner_options.max_iterations = parseInt(next(), arg.c_str());
     } else if (arg == "--octo-snap-radius-cells") {
@@ -813,7 +795,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "[--segment-max-grid-cells N] [--segment-risk-stop C] "
           "[--segment-risk-resume C] [--segment-map-max-age-s S] "
           "[--max-obstacle-points N] [--publish-cmd-vel true|false] "
-          "[--local-planner-debug-candidates N] [--local-map-debug-points N] "
+          "[--local-map-debug-points N] "
           "[--obstacle-voxel-size-m M] [--live-obstacle-decay-s S] "
           "[--live-obstacle-inflation-radius-m M] "
           "[--live-obstacle-ray-clearing true|false] "
@@ -1021,8 +1003,6 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error("local planner obstacle height maximum must be at least the minimum");
   }
   cfg.local_planner_threads = std::clamp<std::size_t>(cfg.local_planner_threads, 1, 4);
-  cfg.local_planner_debug_candidate_limit = std::min<std::size_t>(
-      cfg.local_planner_debug_candidate_limit, static_cast<std::size_t>(nav_kernel::kRotDirs));
   cfg.local_map_debug_point_limit = std::min<std::size_t>(cfg.local_map_debug_point_limit, 4096);
   cfg.obstacle_voxel_size_m = std::max(0.02, cfg.obstacle_voxel_size_m);
   cfg.live_obstacle_decay_s = std::max(0.0, cfg.live_obstacle_decay_s);
@@ -1057,10 +1037,6 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.collision_clearance_below_m = std::max(0.0, cfg.collision_clearance_below_m);
   cfg.collision_clearance_above_m = std::max(0.0, cfg.collision_clearance_above_m);
   auto &octo = cfg.octoplanner_options;
-  octo.robot_radius = std::max(0.0, octo.robot_radius);
-  octo.body_offset_m = std::max(0.0, octo.body_offset_m);
-  octo.body_clearance_below_m = std::max(0.0, octo.body_clearance_below_m);
-  octo.body_clearance_above_m = std::max(0.0, octo.body_clearance_above_m);
   octo.max_iterations = std::max(1, octo.max_iterations);
   octo.snap_search_radius_cells = std::max(0, octo.snap_search_radius_cells);
   octo.support_depth_cells = std::max(1, octo.support_depth_cells);

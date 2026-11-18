@@ -74,7 +74,6 @@
     "apply_timeout_ms": 500
   },
   "planner_constraints": {
-    "robot_radius_m": 0.95,
     "max_iterations": 300000,
     "ground_support": true,
     "direct_support_only": true,

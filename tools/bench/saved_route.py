@@ -43,8 +43,11 @@ def prepare(out: Path) -> None:
         raw = environment[key]
         value = raw == "1" if isinstance(default, bool) else type(default)(raw)
         options[name.removeprefix("octoplanner3d_")] = value
-    options["body_clearance_below_m"] = float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"])
-    options["body_clearance_above_m"] = float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"])
+    # navd derives the global body from the collision values on the SCAN voxel grid.
+    voxel = float(environment["LINGTU_NAV_SCAN_VOXEL_RESOLUTION_M"])
+    for side in ("below", "above"):
+        clearance = float(environment[f"LINGTU_NAV_COLLISION_CLEARANCE_{side.upper()}_M"])
+        options[f"body_clearance_{side}_m"] = math.ceil(clearance / voxel) * voxel
     options["body_offset_m"] = float(environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"])
     cases = [
         ("geode", "build/dataset-mapping-20261021/maps/geode",
@@ -73,8 +76,8 @@ def prepare(out: Path) -> None:
         for field, (key, _) in _OCTOPLANNER_CONFIG.items():
             value = effective[field.removeprefix("octoplanner3d_")]
             diagnostic_environment[key] = str(int(value)) if isinstance(value, bool) else str(value)
-        diagnostic_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"] = str(effective["body_clearance_below_m"])
-        diagnostic_environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"] = str(effective["body_clearance_above_m"])
+        diagnostic_environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"] = str(effective["body_clearance_below_m"])
+        diagnostic_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] = str(effective["body_clearance_above_m"])
         diagnostic_environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"] = str(effective.get("body_offset_m", 0.0))
         write_json(input_dir / f"{name}.diagnostic-environment.json", diagnostic_environment)
         differences = {key: {"diagnostic": effective.get(key), "product": value}

@@ -236,6 +236,9 @@ surface index: observed=24151 inferred=0
 没有产品决定前把它写成安全能力提升。需要明确“只有观测表面、没有显式 free layer”
 是否允许作为全局导航输入；如果不允许，应在表面图进入搜索前加回相应的自由空间证据门。
 
+2026-11-17 产品决定：允许。该例改名 `building_stairs_geometry_only`，期望返回路线并通过
+三维复核；不加回自由空间证据门。见 [错误记录](../operations/error_record.md)。
+
 ## DimOS 同一公开点云参考
 
 现有 DimOS runner 的固定核心版本仍是：

@@ -7,6 +7,9 @@ use crate::{adjacency, edges, graph_cells, nodes, GraphConfig, PlannerState, Sur
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QueryError {
     Exhausted,
+    // No admissible surface within the snap radius of that endpoint.
+    StartUnreachable,
+    GoalUnreachable,
     Budget,
     Cancelled,
 }
@@ -227,7 +230,9 @@ impl SnapCandidates {
             .iter()
             .enumerate()
             .filter(|(index, _)| surface.allowed(*index))
-            .filter(|(_, &cell)| surface.connector_within_limits(target, cell))
+            // No cell-slope prefilter: target.z is quantized from the request
+            // height and can sit one cell off its own floor. The endpoint check
+            // applies step and slope from the real request point.
             .map(|(index, &cell)| (squared_distance(target, cell), index))
             .filter(|&(distance, _)| distance <= limit)
             .collect::<Vec<_>>();
@@ -601,8 +606,13 @@ pub(crate) fn plan_budgeted(
     for all in [false, true] {
         let start_added = starts.extend(surface, all, budget, &mut check)?;
         let goal_added = goals.extend(surface, all, budget, &mut check)?;
-        if starts.seeds.is_empty() || goals.seeds.is_empty() || (all && !start_added && !goal_added)
-        {
+        if starts.seeds.is_empty() {
+            return Err(QueryError::StartUnreachable);
+        }
+        if goals.seeds.is_empty() {
+            return Err(QueryError::GoalUnreachable);
+        }
+        if all && !start_added && !goal_added {
             return Err(QueryError::Exhausted);
         }
         let goal_costs = goals.seeds.iter().copied().collect::<HashMap<_, _>>();
@@ -1236,7 +1246,7 @@ mod tests {
             false,
             |_, _, kind| i32::from(kind == 3),
         );
-        assert_eq!(result, Err(QueryError::Exhausted));
+        assert_eq!(result, Err(QueryError::StartUnreachable));
     }
 
     #[test]
@@ -1261,7 +1271,7 @@ mod tests {
             false,
             |_, _, _| 1,
         );
-        assert_eq!(result, Err(QueryError::Exhausted));
+        assert_eq!(result, Err(QueryError::StartUnreachable));
     }
 
     #[test]

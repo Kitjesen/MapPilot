@@ -64,7 +64,6 @@ struct StatusWriterConfig {
   std::size_t local_planner_threads{0};
   double stop_confirmation_timeout_s{0.0};
   std::string stop_confirmation_evidence{"zero_output_and_odometry"};
-  std::size_t local_planner_debug_candidate_limit{0};
   std::size_t local_map_debug_point_limit{0};
   double planner_obstacle_height_min_m{
       ::lingtu::settings::local::native_nav::local_planner_obstacle_height_min_m};

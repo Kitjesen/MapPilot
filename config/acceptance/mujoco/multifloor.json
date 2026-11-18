@@ -56,9 +56,6 @@
     "apply_timeout_ms": 1500
   },
   "planner_constraints": {
-    "robot_radius_m": 0.35,
-    "body_clearance_below_m": 0.15,
-    "body_clearance_above_m": 0.30,
     "max_iterations": 240000,
     "snap_radius_cells": 16,
     "ground_support": true,

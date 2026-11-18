@@ -433,14 +433,9 @@ struct OctoPlannerGridQueryTest
       OctoPlanner3D::TraversabilityFailure sweep_failure;
       octomap::point3d failed_point;
       const double yaw=std::atan2(to.y()-from.y(),to.x()-from.x());
-      const double incoming=i>0
-          ?std::atan2(path[i].y-path[i-1].y,path[i].x-path[i-1].x)
-          :path.front().yaw.value_or(planning_anchor?planning_anchor->yaw.value_or(yaw):yaw);
-      const double pose_yaw=path[i].yaw.value_or(incoming);
-      if (!planner.turnFree(path[i],incoming,pose_yaw,&sweep_failure) ||
-          !planner.turnFree(path[i],pose_yaw,yaw,&sweep_failure) ||
-          (i+2==path.size() && path.back().yaw &&
-           !planner.turnFree(path.back(),yaw,*path.back().yaw,&sweep_failure))) {
+      // Same contract as route checks: only an explicit terminal yaw pivots.
+      if (i+2==path.size() && path.back().yaw &&
+          !planner.turnFree(path.back(),yaw,*path.back().yaw,&sweep_failure)) {
         result.sweep_failures.push_back({i,std::string("turn_")+failureName(sweep_failure),
             path[i],path[i+1],path[i],horizontal,rise});
       }

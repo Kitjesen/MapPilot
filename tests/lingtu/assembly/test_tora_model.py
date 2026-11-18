@@ -44,11 +44,8 @@ def test_tora_envelope_compiles_with_existing_navigation_fields() -> None:
 
     assert float(environment["LINGTU_NAV_COLLISION_CYLINDER_RADIUS_M"]) == .52
     assert float(environment["LINGTU_NAV_COLLISION_CYLINDER_OFFSET_M"]) == 0.0
-    assert float(environment["LINGTU_NAV_OCTO_ROBOT_RADIUS_M"]) == .52
     assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_BELOW_M"]) == .14
     assert float(environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"]) == 1.57
-    assert float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_BELOW_M"]) == pytest.approx(.15)
-    assert float(environment["LINGTU_NAV_OCTO_BODY_CLEARANCE_ABOVE_M"]) == 1.60
     assert float(environment["LINGTU_NAV_OCTO_SUPPORT_HEIGHT_M"]) == pytest.approx(.178000853265161)
     map_environment = mapd_environment(default_map_settings(), environment)
     assert float(map_environment["LINGTU_MAPD_INFLATION_RADIUS_M"]) == .52

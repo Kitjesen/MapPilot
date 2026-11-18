@@ -368,7 +368,7 @@ def test_shared_navigation_topics_join_product_in_order(settings_root: Path) -> 
     (root / "products/demo.yaml").write_text(
         "includes: [global, extra]\n"
         "topics: [/tf, /nav/state]\n"
-        "native_nav: {global: {preblocked: false, robot_radius_m: 0.3}}\n",
+        "native_nav: {global: {preblocked: false}}\n",
         encoding="utf-8",
     )
     (root / "settings/global.yaml").write_text(
@@ -388,7 +388,6 @@ def test_shared_navigation_topics_join_product_in_order(settings_root: Path) -> 
         "octoplanner3d_support_patch_radius_cells": 2,
         "octoplanner3d_support_patch_min_samples": 3,
         "octoplanner3d_enable_preblocked_costmap": False,
-        "octoplanner3d_robot_radius": 0.3,
     }
 
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "planning/global/contract.hpp"
@@ -11,7 +12,8 @@ namespace lingtu::nav::endpoint {
 // GoalPlan runtime. Absence of a trigger is represented by std::nullopt at the
 // producer boundary, so this enum intentionally has no untyped/unknown value.
 enum class GoalReplanTriggerKind {
-  kLocalRecoveryExhausted,
+  // SCAN exhausted its local retries at an occupied point on the route.
+  kLocalPlanningBlocked,
 };
 
 // Stable identity of the active external goal for which a replan is requested.
@@ -36,9 +38,12 @@ inline bool sameGoalReplanIdentity(const GoalReplanIdentity &left,
 }
 
 struct GoalReplanTrigger {
-  GoalReplanTriggerKind kind{GoalReplanTriggerKind::kLocalRecoveryExhausted};
+  GoalReplanTriggerKind kind{GoalReplanTriggerKind::kLocalPlanningBlocked};
   std::string reason;
   GoalReplanIdentity goal{};
+  // Planning-frame point and the live obstacle generation that observed it.
+  std::optional<lingtu::nav::plan::GlobalPlanPoint> blocked_point{};
+  std::uint64_t obstacle_generation{0U};
 };
 
 }  // namespace lingtu::nav::endpoint

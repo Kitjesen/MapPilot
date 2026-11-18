@@ -380,7 +380,8 @@ int32_t lt_mls_artifact_check_metric_poses(
     const LtMlsArtifact* handle, const LtMlsPose* route, uint64_t route_len,
     const LtMlsGeometry* geometry, LtMlsRouteCheckResult* result);
 
-// Same query statuses as query_checked. Geometry and turns run entirely in Rust.
+// Same query statuses as query_checked, plus 4 when the start and 5 when the
+// goal has no admissible surface within the snap radius. Geometry runs in Rust.
 int32_t lt_mls_artifact_query_metric(
     const LtMlsArtifact* handle, LtMlsPose start, LtMlsPose goal,
     int32_t max_snap_cells, int32_t max_iterations,

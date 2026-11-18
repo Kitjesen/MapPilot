@@ -170,10 +170,11 @@ int main(int argc, char** argv) try {
   const std::vector<PointPose> away{{.05,.05,.385},{.05,.65,.385}};
   compare("dual_in",corner,into,true,{},false,false,dual);
   compare("dual_out",corner,away,true,{},false,false,dual);
-  compare("dual_vertex",corner,{into.front(),into.back(),away.back()},false,{},false,false,dual);
+  // Vertices and the start yaw are not pivots; the terminal yaw still is.
+  compare("dual_vertex",corner,{into.front(),into.back(),away.back()},true,{},false,false,dual);
   auto start_turn=away;
   start_turn.front().yaw=0.0;
-  compare("start_yaw",corner,start_turn,false,{},true,false,dual);
+  compare("start_yaw",corner,start_turn,true,{},true,false,dual);
   auto goal_turn=into;
   goal_turn.back().yaw=1.5707963267948966;
   compare("goal_yaw",corner,goal_turn,false,{},false,false,dual);

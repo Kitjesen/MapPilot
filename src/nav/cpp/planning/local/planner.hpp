@@ -82,7 +82,6 @@ struct LocalPlannerParams {
   double traversabilitySoftCost{::lingtu::settings::local::native_nav::traversability_soft_cost};
   double traversabilityWeight{::lingtu::settings::local::native_nav::traversability_weight};
   int scoringThreads{::lingtu::settings::local::native_nav::local_planner_threads};
-  int debugCandidateLimit{::lingtu::settings::local::native_nav::local_planner_debug_candidates};
 };
 
 // Non-owning views used only for the duration of one synchronous plan call.
@@ -355,37 +354,6 @@ class LocalPlan {
   ControlHints hints_{};
 };
 
-enum class LocalCandidateState {
-  Feasible,
-  CollisionBlocked,
-  RotationBlocked,
-  TerrainCost,
-  TerrainBlocked,
-  DirectionRejected,
-};
-
-const char *localCandidateStateName(LocalCandidateState state);
-
-struct LocalPlanCandidate {
-  int rotationIndex{-1};
-  int groupId{-1};
-  double rotationDeg{0.0};
-  double aggregateScore{0.0};
-  double terrainRisk{-1.0};
-  int totalPathCount{0};
-  int collisionFreePathCount{0};
-  int directionAllowedPathCount{0};
-  int terrainAllowedPathCount{0};
-  int directionScoredPathCount{0};
-  int heightCostAllowedPathCount{0};
-  int terrainSoftPenalizedPathCount{0};
-  int contributingPathCount{0};
-  bool rotationAllowed{true};
-  bool selected{false};
-  LocalCandidateState state{LocalCandidateState::DirectionRejected};
-  std::vector<Vec3> path;
-};
-
 struct ScanAttemptDiagnostics {
   std::uint64_t attemptId{0};
   double timestampS{0.0};  // Attempt time; timer/status refreshes do not renew it.
@@ -481,19 +449,8 @@ struct LocalPlannerDebugSnapshot {
   ScanAttemptDiagnostics scanAttempt;
   std::optional<LocalCollisionEvidence> collisionEvidence;
   std::shared_ptr<const ScanFailureSnapshot> lastScanFailure;
-  double pathScale{0.0};
-  double pathRange{0.0};
-  double relativeGoalDistanceM{0.0};
-  double traversabilitySoftCost{0.0};
-  double traversabilityHardCost{0.0};
-  int validRotationCount{0};
-  int selectedGroupId{-1};
-  std::vector<LocalPlanCandidate> candidates;
 };
 
-inline constexpr int kPathNum = 343;
-inline constexpr int kGroupNum = 7;
-inline constexpr int kRotDirs = 36;
 
 // Public local-planning module, independent of the selected algorithm.
 class LocalPlanner {
@@ -518,6 +475,11 @@ class LocalPlanner {
                                 const std::vector<Pose> &poses) const;
   [[nodiscard]] bool boundaryDepartureClear(const LocalPlanRequest &request,
                                             const Vec3 &target) const;
+  // First reference point ahead of the robot whose approach is occupied in the
+  // live collision grid. Stops without a result where the reference leaves
+  // the observed window, so unobserved space is never reported as blocked.
+  [[nodiscard]] std::optional<Vec3> firstBlockedReferencePoint(
+      const LocalPlanRequest &request) const;
   void pause();
   void reset();
 

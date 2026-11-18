@@ -17,6 +17,9 @@ parameters:
   risk.stop_threshold: 50.0
   risk.resume_threshold: 40.0
 
+# Fallbacks for fields a Product or RobotConfig normally supplies. Both the
+# RunPlan compiler and the generated native defaults read them; they are not
+# a second runtime profile.
 standalone:
   parameters:
     map_input.max_cells: 262144

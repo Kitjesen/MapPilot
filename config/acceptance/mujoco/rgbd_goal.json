@@ -8,7 +8,6 @@
   "slam_runtime": {"provider": "mujoco_navigation_fixture", "mode": "localization"},
   "driver_runtime": {"command_timeout_ms": 500, "heartbeat_timeout_ms": 10000, "apply_timeout_ms": 30000},
   "planner_constraints": {
-    "robot_radius_m": 0.95,
     "max_iterations": 300000,
     "ground_support": true,
     "direct_support_only": true,
