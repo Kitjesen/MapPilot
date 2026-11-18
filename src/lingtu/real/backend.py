@@ -554,7 +554,6 @@ class FieldBackend:
             # These values deliberately override persistent unit defaults. The
             # navigation runner only re-enables a planner map for localization.
             "OCTOPLANNER_MAP_PATH": "",
-            "FAR_OCCUPANCY_PATH": "",
             "EXPLORE_OCCUPANCY_PATH": "",
             **native,
         }
@@ -568,16 +567,6 @@ class FieldBackend:
                     "OCTOPLANNER_MAP_PATH": _local_artifact_path(
                         artifact,
                         purpose="OctoPlanner3D",
-                        map_root=self._maps_root(),
-                        map_id=map_identity.map_id,
-                    )
-                }
-            elif planner == "far":
-                artifact = occupancy_artifact(map_identity)
-                planner_environment = {
-                    "FAR_OCCUPANCY_PATH": _local_artifact_path(
-                        artifact,
-                        purpose="FAR",
                         map_root=self._maps_root(),
                         map_id=map_identity.map_id,
                     )

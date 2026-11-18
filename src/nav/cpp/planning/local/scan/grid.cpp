@@ -47,7 +47,8 @@ Grid::Grid(const LocalPlannerParams &params, const LocalPlanRequest &input)
       clearanceAbove_(std::max(0.0, params.scan.bodyClearanceAbove)),
       robotYaw_(input.robot.pose.yaw),
       robotPosition_(input.robot.pose.position),
-      collision_(input.environment.collision), body_(input.observedBody ? input.observedBody : input.body),
+      collision_(input.environment.collision),
+      body_(input.observedBody ? input.observedBody : input.body),
       no_go_regions_(input.environment.no_go_regions) {
   if (input.observedBody && !input.body) {
     reason_ = "body_model_missing";

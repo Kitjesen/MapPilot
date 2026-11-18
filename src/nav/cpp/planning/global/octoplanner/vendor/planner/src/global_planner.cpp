@@ -532,6 +532,17 @@ namespace global_planner
     bool OctoPlanner3D::startPlan()
     {
         planner_results_.clear();
+        if (has_start_) {
+            TraversabilityFailure start_failure = TraversabilityFailure::None;
+            const octomap::point3d start(
+                start_point_.x, start_point_.y, start_point_.z);
+            if (!isStartConnectionAllowed(start, start, &start_failure)) {
+                endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                endpoint_resolution_.start_failure = start_failure;
+                search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                return false;
+            }
+        }
         EdgeCost clearance_cost;
         if(obstacle_clearance_weight_>0 && obstacle_clearance_radius_cells_>0) {
             clearance_cost=[&](const PointPose &from,const PointPose &to) {
@@ -1102,7 +1113,8 @@ namespace global_planner
             const double yaw=(to-from).norm()>1e-9?std::atan2(to.y()-from.y(),to.x()-from.x()):start_point_.yaw.value_or(0.0);
             const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
             // The actual start may contain the robot or incomplete ground observations.
-            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start,yaw);
+            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,true,yaw,
+                body_offset_m_ == 0.0);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
             if(from==to)return true;
             const auto target=queryWorld(to,robot_radius_,ground_support_,true,yaw);
@@ -1121,7 +1133,8 @@ namespace global_planner
                 from.x()+t*(to.x()-from.x()), from.y()+t*(to.y()-from.y()),
                 from.z()+t*(to.z()-from.z()));
             if(actual_start&&(i==0||from==to)) {
-                const auto origin=queryWorld(from,robot_radius_,false,false);
+                const auto origin=queryWorld(from,robot_radius_,false,true,
+                    start_point_.yaw.value_or(0.0), body_offset_m_ == 0.0);
                 if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
                 continue;
             }
@@ -1976,14 +1989,17 @@ namespace global_planner
     }
 
     OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryWorld(
-        const octomap::point3d &point, double radius, bool require_support, bool check_body, double yaw) const
+        const octomap::point3d &point, double radius, bool require_support, bool check_body,
+        double yaw, bool allow_center_occupancy) const
     {
-        if(body_offset_m_==0 || radius==0)return queryCylinder(point,radius,require_support,check_body);
+        if(body_offset_m_==0 || radius==0)
+            return queryCylinder(point,radius,require_support,check_body,true,allow_center_occupancy);
         const auto support=queryBase(point,require_support);
         if(support!=TraversabilityFailure::None)return support;
         const octomap::point3d offset(body_offset_m_*std::cos(yaw),body_offset_m_*std::sin(yaw),0);
         for(double sign:{-1.0,1.0}) {
-            const auto failure=queryCylinder(point+offset*sign,radius,false,check_body,false);
+            const auto failure=queryCylinder(point+offset*sign,radius,false,check_body,false,
+                allow_center_occupancy);
             if(failure!=TraversabilityFailure::None)return failure;
         }
         return TraversabilityFailure::None;
@@ -2023,7 +2039,8 @@ namespace global_planner
     }
 
     OctoPlanner3D::TraversabilityFailure OctoPlanner3D::queryCylinder(
-        const octomap::point3d &p, double radius, bool require_support, bool check_body, bool check_center) const
+        const octomap::point3d &p, double radius, bool require_support, bool check_body,
+        bool check_center, bool allow_center_occupancy) const
     {
         if (noGoIntersects(p, p, radius)) return TraversabilityFailure::ExternalPreblockedBody;
         const auto failure=check_center?queryBase(p,require_support):TraversabilityFailure::None;
@@ -2035,6 +2052,7 @@ namespace global_planner
         const double above = explicit_body ? std::max(0.0, body_clearance_above_m_) : r;
         const auto low = worldToGrid(p.x() - radius, p.y() - radius, p.z() - below);
         const auto high = worldToGrid(p.x() + radius, p.y() + radius, p.z() + above);
+        const auto center = worldToGrid(p.x(), p.y(), p.z());
         const auto check_cells = [&](const GridIndex &lo, const GridIndex &hi, bool occupied) {
             for (int x = lo.x; x <= hi.x; ++x) {
                 const double dx = std::max({x * r - p.x(), 0.0, p.x() - (x + 1) * r});
@@ -2047,6 +2065,12 @@ namespace global_planner
                         const GridIndex voxel{x, y, z};
                         if (external_preblocked_cells_.count(voxel))
                             return TraversabilityFailure::ExternalPreblockedBody;
+                        if (allow_center_occupancy && voxel.x == center.x &&
+                            voxel.y == center.y &&
+                            (voxel.z < center.z ||
+                             (voxel.z == center.z && start_exemption_ &&
+                              start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r))))
+                            continue;
                         if (body_collision_ && (occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
                             !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
                             return TraversabilityFailure::OccupiedBody;

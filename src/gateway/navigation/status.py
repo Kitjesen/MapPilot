@@ -123,7 +123,6 @@ def _native_endpoint_readiness(
             "ok": None,
             "navigation_ready": None,
             "blockers": [],
-            "far_input": {"required": False, "ready": True, "reason": "not_required"},
             "input_gate": {},
             "status_available": None,
             "active_cmd_source": None,
@@ -140,7 +139,6 @@ def _native_endpoint_readiness(
             "ok": False,
             "navigation_ready": False,
             "blockers": ["run_plan_missing"],
-            "far_input": {},
             "input_gate": {},
             "status_available": None,
             "active_cmd_source": "unknown",
@@ -164,7 +162,6 @@ def _native_endpoint_readiness(
             "ok": False,
             "navigation_ready": False,
             "blockers": ["native_endpoint_status_missing_or_stale"],
-            "far_input": {},
             "input_gate": {},
             "status_available": False,
             "active_cmd_source": "unknown",
@@ -287,7 +284,6 @@ def _native_endpoint_readiness(
     if control_mode != expected_control_mode:
         blockers.append("native_control_mode_mismatch")
     global_planner = str(snapshot.get("global_planner") or "").strip().lower()
-    far_input = _mapping(snapshot.get("far_input"))
     assisted_teleop_required = plan is not None and bool(
         {
             "operator_assisted_local_planner_control",
@@ -348,15 +344,6 @@ def _native_endpoint_readiness(
     aliases = {"octo": "octoplanner3d", "octplanner": "octoplanner3d"}
     global_planner = aliases.get(global_planner, global_planner)
     expected_global_planner = aliases.get(expected_global_planner, expected_global_planner)
-    if global_planner == "far":
-        if not far_input:
-            blockers.append("native_far_input_status_missing")
-        elif far_input.get("required") is not True:
-            blockers.append("native_far_input_contract_invalid")
-        elif far_input.get("ready") is not True:
-            blockers.append("native_far_input_not_ready")
-        elif not str(far_input.get("map_id") or "").strip() or _as_int(far_input.get("content_epoch"), 0) <= 0:
-            blockers.append("native_far_input_identity_invalid")
     planner_map = str(snapshot.get("planner_map") or "").strip()
     operator_motion = _mapping(snapshot.get("operator_motion"))
     operator_motion_status_available = bool(operator_motion)
@@ -424,7 +411,6 @@ def _native_endpoint_readiness(
         "teleop_local_planner": teleop_local_planner,
         "check_obstacle": check_obstacle,
         "use_traversability_cost": use_traversability_cost,
-        "far_input": dict(far_input),
         "motion_stop_evidence": _mapping(_mapping(snapshot).get("motion_stop_evidence")),
         "operator_motion": {
             "required": operator_motion_required,

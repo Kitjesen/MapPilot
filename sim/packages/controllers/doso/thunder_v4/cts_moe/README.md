@@ -18,6 +18,15 @@ The compatibility MuJoCo feeder and plan-driven controller provider both use
 the CTS observation/runtime contract. Input compatibility alone does not
 qualify complete native navigation or physical robot behavior.
 
+The 2026-11-18 lateral characterization held `linear_y` at 0, ±0.15, ±0.25,
+and ±0.35 m/s for seven seconds on the current MuJoCo scene. The ±0.15 and
+±0.25 commands produced almost no body-frame lateral velocity, while ±0.35
+produced about ±0.27–0.30 m/s. Every sample had only floor-to-wheel support
+contacts and zero non-support contacts. This identifies a low-speed CTS response
+limitation in this simulation, not a collision diagnosis. The raw trajectory,
+contact pairs, forces, and plots are in
+`build/cts-v39-lateral-contact-20261118/`. This does not set a field speed cap.
+
 The model comes from the supplied `thunder_cts_moe_v39_model61128` bundle:
 `model_61128.pt` / `student_61129.pt`, exported as the static 1 x 530 / 1 x 53
 ONNX in `policy/policy_cts_moe_v39_61128.onnx`. The file is a copy of the

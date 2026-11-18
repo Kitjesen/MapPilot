@@ -54,37 +54,6 @@ if(NOT TARGET lingtu_nav_body)
   set_target_properties(lingtu_nav_body PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-if(NOT TARGET lingtu_nav_far)
-  add_library(lingtu_nav_far STATIC
-    "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/planner.cpp")
-  add_library(LingTuNav::far ALIAS lingtu_nav_far)
-  target_compile_features(lingtu_nav_far PUBLIC cxx_std_17)
-  target_link_libraries(lingtu_nav_far PUBLIC "$<BUILD_INTERFACE:lingtu_settings>")
-  target_include_directories(lingtu_nav_far PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>")
-  set_target_properties(lingtu_nav_far PROPERTIES
-    POSITION_INDEPENDENT_CODE ON)
-  target_compile_options(lingtu_nav_far PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W4>
-    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
-  lingtu_nav_enable_performance(lingtu_nav_far)
-endif()
-
-if(NOT TARGET lingtu_nav_far_c_api)
-  add_library(lingtu_nav_far_c_api SHARED
-    "${LINGTU_NAV_GLOBAL_PLANNING_DIR}/far/api.cpp")
-  add_library(LingTuNav::far_c_api ALIAS lingtu_nav_far_c_api)
-  target_compile_features(lingtu_nav_far_c_api PUBLIC cxx_std_17)
-  target_include_directories(lingtu_nav_far_c_api PUBLIC
-    "$<BUILD_INTERFACE:${LINGTU_NAV_CPP_ROOT}>")
-  target_link_libraries(lingtu_nav_far_c_api PRIVATE lingtu_nav_far)
-  target_compile_definitions(lingtu_nav_far_c_api PRIVATE
-    LINGTU_NAV_FAR_C_API_BUILD)
-  set_target_properties(lingtu_nav_far_c_api PROPERTIES
-    OUTPUT_NAME "nav_far")
-  lingtu_nav_enable_performance(lingtu_nav_far_c_api)
-endif()
-
 # Shared navigation source root consumed by endpoint and test targets.
 set(LINGTU_NAV_KERNEL_DIR "${LINGTU_NAV_CPP_ROOT}")
 

@@ -217,7 +217,7 @@ impl Checker<'_> {
                 return Ok(candidate);
             }
         }
-        Err(QueryError::Exhausted)
+        Err(QueryError::GoalUnreachable)
     }
 
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
@@ -437,9 +437,23 @@ impl Checker<'_> {
     }
 
     fn body_query(&self, point: LtMlsPoint, radius: f64) -> u32 {
+        self.body_query_with_initial_center(point, radius, false)
+    }
+
+    fn body_query_initial(&self, point: LtMlsPoint, radius: f64) -> u32 {
+        self.body_query_with_initial_center(point, radius, true)
+    }
+
+    fn body_query_with_initial_center(
+        &self,
+        point: LtMlsPoint,
+        radius: f64,
+        allow_initial_center: bool,
+    ) -> u32 {
         let c = self.config;
         let (below, above) = self.body_extent();
         let support_z = self.floor(point);
+        let center = self.cell(point);
         let low = self.cell(LtMlsPoint {
             x: point.x - radius,
             y: point.y - radius,
@@ -472,6 +486,14 @@ impl Checker<'_> {
                             continue;
                         }
                         let cell = SurfaceCell::new(x, y, z);
+                        if allow_initial_center
+                            && x == center.x
+                            && y == center.y
+                            && (z < center.z
+                                || (z == center.z && c.start_exemption != 0))
+                        {
+                            continue;
+                        }
                         if !self.exempt(cell) && !self.is_support_terrain(cell, support_z) {
                             return ROUTE_OCCUPIED;
                         }
@@ -488,6 +510,14 @@ impl Checker<'_> {
                     if self.preblocked.contains(&cell) {
                         return ROUTE_NO_GO;
                     }
+                    if allow_initial_center
+                        && x == center.x
+                        && y == center.y
+                        && (z < center.z
+                            || (z == center.z && c.start_exemption != 0))
+                    {
+                        continue;
+                    }
                     if self.occupied.contains(&cell)
                         && !self.exempt(cell)
                         && !self.is_support_terrain(cell, support_z)
@@ -495,6 +525,34 @@ impl Checker<'_> {
                         return ROUTE_OCCUPIED;
                     }
                 }
+            }
+        }
+        ROUTE_OK
+    }
+
+    fn actual_start_query(&self, point: LtMlsPoint, yaw: f64) -> u32 {
+        let failure = self.base_query(point, false);
+        if failure != ROUTE_OK {
+            return failure;
+        }
+        let (below, above) = self.body_extent();
+        for offset in self.offsets() {
+            let center = shifted(point, offset, yaw);
+            if self.regions.iter().any(|region| {
+                no_go(
+                    *region,
+                    center,
+                    center,
+                    self.config.robot_radius,
+                    below,
+                    above,
+                )
+            }) {
+                return ROUTE_NO_GO;
+            }
+            let failure = self.body_query_initial(center, self.config.robot_radius);
+            if failure != ROUTE_OK {
+                return failure;
             }
         }
         ROUTE_OK
@@ -712,6 +770,7 @@ impl Checker<'_> {
         to: LtMlsPoint,
         support: bool,
         yaw: f64,
+        actual_start: bool,
     ) -> Option<(u32, LtMlsPoint)> {
         let c = self.config;
         if self.cancelled() {
@@ -755,6 +814,12 @@ impl Checker<'_> {
             if failure == ROUTE_OK {
                 continue;
             }
+            if failure == ROUTE_UNSUPPORTED
+                && actual_start
+                && self.departure_without_support(point, from, yaw)
+            {
+                continue;
+            }
             if failure != ROUTE_UNSUPPORTED
                 || (to.z - from.z).abs() < 1e-7
                 || self.oriented_query(point, yaw, false, !self.preblocked.is_empty()) != ROUTE_OK
@@ -777,6 +842,31 @@ impl Checker<'_> {
         }
         None
     }
+    fn departure_without_support(&self, point: LtMlsPoint, from: LtMlsPoint, yaw: f64) -> bool {
+        if self.surface_below(point) {
+            return false;
+        }
+        let offset = self.config.body_offset;
+        if offset <= 0.0 {
+            return false;
+        }
+        [-1.0, 1.0].into_iter().any(|sign| {
+            let center = LtMlsPoint {
+                x: from.x + sign * yaw.cos() * offset,
+                y: from.y + sign * yaw.sin() * offset,
+                z: from.z,
+            };
+            (point.x - center.x).hypot(point.y - center.y) <= self.config.robot_radius + EPSILON
+        })
+    }
+
+    fn surface_below(&self, point: LtMlsPoint) -> bool {
+        let cell = self.cell(point);
+        self.surface
+            .get(&(cell.x, cell.y))
+            .is_some_and(|levels| levels.iter().any(|&z| z <= cell.z))
+    }
+
     fn rotation(&self, point: LtMlsPoint, from_yaw: f64, to_yaw: f64) -> Option<(u32, LtMlsPoint)> {
         if self.config.body_offset == 0.0 || from_yaw == to_yaw {
             return None;
@@ -1206,12 +1296,16 @@ impl Checker<'_> {
             // turns along a continuous spline and checks that sweep against
             // live occupancy. Only an explicit terminal yaw needs a turn here.
             let actual_start = index == 0 && starts_at_actual;
-            let failure = self.oriented_query(
-                from,
-                heading,
-                config.ground_support != 0 && !actual_start,
-                !actual_start,
-            );
+            let failure = if actual_start && config.body_offset == 0.0 {
+                self.actual_start_query(from, heading)
+            } else {
+                self.oriented_query(
+                    from,
+                    heading,
+                    config.ground_support != 0 && !actual_start,
+                    !actual_start,
+                )
+            };
             if failure != ROUTE_OK {
                 return route_failure(failure, index as i32, self.cell(from));
             }
@@ -1223,7 +1317,7 @@ impl Checker<'_> {
             if failure != ROUTE_OK {
                 return route_failure(failure, index as i32, self.cell(to));
             }
-            if let Some((failure, point)) = self.sweep(from, to, true, heading) {
+            if let Some((failure, point)) = self.sweep(from, to, true, heading, actual_start) {
                 return route_failure(failure, index as i32, self.cell(point));
             }
             previous_heading = Some(heading);
@@ -1327,7 +1421,7 @@ mod tests {
             let checker = prepare(&state, limits, &[], &[], None, std::ptr::null_mut()).unwrap();
             assert!(matches!(
                 resolve(&checker, goal),
-                Err(QueryError::Exhausted)
+                Err(QueryError::GoalUnreachable)
             ));
         }
         let region = [LtMlsMetricRegion {
@@ -1337,7 +1431,7 @@ mod tests {
         let checker = prepare(&state, c, &region, &[], None, std::ptr::null_mut()).unwrap();
         assert!(matches!(
             resolve(&checker, goal),
-            Err(QueryError::Exhausted)
+            Err(QueryError::GoalUnreachable)
         ));
         assert!(matches!(
             checker.resolve_goal(start, goal, 4, &mut Budget { remaining: 0 }),

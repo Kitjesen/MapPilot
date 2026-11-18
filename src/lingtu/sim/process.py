@@ -260,6 +260,23 @@ class SimProcessManager:
             environment = self._bootstrap_environment()
             environment.update(plan.native_process_environment)
             environment.update(command_environment)
+            if process.target == "host_runtime":
+                # The Host owns model calls. Keep provider credentials out of
+                # native children while making the configured Agent usable.
+                for key in ("PATH", "CODEX_HOME", "XDG_STATE_HOME"):
+                    value = os.environ.get(key)
+                    if value:
+                        environment[key] = value
+                for key in (
+                    "MOONSHOT_API_KEY",
+                    "OPENAI_API_KEY",
+                    "ANTHROPIC_API_KEY",
+                    "DASHSCOPE_API_KEY",
+                    "XAI_API_KEY",
+                ):
+                    value = os.environ.get(key)
+                    if value:
+                        environment[key] = value
             environment.update(identity)
             if process.target in bound:
                 raise ProcessError(f"duplicate simulation process target: {process.target}")

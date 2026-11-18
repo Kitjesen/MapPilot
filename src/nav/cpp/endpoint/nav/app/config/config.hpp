@@ -7,7 +7,6 @@
 #include <string_view>
 #include <vector>
 
-#include "planning/global/far/planner.hpp"
 #include "planning/global/contract.hpp"
 #include "planning/local/planner.hpp"
 #include "nav_kernel/velocity_smoother.hpp"
@@ -31,7 +30,6 @@ enum class ControlMode {
 
 enum class GlobalPlannerBackend {
   OctoPlanner3D,
-  Far,
 };
 
 const char *controlModeName(ControlMode mode);
@@ -39,10 +37,7 @@ const char *globalPlannerBackendName(GlobalPlannerBackend backend);
 
 struct CliConfig {
   ControlMode control_mode{ControlMode::Autonomy};
-  GlobalPlannerBackend global_planner{
-      std::string_view(::lingtu::settings::global::native_nav::global::planner) == "far"
-          ? GlobalPlannerBackend::Far
-          : GlobalPlannerBackend::OctoPlanner3D};
+  GlobalPlannerBackend global_planner{GlobalPlannerBackend::OctoPlanner3D};
   nav_kernel::LocalPlannerBackend local_planner_backend{nav_kernel::LocalPlannerBackend::Scan};
   int domain_id{0};
   std::vector<nav_kernel::LocalPlannerBackend> local_planners{
@@ -134,7 +129,6 @@ struct CliConfig {
   double sensor_offset_y_m{0.0};
   double sensor_offset_z_m{0.0};
   lingtu::nav::plan::GlobalPlannerOptions octoplanner_options{};
-  lingtu::nav::plan::far_planner::FarPlannerConfig far_options{};
   lingtu::nav::plan::MapIdentity map_identity{};
   std::string path_library_dir;
   std::string map_path;

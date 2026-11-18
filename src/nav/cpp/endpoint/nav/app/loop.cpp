@@ -434,9 +434,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
     admission.odometry_ready = odom_body.has_value();
     admission.planner_map_configured = !cfg.map_path.empty();
-    admission.planner_map_missing_reason = cfg.global_planner == GlobalPlannerBackend::Far
-                                               ? "active_occupancy_not_configured"
-                                               : "active_octomap_not_configured";
+    admission.planner_map_missing_reason = "active_octomap_not_configured";
     admission.frame_epoch = frame_epoch;
     admission.rolling_segment_active = rolling_segment.snapshot().active;
     admission.planner_options = cfg.octoplanner_options;
@@ -492,9 +490,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     context.retained_path_ready = executor.hasRoute() && !last_global_path.empty();
     context.retained_path_reason = "retained_global_path_missing";
     context.replan_pending = replan.replanPending();
-    context.planner_map_missing_reason = cfg.global_planner == GlobalPlannerBackend::Far
-                                             ? "active_occupancy_not_configured"
-                                             : "active_octomap_not_configured";
+    context.planner_map_missing_reason = "active_octomap_not_configured";
     context.frame_epoch = frame_epoch;
     context.rolling_segment_active = rolling_segment.snapshot().active;
     context.planner_options = cfg.octoplanner_options;
@@ -1434,8 +1430,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         return;
       }
       if (cfg.map_path.empty()) {
-        reject(cfg.global_planner == GlobalPlannerBackend::Far ? "active_occupancy_not_configured"
-                                                               : "active_octomap_not_configured");
+        reject("active_octomap_not_configured");
         return;
       }
       const auto active_goal = goal_plan.snapshot();

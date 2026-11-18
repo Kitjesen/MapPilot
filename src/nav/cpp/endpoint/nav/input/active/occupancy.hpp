@@ -8,25 +8,31 @@
 #include <string>
 #include <utility>
 
-#include "planning/global/far/planner.hpp"
+#include "planning/global/contract.hpp"
+#include "lingtu/maps/build/grids.hpp"
 
 namespace lingtu::nav::endpoint {
 
-class ValidatedFarMap {
+class ValidatedOccupancyMap {
  public:
-  const plan::far_planner::FarGridMap &map() const { return map_; }
-  const plan::MapIdentity &identity() const { return map_.identity; }
-  std::uint64_t generation() const { return map_.generation; }
+  const lingtu::maps::OccupancyArtifactData &data() const { return data_; }
+  const plan::MapIdentity &identity() const { return identity_; }
+  std::uint64_t generation() const { return generation_; }
 
  private:
   friend class ActiveOccupancyGate;
-  explicit ValidatedFarMap(plan::far_planner::FarGridMap map) : map_(std::move(map)) {}
+  explicit ValidatedOccupancyMap(lingtu::maps::OccupancyArtifactData data,
+                                plan::MapIdentity identity,
+                                std::uint64_t generation)
+      : data_(std::move(data)), identity_(std::move(identity)), generation_(generation) {}
 
-  plan::far_planner::FarGridMap map_;
+  lingtu::maps::OccupancyArtifactData data_;
+  plan::MapIdentity identity_;
+  std::uint64_t generation_{0U};
 };
 
 struct ActiveOccupancyGateResult {
-  std::shared_ptr<const ValidatedFarMap> artifact;
+  std::shared_ptr<const ValidatedOccupancyMap> artifact;
   std::string reason;
 
   bool ok() const { return artifact != nullptr; }
@@ -53,14 +59,8 @@ class ActiveOccupancyGate {
  private:
   plan::MapIdentity identity_;
   mutable std::mutex mutex_;
-  mutable std::shared_ptr<const ValidatedFarMap> cached_artifact_;
+  mutable std::shared_ptr<const ValidatedOccupancyMap> cached_artifact_;
   mutable std::uint64_t next_generation_{1U};
 };
-
-plan::GlobalPlanResult
-runWithActiveOccupancy(const ActiveOccupancyGate &gate,
-                       const std::filesystem::path &configured_occupancy_path,
-                       plan::far_planner::FarPlanner &planner, const plan::GlobalPlanRequest &request,
-                       const plan::GlobalPlanCancelCheck &cancel_check = {});
 
 }  // namespace lingtu::nav::endpoint

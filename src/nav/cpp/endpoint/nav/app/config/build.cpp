@@ -47,8 +47,6 @@ const char *globalPlannerBackendName(GlobalPlannerBackend backend) {
   switch (backend) {
     case GlobalPlannerBackend::OctoPlanner3D:
       return "octoplanner3d";
-    case GlobalPlannerBackend::Far:
-      return "far";
   }
   return "unknown";
 }
@@ -180,7 +178,6 @@ StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.cloud_pose_max_gap_s = cfg.cloud_pose_max_gap_s;
   out.input_future_tolerance_s = cfg.input_future_tolerance_s;
   out.octoplanner_options = cfg.octoplanner_options;
-  out.far_options = cfg.far_options;
   // Input gate fields
   out.input_require_odom = gate_cfg.require_odom;
   out.input_require_cloud = gate_cfg.require_cloud;

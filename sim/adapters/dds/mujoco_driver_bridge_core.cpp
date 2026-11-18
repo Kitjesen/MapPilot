@@ -161,12 +161,14 @@ std::optional<BridgeCommand> MujocoDriverBridgeCore::onWriterCount(std::uint32_t
     }
     return std::nullopt;
   }
-  const auto cause = matched_writers == 0 ? BridgeStopCause::WriterMissing
-                                          : BridgeStopCause::WriterAmbiguous;
+  // The DDS writer can appear or disappear while the local controller is
+  // still connecting. Do not close the bridge before an authenticated
+  // controller exists because there is no channel for the fault evidence.
   if (controller_boot_id_.empty()) {
-    fail(matched_writers == 0 ? BridgeFaultCode::WriterMissing : BridgeFaultCode::WriterAmbiguous);
     return std::nullopt;
   }
+  const auto cause = matched_writers == 0 ? BridgeStopCause::WriterMissing
+                                          : BridgeStopCause::WriterAmbiguous;
   return requestStop(cause, now);
 }
 

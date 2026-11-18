@@ -333,6 +333,29 @@ def _spawn_daemon(
 ) -> subprocess.Popen[bytes]:
     environment = os.environ.copy()
     package_root = str(Path(__file__).resolve().parents[2])
+    # uv-managed Windows environments expose a small ``python.exe`` launcher
+    # as ``sys.executable``.  Spawning it creates a second long-lived Python
+    # process; the launcher PID is then different from the daemon PID recorded
+    # in daemon.json, which breaks exact cleanup when readiness fails.  Start
+    # the interpreter behind the launcher and put this venv's packages on the
+    # child path so the daemon keeps the same imports.
+    daemon_python = str(getattr(sys, "_base_executable", "") or "")
+    if os.name == "nt" and daemon_python and Path(daemon_python).is_file():
+        executable = Path(sys.executable).resolve()
+        base_executable = Path(daemon_python).resolve()
+        if executable != base_executable:
+            daemon_site = Path(sys.prefix) / "Lib" / "site-packages"
+            if daemon_site.is_dir():
+                inherited_site = environment.get("PYTHONPATH")
+                environment["PYTHONPATH"] = (
+                    f"{daemon_site}{os.pathsep}{inherited_site}"
+                    if inherited_site
+                    else str(daemon_site)
+                )
+        else:
+            daemon_python = str(executable)
+    else:
+        daemon_python = sys.executable
     inherited_pythonpath = environment.get("PYTHONPATH")
     environment["PYTHONPATH"] = (
         f"{package_root}{os.pathsep}{inherited_pythonpath}"
@@ -340,7 +363,7 @@ def _spawn_daemon(
         else package_root
     )
     command = (
-        sys.executable,
+        daemon_python,
         "-m",
         "lingtu.sim.daemon",
         "serve",
@@ -401,6 +424,10 @@ def _terminate_windows_process(pid: int) -> bool:
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
+    try:
+        ProcessIdentity.current(pid)
+    except ProcessIdentityError:
+        return True
     handle = kernel32.OpenProcess(
         process_terminate | synchronize,
         False,
@@ -411,7 +438,18 @@ def _terminate_windows_process(pid: int) -> bool:
     try:
         if not kernel32.TerminateProcess(handle, 1):
             return False
-        return bool(kernel32.WaitForSingleObject(handle, 1000) == wait_object_0)
+        wait_result = kernel32.WaitForSingleObject(handle, 1000)
+        if wait_result == wait_object_0:
+            return True
+        # A Python/uv launcher can report a non-zero wait result while the
+        # target has already exited.  The observable contract is that the
+        # recorded process is gone, so verify liveness once before reporting
+        # cleanup failure.
+        try:
+            ProcessIdentity.current(pid)
+        except ProcessIdentityError:
+            return True
+        return False
     finally:
         kernel32.CloseHandle(handle)
 

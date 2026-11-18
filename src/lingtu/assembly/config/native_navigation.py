@@ -90,8 +90,6 @@ _TUNING_INTEGER_FIELDS = frozenset({
     "max_obstacle_points", "local_planner_threads",
     "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
-    "far_corner_separation_cells", "far_snap_search_radius_cells",
-    "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",
 })
 _TUNING_BOOLEAN_FIELDS = frozenset({
     "smoother_scale_velocities", "live_obstacle_ray_clearing", "far_simplify_path",
@@ -384,7 +382,7 @@ def compile_native_nav_config(
         raise ValueError("native_control_mode must be autonomy, teleop, or teleop_avoid")
     global_planner = str(native_nav_config.get("global_planner") or defaults["global_planner"]).strip().lower()
     if global_planner not in _GLOBAL_PLANNERS:
-        raise ValueError("native_nav.global_planner must be octoplanner3d or far")
+        raise ValueError("native_nav.global_planner must be octoplanner3d")
     try:
         local_planner = local_planner_name(native_nav_config.get("local_planner") or defaults["local_planner"])
     except ValueError as exc:

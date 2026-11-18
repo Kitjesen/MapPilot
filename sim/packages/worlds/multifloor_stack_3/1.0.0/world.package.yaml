@@ -1,0 +1,18 @@
+schema: lingtu.sim.world-package.v1
+id: multifloor_stack_3
+version: 1.0.0
+kind: world
+description: Three-level stair stack used by the native MuJoCo navigation acceptance.
+physics:
+  mjcf: physics/multifloor.xml
+  global_policy:
+    timestep_s: 0.005
+    integrator: euler
+    solver: newton
+    iterations: 100
+    gravity_mps2: [0.0, 0.0, -9.81]
+visual:
+  binding: WorldVisual:MultifloorStack3
+  level: /Game/RobotSim/Maps/ThunderV4_RuntimePreview
+entities: []
+

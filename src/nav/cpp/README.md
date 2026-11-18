@@ -109,7 +109,7 @@ not contain planner or follower algorithms.
 
 [`planning/global/contract.hpp`](planning/global/contract.hpp) defines the
 backend-neutral request and result contract. The normal field backend is
-OctoPlanner3D; FAR is optional. Map artifact validation and asynchronous goal
+OctoPlanner3D. Map artifact validation and asynchronous goal
 identity checks belong to `endpoint/nav/input/active/` and
 `endpoint/nav/app/goal/`, not to the planner interface.
 

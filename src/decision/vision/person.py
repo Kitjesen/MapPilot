@@ -214,6 +214,7 @@ class PersonTracker:
         self._description: str = ""  # user description e.g. "person in red"
         self._target_selected: bool = False  # whether VLM has selected a target
         self._observation_context_valid = False
+        self._context_reacquisition_pending = False
         self._observation_accepted = False
         self._observation_reason = ""
         self._vlm_selecting: bool = False  # VLM selection in progress (re-entry guard)
@@ -1251,7 +1252,8 @@ class PersonTracker:
             return None
         second_score = candidates[1][0] if len(candidates) > 1 else -1.0
         local_match = (
-            not text_ranked
+            not self._context_reacquisition_pending
+            and not text_ranked
             and score >= self.LOCAL_REACQUIRE_MIN_SIMILARITY
             and (len(candidates) == 1 or score - second_score >= max(self._dino_margin, self.LOCAL_REACQUIRE_MARGIN))
         )
@@ -1629,6 +1631,7 @@ class PersonTracker:
             self._verified_identity = None
 
         self._observation_context_valid = True
+        self._context_reacquisition_pending = False
         return True
 
     def _init_person(self, obj: dict) -> None:
@@ -1798,6 +1801,7 @@ class PersonTracker:
             self._description = ""
             self._target_selected = False
             self._observation_context_valid = False
+            self._context_reacquisition_pending = False
             self._observation_accepted = False
             self._observation_reason = ""
             self._vlm_selecting = False
@@ -1833,6 +1837,7 @@ class PersonTracker:
             person.bbox = None
             person.obj_id = None
             self._observation_context_valid = False
+            self._context_reacquisition_pending = True
             self._observation_accepted = False
             self._observation_reason = "observation_context_changed"
             self._reset_reacquire()

@@ -3,8 +3,20 @@
   "extends": "navigation.json",
   "name": "mujoco_multifloor_native_navigation",
   "description": "Three-level ThunderV4 planning-motion acceptance using MuJoCo truth pose, OctoPlanner3D, SCAN, native tracking, and the RL locomotion chain.",
+  "localization": "mujoco_truth",
+  "simulation_session": "sim/sessions/examples/thunderv4_multifloor_stack_3/session.yaml",
+  "collision_geometry": {
+    "collision_cylinder_radius_m": 0.32,
+    "collision_cylinder_offset_m": 0.23,
+    "collision_clearance_below_m": 0.05,
+    "collision_clearance_above_m": 0.35
+  },
+  "scene_contract": {
+    "world": "multifloor_stack_3@1.0.0"
+  },
   "start": [7.0, -0.8, 0.55, 3.141592653589793],
   "goal": [7.4, 2.8, 4.15, 0.0],
+  "goal_world": [7.4, 2.8, 4.15],
   "asset_builder": {
     "scene_preset": "multifloor_stack_3",
     "resolution": 0.09,
@@ -92,6 +104,7 @@
       "start_anchor": "warmup"
     }
   },
+  "motion_duration_s": 180.0,
   "telemetry_log": {
     "enabled": true,
     "hz": 10.0,
@@ -112,6 +125,9 @@
     "min_cmd_vel_samples": 20,
     "min_motion_m": 4.0,
     "min_goal_distance_reduction_m": null,
+    "min_net_displacement_m": 1.0,
+    "min_input_gate_ready_fraction": 0.98,
+    "max_goal_error_m": 0.7,
     "require_slam_tracking": false,
     "require_slam_accuracy": false,
     "require_continuous_map_tracking": false,
