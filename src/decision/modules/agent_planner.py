@@ -1349,8 +1349,8 @@ class AgentPlannerModule(Module, layer=4):
                 logger.debug("native completion could not be persisted", exc_info=True)
         self._chat("assistant", text, phase=f"{completion['task_type']}_result", run_id=completion["run_id"])
 
-    def _sync_cached_domain_task(self, run: AgentRun) -> None:
-        if not run.domain_task_id or run.domain_completion_reported:
+    def _sync_cached_domain_task(self, run: AgentRun | None) -> None:
+        if run is None or not run.domain_task_id or run.domain_completion_reported:
             return
         status = self._domain_task_status(run)
         if isinstance(status, dict):
