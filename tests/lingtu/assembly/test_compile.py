@@ -410,11 +410,11 @@ def test_low_physical_speed_compiles_with_consistent_budget(max_linear: float, p
 def test_sim_motion_budget_uses_its_package_without_real_robot_limits() -> None:
     with patch("lingtu.assembly.config.product.load_config", side_effect=AssertionError("real RobotConfig read")):
         plan = compile_run_plan("nav", "sim", robot=SIM_ROBOT, local_planner="scan")
-    assert plan.parameters["scan_follower.max_vx_mps"] == 1.2
+    assert plan.parameters["scan_follower.max_vx_mps"] == 1.0
     assert plan.parameters["scan_follower.max_vy_mps"] == 1.0
     assert plan.parameters["scan_follower.position_gain"] == 1.5
     assert float(plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"]) == 1.0
-    assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.sqrt(2.0))
+    assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(1.0)
     geometry = plan.simulation["physics_plan"]["robots"][0]["navigation_geometry"]
     assert float(plan.native_process_environment["LINGTU_NAV_OCTO_MAX_SLOPE"]) == geometry["max_slope"]
 
@@ -460,7 +460,7 @@ def test_low_product_motion_budget_preserves_configured_deadband(env: str, produ
     ("real", REAL_ROBOT), ("real", SIM_ROBOT), ("sim", SIM_ROBOT),
 ])
 @pytest.mark.parametrize(("product", "speed", "forward", "accel", "lateral"), [
-    ("nav", math.sqrt(2.0), 1.2, 0.75, 1.0),
+    ("nav", 1.0, 1.0, 0.75, 1.0),
     ("inspection", math.sqrt(2.0), 1.0, 0.5, 1.0),
     ("teleop_avoid", math.sqrt(2.0), 1.0, 0.5, 1.0),
 ])
@@ -864,7 +864,7 @@ def test_field_product_compiles_module_graph_and_processes_together() -> None:
     assert product.has_process("maps")
     assert product.has_process("nav")
     assert product.has_process("driver")
-    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "1.4142135623731"
+    assert product.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"] == "1"
     assert product.native_process_environment["LINGTU_MAPD_OCCUPANCY_RESOLUTION_M"] == "0.05"
     assert "maps.service" not in product.modules
     assert not {
