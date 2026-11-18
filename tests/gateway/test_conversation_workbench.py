@@ -103,7 +103,8 @@ async def test_conversation_navigation_tools_use_native_gateway_owners(monkeypat
     tools, invoke = workbench_tools(SimpleNamespace())
     names = {tool["function"]["name"] for tool in tools}
     assert {"preview_navigation", "start_navigation", "get_navigation_status", "cancel_navigation",
-            "pause_navigation", "resume_navigation", "set_navigation_speed"} <= names
+            "pause_navigation", "resume_navigation", "set_navigation_speed",
+            "get_inspection_status"} <= names
     assert await invoke("preview_navigation", {"x": 1.0, "y": 2.0, "z": .4}) == {
         "ok": True, "feasible": True, "reasons": []
     }
@@ -111,6 +112,20 @@ async def test_conversation_navigation_tools_use_native_gateway_owners(monkeypat
     assert (await invoke("get_navigation_status", {"task_id": "nav-task-1"}))["found"] is True
     assert calls == [("preview", 1.0, 2.0, 0.4), ("start", 1.0, 2.0, 0.0, "goal"),
                      ("status", "nav-task-1")]
+
+
+@pytest.mark.asyncio
+async def test_conversation_can_read_inspection_task_status(monkeypatch):
+    async def fake_get_task(_gw, task_id):
+        return {"found": True, "task_id": task_id, "terminal": True, "current_state": "SUCCESS"}
+
+    monkeypatch.setattr("gateway.services.conversation_tools.get_task", fake_get_task)
+    _, invoke = workbench_tools(SimpleNamespace())
+
+    result = await invoke("get_inspection_status", {"task_id": "inspection-task-1"})
+
+    assert result["task_id"] == "inspection-task-1"
+    assert result["terminal"] is True
 
 
 @pytest.mark.asyncio

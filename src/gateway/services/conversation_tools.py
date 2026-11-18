@@ -20,7 +20,7 @@ from gateway.maps.transport import mapd_request
 from gateway.navigation.actions import cancel as cancel_navigation
 from gateway.navigation.actions import control_task, go as start_navigation
 from gateway.navigation.tasks import query_navigation_task_status
-from gateway.routes.inspection import list_routes, start_task
+from gateway.routes.inspection import get_task, list_routes, start_task
 from gateway.schemas import (
     CancelRequest,
     GoalRequest,
@@ -113,6 +113,8 @@ def workbench_tools(gw, *, client_id: str = "web"):
     tool("start_inspection_route", "Start one stored complete inspection route. The route must already exist; this submits the native task and starts its evidence recording. The result confirms submission only, not arrival or inspection completion.",
          {"route_id": {"type": "string", "minLength": 1},
           "revision": {"type": "integer", "minimum": 0, "default": 0}}, ["route_id"], writes=True)
+    tool("get_inspection_status", "Read the native lifecycle of one inspection task. Use the exact task_id returned by start_inspection_route until terminal evidence is reported.",
+         {"task_id": {"type": "string", "minLength": 1}}, ["task_id"])
     tool("preview_navigation", "Preview a native navigation goal without publishing it. Use exact map-frame coordinates and report the returned feasibility reasons.",
          {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number", "default": 0.0},
           "acceptance_radius_m": {"type": "number", "exclusiveMinimum": 0}}, ["x", "y"])
@@ -210,6 +212,13 @@ def workbench_tools(gw, *, client_id: str = "web"):
                 task_id = str(result.get("task_id") or "") if isinstance(result, dict) else ""
                 bind_agent_task(task_id=task_id, request_id=request_id, run_id=run_id,
                                 conversation_id=conversation_id, turn_id=turn_id, kind="inspection")
+                return result
+            if name == "get_inspection_status":
+                result = await get_task(gw, args["task_id"])
+                if isinstance(result, JSONResponse):
+                    return json.loads(result.body)
+                if hasattr(result, "model_dump"):
+                    return result.model_dump(mode="json")
                 return result
             if name == "preview_navigation":
                 result = ControlCommandService(gw).preview_plan(PlanPreviewRequest(

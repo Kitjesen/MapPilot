@@ -83,6 +83,8 @@ class AgentRun:
     motion_success: bool = False
     follow_submitted: bool = False
     persistent_task: bool = False
+    domain_task_id: str = ""
+    domain_task_type: str = ""
     requires_execution_evidence: bool = True
     requires_object_confirmation: bool = False
     object_confirmed: bool = False
@@ -822,6 +824,7 @@ class AgentPlannerModule(Module, layer=4):
                     if "unexpected keyword argument" not in str(exc):
                         raise
                     result = await invoke_domain_tool(name, args)
+                self._record_domain_task(run, name, result)
             elif name in {"web_search", "web_extract"}:
                 result = await execute_web_tool(name, args)
             elif name in {"skills_list", "skill_view"}:
@@ -990,7 +993,7 @@ class AgentPlannerModule(Module, layer=4):
                 "Ask for clarification when the target or requested action is ambiguous. "
                 "For a bounded choice, use ask_user with 2 to 4 concise options; the UI provides Other input. "
                 "Do not ask duplicate permission questions: the tool approval controls already handle writes and motion. "
-                "Conversation can start native navigation through preview_navigation followed by start_navigation, then retain task_id and query get_navigation_status until native feedback reaches a terminal state. Use pause_navigation, resume_navigation, cancel_navigation or set_navigation_speed with that exact task_id instead of creating a replacement goal. Conversation can start a stored inspection route only through start_inspection_route; its result is submission acceptance, not arrival or inspection completion. Other motion tools remain owned motion tools. "
+                "Conversation can start native navigation through preview_navigation followed by start_navigation, then retain task_id and query get_navigation_status until native feedback reaches a terminal state. Use pause_navigation, resume_navigation, cancel_navigation or set_navigation_speed with that exact task_id instead of creating a replacement goal. Conversation can start a stored inspection route only through start_inspection_route, then query get_inspection_status with its exact task_id until the native event is terminal. A start result is submission acceptance, not arrival or inspection completion. Other motion tools remain owned motion tools. "
                 "History copied into a conversation branch is historical discussion, not current robot state or permission to replay actions. "
                 "When task_active is returned, keep the user's proposed change as a draft and explain "
                 "that the current task continues. Never claim execution complete without completion evidence. "
@@ -1230,7 +1233,7 @@ class AgentPlannerModule(Module, layer=4):
         if not run.requires_execution_evidence:
             return None
         if run.persistent_task:
-            return None
+            return None if run.follow_ref is not None else "The native task is still running; query its status before completing."
         if not run.motion_attempted:
             return "The task requires execution evidence, but no execution tool was called."
         if not run.motion_success:
@@ -1238,6 +1241,42 @@ class AgentPlannerModule(Module, layer=4):
         if run.requires_object_confirmation and not run.object_confirmed:
             return "The requested object has not been visually confirmed."
         return None
+
+    @staticmethod
+    def _record_domain_task(run: AgentRun | None, name: str, result: Any) -> None:
+        if run is None:
+            return
+        payload = result
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except (TypeError, ValueError):
+                return
+        if not isinstance(payload, dict):
+            return
+        if name in {"start_navigation", "start_inspection_route"}:
+            accepted = payload.get("accepted") is True or payload.get("ok") is True
+            if accepted:
+                run.motion_attempted = True
+                run.motion_submitted = True
+                run.motion_success = False
+                run.persistent_task = True
+                run.domain_task_id = str(payload.get("task_id") or "")
+                run.domain_task_type = "inspection" if name == "start_inspection_route" else "navigation"
+            return
+        if name not in {"get_navigation_status", "get_inspection_status"}:
+            return
+        task_id = str(payload.get("task_id") or "")
+        if not run.domain_task_id or task_id != run.domain_task_id:
+            return
+        status = payload.get("status") if name == "get_navigation_status" else payload
+        if name == "get_inspection_status" and isinstance(payload.get("latest_event"), dict):
+            status = {**payload, **payload["latest_event"]}
+        if not isinstance(status, dict) or status.get("terminal") is not True:
+            return
+        state = str(status.get("state_name") or status.get("current_state") or "").upper()
+        run.motion_success = state in ({"SUCCEEDED", "SUCCESS", "REACHED"})
+        run.persistent_task = False
 
     def stop(self) -> None:
         self._cancel_active_run("agent_stopped")
@@ -1435,6 +1474,8 @@ class AgentPlannerModule(Module, layer=4):
                 "motion_success": run.motion_success,
                 "follow_submitted": run.follow_submitted,
                 "persistent_task": run.persistent_task,
+                "domain_task_id": run.domain_task_id,
+                "domain_task_type": run.domain_task_type,
                 "requires_execution_evidence": run.requires_execution_evidence,
                 "failure_reason": run.failure_reason,
                 "summary": run.summary,

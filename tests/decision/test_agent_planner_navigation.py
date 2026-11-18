@@ -114,6 +114,52 @@ def test_conversation_follow_returns_after_follow_admission_without_semantic_pla
     assert json.loads(asyncio.run(agent.module._submit_motion(run, instruction="find chair")))["reason"] == "task_active"
 
 
+def test_domain_navigation_task_requires_terminal_status_before_completion(agent):
+    run = agent.module._new_run("导航到目标点")
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "start_navigation",
+        {"accepted": True, "task_id": "nav-task-1"},
+    )
+    assert run.motion_attempted and run.motion_submitted and run.persistent_task
+    assert agent.module._completion_refusal(run)
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "get_navigation_status",
+        {"found": True, "task_id": "nav-task-1", "status": {"terminal": False, "state_name": "EXECUTING"}},
+    )
+    assert run.persistent_task and not run.motion_success
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "get_navigation_status",
+        {"found": True, "task_id": "nav-task-1", "status": {"terminal": True, "state_name": "SUCCESS"}},
+    )
+    assert not run.persistent_task and run.motion_success
+    assert agent.module._completion_refusal(run) is None
+
+
+def test_domain_inspection_task_uses_terminal_status_for_completion(agent):
+    run = agent.module._new_run("执行巡检")
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "start_inspection_route",
+        {"ok": True, "accepted": True, "task_id": "inspection-task-1"},
+    )
+    assert run.domain_task_type == "inspection" and run.persistent_task
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "get_inspection_status",
+        {"found": True, "task_id": "inspection-task-1", "terminal": True,
+         "latest_event": {"state_name": "SUCCEEDED"}},
+    )
+    assert not run.persistent_task and run.motion_success
+
+
 @pytest.mark.parametrize("description,loaded,reason", [
     ("person in red", False, "visual_servo_unavailable"),
     ("", True, "follow_target_required"),

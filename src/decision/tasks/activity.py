@@ -27,7 +27,7 @@ def activity_type(name: str, *, role: str = "tool") -> str:
         return "other"
     if name in {"follow_person", "stop_servo"}:
         return "tracking"
-    if name == "start_inspection_route":
+    if name in {"start_inspection_route", "get_inspection_status"}:
         return "inspection"
     if name.startswith("navigate_") or name in {
         "preview_navigation", "start_navigation", "get_navigation_status", "cancel_navigation",
