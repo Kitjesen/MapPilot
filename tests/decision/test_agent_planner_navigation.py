@@ -10,7 +10,15 @@ import pytest
 
 from decision.modules.agent_planner import AgentPlannerModule
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
-from runtime.msgs.nav import NavigationLifecycle, NavigationState
+from runtime.msgs.nav import (
+    InspectionTaskEvent,
+    InspectionTaskEventKind,
+    InspectionTaskState,
+    NavigationGoalState,
+    NavigationGoalStatus,
+    NavigationLifecycle,
+    NavigationState,
+)
 
 
 @pytest.fixture
@@ -158,6 +166,95 @@ def test_domain_inspection_task_uses_terminal_status_for_completion(agent):
          "latest_event": {"state_name": "SUCCEEDED"}},
     )
     assert not run.persistent_task and run.motion_success
+
+
+@pytest.mark.parametrize(
+    ("state", "expected_state", "success"),
+    [
+        (NavigationGoalState.REACHED, "done", True),
+        (NavigationGoalState.FAILED, "failed", False),
+        (NavigationGoalState.CANCELLED, "cancelled", False),
+    ],
+)
+def test_native_navigation_terminal_event_closes_domain_run(agent, state, expected_state, success):
+    run = agent.module._new_run("导航到目标点")
+    run.domain_task_id = "nav-task-1"
+    run.domain_task_type = "navigation"
+    run.motion_attempted = run.motion_submitted = True
+    run.persistent_task = True
+    messages = []
+    agent.module.agent_message.subscribe(messages.append)
+
+    status = NavigationGoalStatus(
+        boot_id="nav-boot",
+        sequence=1,
+        task_id="nav-task-1",
+        request_id="nav-request-1",
+        state=int(state),
+    )
+    agent.module._on_navigation_goal_status(status)
+    agent.module._on_navigation_goal_status(status)
+
+    assert run.state == expected_state
+    assert run.motion_success is success
+    assert run.persistent_task is False
+    assert run.domain_completion_reported is True
+    assert len([message for message in messages if message.get("phase") == "navigation_result"]) == 1
+
+
+def test_native_inspection_terminal_event_closes_domain_run(agent):
+    run = agent.module._new_run("执行巡检")
+    run.domain_task_id = "inspection-task-1"
+    run.domain_task_type = "inspection"
+    run.motion_attempted = run.motion_submitted = True
+    run.persistent_task = True
+    messages = []
+    agent.module.agent_message.subscribe(messages.append)
+
+    event = InspectionTaskEvent(
+        boot_id="nav-boot",
+        event_sequence=1,
+        kind=int(InspectionTaskEventKind.STATE_CHANGED),
+        task_id="inspection-task-1",
+        request_id="inspection-request-1",
+        state=int(InspectionTaskState.SUCCEEDED),
+        map_id="field-map",
+        map_content_epoch=1,
+        route_id="route-1",
+        route_revision=1,
+    )
+    agent.module._on_inspection_task_event(event)
+    agent.module._on_inspection_task_event(event)
+
+    assert run.state == "done"
+    assert run.motion_success is True
+    assert run.persistent_task is False
+    assert len([message for message in messages if message.get("phase") == "inspection_result"]) == 1
+
+
+def test_terminal_event_cached_before_navigation_receipt_is_replayed(agent):
+    run = agent.module._new_run("导航到目标点")
+    messages = []
+    agent.module.agent_message.subscribe(messages.append)
+    agent.module._on_navigation_goal_status(NavigationGoalStatus(
+        boot_id="nav-boot",
+        sequence=1,
+        task_id="nav-task-early",
+        request_id="nav-request-early",
+        state=int(NavigationGoalState.REACHED),
+    ))
+
+    AgentPlannerModule._record_domain_task(
+        run,
+        "start_navigation",
+        {"accepted": True, "task_id": "nav-task-early"},
+    )
+    agent.module._sync_cached_domain_task(run)
+
+    assert run.state == "done"
+    assert run.motion_success is True
+    assert run.domain_completion_reported is True
+    assert len([message for message in messages if message.get("phase") == "navigation_result"]) == 1
 
 
 @pytest.mark.parametrize("description,loaded,reason", [

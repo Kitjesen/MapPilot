@@ -34,8 +34,12 @@ Gateway binds the native task and request IDs to that conversation turn's Agent
 `inspection`, and `metadata.activity_state` uses `started`, `running`,
 `awaiting`, `completed`, `failed` or `cancelled`. The start-tool response is
 still only an admission receipt. The later native event is the execution fact,
-and terminal events release the process-local binding. Non-Agent navigation is
-not attached to a conversation.
+and terminal events release the process-local binding. The AgentRun also closes
+on that terminal event. If the original conversation turn has already ended,
+the Agent appends one final assistant result to the same turn. If the model is
+still completing that turn, it owns the final wording and the native event is
+kept as the activity evidence. Non-Agent navigation is not attached to a
+conversation.
 
 A generated plan is an assistant message with `kind="plan"` and
 `metadata.plan={title, summary?, steps:[{title, detail?}]}` (1–12 steps).

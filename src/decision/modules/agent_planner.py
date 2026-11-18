@@ -36,7 +36,7 @@ from typing import Any
 from decision.backends import BackendManager
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.nav import NavigationGoalStatus, NavigationState
+from runtime.msgs.nav import InspectionTaskEvent, NavigationGoalStatus, NavigationState
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import Image
@@ -85,6 +85,9 @@ class AgentRun:
     persistent_task: bool = False
     domain_task_id: str = ""
     domain_task_type: str = ""
+    conversation_id: str = ""
+    turn_id: str = ""
+    domain_completion_reported: bool = False
     requires_execution_evidence: bool = True
     requires_object_confirmation: bool = False
     object_confirmed: bool = False
@@ -115,6 +118,7 @@ class AgentPlannerModule(Module, layer=4):
     observation_image: In[Image]
     navigation_state: In[NavigationState]
     navigation_goal_status: In[NavigationGoalStatus]
+    inspection_task_event: In[InspectionTaskEvent]
     mission_status: In[dict]  # for nav_status context
 
     # -- Outputs --
@@ -164,6 +168,7 @@ class AgentPlannerModule(Module, layer=4):
         # Nav status (cached from mission_status for agent context)
         self._last_nav_state: str = ""
         self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
+        self._inspection_task_status_by_task: dict[str, dict[str, Any]] = {}
 
         # Latest camera frame for VLM tools in the agent loop
         self._observation_image: Image | None = None
@@ -208,6 +213,7 @@ class AgentPlannerModule(Module, layer=4):
         self.observation_image.subscribe(self._on_observation_image)
         self.navigation_state.subscribe(self._on_navigation_state)
         self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
+        self.inspection_task_event.subscribe(self._on_inspection_task_event)
         self.mission_status.subscribe(self._on_mission_status)
 
     def _init_llm(self) -> None:
@@ -294,10 +300,23 @@ class AgentPlannerModule(Module, layer=4):
         self._last_nav_state = state.to_dict()["lifecycle_state_name"]
 
     def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
-        self._navigation_goal_status_by_request[status.request_id] = status.to_dict()
+        data = status.to_dict()
+        self._navigation_goal_status_by_request[status.request_id] = data
         if len(self._navigation_goal_status_by_request) > 256:
             oldest = next(iter(self._navigation_goal_status_by_request))
             self._navigation_goal_status_by_request.pop(oldest, None)
+        self._sync_domain_task_status(data)
+
+    def _on_inspection_task_event(self, event: InspectionTaskEvent) -> None:
+        data = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        task_id = str(data.get("task_id") or "").strip()
+        if not task_id:
+            return
+        self._inspection_task_status_by_task[task_id] = data
+        if len(self._inspection_task_status_by_task) > 256:
+            oldest = next(iter(self._inspection_task_status_by_task))
+            self._inspection_task_status_by_task.pop(oldest, None)
+        self._sync_domain_task_status(data)
 
     # ------------------------------------------------------------------
     # Chat helper
@@ -383,6 +402,8 @@ class AgentPlannerModule(Module, layer=4):
 
     @staticmethod
     def _motion_was_superseded(run: AgentRun) -> bool:
+        if run.domain_task_id:
+            return False
         if run.planner is None or run.follow_ref is not None:
             return False
         if not run.motion_submitted:
@@ -409,8 +430,23 @@ class AgentPlannerModule(Module, layer=4):
             "task_id": details.get("navigation_task_id") or next(reversed(status.get("children", {})), ""),
         }
 
+    def _domain_task_status(self, run: AgentRun) -> dict | None:
+        if not run.domain_task_id:
+            return None
+        if run.domain_task_type == "navigation":
+            return next(
+                (
+                    item for item in reversed(list(self._navigation_goal_status_by_request.values()))
+                    if str(item.get("task_id") or "") == run.domain_task_id
+                ),
+                None,
+            )
+        return self._inspection_task_status_by_task.get(run.domain_task_id)
+
     @staticmethod
     def _cancel_run_motion(run: AgentRun, reason: str) -> bool:
+        if run.domain_task_id:
+            return False
         if run.planner is None:
             return False
         if run.follow_ref is not None:
@@ -752,6 +788,8 @@ class AgentPlannerModule(Module, layer=4):
                 if active is not None and active.state in {"cancelled", "failed"} and not current["stop_confirmed"]:
                     return {"accepted": False, "reason": "stop_unconfirmed"}
                 run = self._new_run(text)
+                run.conversation_id = conversation_id
+                run.turn_id = turn_id
                 run.future = self._conversation_turn_futures[turn_id]
                 store.bind_run(conversation_id, turn_id, run.run_id)
                 self.planner_status.publish("AGENT_RUNNING")
@@ -825,6 +863,7 @@ class AgentPlannerModule(Module, layer=4):
                         raise
                     result = await invoke_domain_tool(name, args)
                 self._record_domain_task(run, name, result)
+                self._sync_cached_domain_task(run)
             elif name in {"web_search", "web_extract"}:
                 result = await execute_web_tool(name, args)
             elif name in {"skills_list", "skill_view"}:
@@ -1242,6 +1281,81 @@ class AgentPlannerModule(Module, layer=4):
             return "The requested object has not been visually confirmed."
         return None
 
+    def _sync_domain_task_status(self, status: dict[str, Any]) -> None:
+        task_id = str(status.get("task_id") or "").strip()
+        if not task_id or status.get("terminal") is not True:
+            return
+        with self._run_lock:
+            run = self._active_run
+            if (run is None or run.domain_task_id != task_id
+                    or run.domain_completion_reported):
+                return
+            state = str(status.get("state_name") or status.get("current_state") or "").upper()
+            success = state in {"SUCCESS", "SUCCEEDED", "REACHED"}
+            cancelled = state in {"CANCELLED", "CANCELED"}
+            run.motion_success = success
+            run.persistent_task = False
+            run.domain_completion_reported = True
+            run.state = "done" if success else "cancelled" if cancelled else "failed"
+            run.cancelled = cancelled
+            run.failure_reason = "" if success else str(status.get("reason") or state.lower() or "task_failed")
+            run.summary = "任务已按原生反馈完成。" if success else f"原生任务未完成：{run.failure_reason}。"
+            completion = {
+                "run_id": run.run_id,
+                "conversation_id": run.conversation_id,
+                "turn_id": run.turn_id,
+                "task_id": task_id,
+                "task_type": run.domain_task_type,
+                "state": state,
+                "success": success,
+                "reason": run.failure_reason,
+            }
+        self.planner_status.publish("AGENT_DONE" if success else "AGENT_FAILED")
+        self._publish_domain_completion(run, completion)
+
+    def _publish_domain_completion(self, run: AgentRun, completion: dict[str, Any]) -> None:
+        text = (
+            "导航已到达目标。" if completion["task_type"] == "navigation" and completion["success"]
+            else "巡检任务已完成。" if completion["task_type"] == "inspection" and completion["success"]
+            else f"{('导航' if completion['task_type'] == 'navigation' else '巡检')}任务未完成，"
+                 f"状态为 {completion['state']}。"
+                 f"{(' 原因：' + completion['reason'] + '。') if completion['reason'] else ''}"
+        )
+        conversation_id = completion["conversation_id"]
+        turn_id = completion["turn_id"]
+        if conversation_id and turn_id:
+            try:
+                store = self._conversation_store()
+                if store.turn(conversation_id, turn_id).get("state") == "running":
+                    return
+                message = store.append(
+                    conversation_id,
+                    turn_id,
+                    "assistant",
+                    text,
+                    message_id=f"native-completion-{completion['run_id']}",
+                    run_id=completion["run_id"],
+                    kind=f"{completion['task_type']}_result",
+                    metadata={
+                        "status": "completed" if completion["success"] else "failed",
+                        "activity_type": "model",
+                        "activity_state": "completed" if completion["success"] else "failed",
+                        "native_task": completion,
+                    },
+                )
+                self.agent_message.publish({**message, "ts": time.time(), "phase": message["kind"]})
+                return
+            except Exception:
+                logger.debug("native completion could not be persisted", exc_info=True)
+        self._chat("assistant", text, phase=f"{completion['task_type']}_result", run_id=completion["run_id"])
+
+    def _sync_cached_domain_task(self, run: AgentRun) -> None:
+        if not run.domain_task_id or run.domain_completion_reported:
+            return
+        status = self._domain_task_status(run)
+        if isinstance(status, dict):
+            self._sync_domain_task_status(status)
+
     @staticmethod
     def _record_domain_task(run: AgentRun | None, name: str, result: Any) -> None:
         if run is None:
@@ -1278,6 +1392,7 @@ class AgentPlannerModule(Module, layer=4):
         state = str(status.get("state_name") or status.get("current_state") or "").upper()
         run.motion_success = state in ({"SUCCEEDED", "SUCCESS", "REACHED"})
         run.persistent_task = False
+        run.domain_completion_reported = True
 
     def stop(self) -> None:
         self._cancel_active_run("agent_stopped")
@@ -1416,6 +1531,7 @@ class AgentPlannerModule(Module, layer=4):
             self.planner_status.publish("AGENT_CANCELLED")
             run = self._active_run
             navigation = self._motion_status(run)
+            domain_status = self._domain_task_status(run)
             native_goal = None
             if isinstance(navigation, dict):
                 request_id = str(navigation.get("request_id") or "")
@@ -1428,6 +1544,7 @@ class AgentPlannerModule(Module, layer=4):
                         native_goal = max(matches, key=lambda item: int(item.get("sequence") or 0))
             stop_confirmed = (
                 not run.motion_submitted
+                or run.domain_completion_reported
                 or (navigation is not None and navigation.get("stop_confirmed") is True)
             )
             return _json.dumps({
@@ -1435,6 +1552,7 @@ class AgentPlannerModule(Module, layer=4):
                 "stop_confirmed": stop_confirmed,
                 "navigation": navigation,
                 "native_navigation_status": native_goal,
+                "native_task_status": domain_status,
                 "navigation_state": self._last_nav_state or "IDLE",
             })
 
@@ -1446,6 +1564,7 @@ class AgentPlannerModule(Module, layer=4):
             if run is None:
                 return _json.dumps({"state": "idle"})
             navigation = self._motion_status(run)
+            domain_status = self._domain_task_status(run)
             if run.follow_ref is not None and run.state == "running" and navigation["terminal"]:
                 run.motion_success = navigation["success"]
                 run.state = ("done" if run.motion_success else
@@ -1466,6 +1585,7 @@ class AgentPlannerModule(Module, layer=4):
                 run.state in {"cancelled", "failed"}
                 and (
                     not run.motion_submitted
+                    or run.domain_completion_reported
                     or (navigation is not None and navigation.get("stop_confirmed") is True)
                 )
             )
@@ -1483,6 +1603,7 @@ class AgentPlannerModule(Module, layer=4):
                 "stop_confirmed": stop_confirmed,
                 "navigation": navigation,
                 "native_navigation_status": native_goal,
+                "native_task_status": domain_status,
                 "navigation_state": self._last_nav_state or "IDLE",
             })
 
