@@ -753,7 +753,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "usage: navd "
           "[--control-mode autonomy|teleop|teleop_avoid] "
           "[--product PRODUCT] "
-          "[--global-planner octoplanner3d|far] [--local-planner scan] "
+          "[--global-planner octoplanner3d] [--local-planner scan] "
           "[--allow-teleop-takeover true|false] "
           "[--teleop-local-planner true|false] "
           "[--map PLANNER_ARTIFACT] [--domain-id N] [--tick-hz HZ] "

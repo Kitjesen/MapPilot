@@ -37,10 +37,7 @@ const char *globalPlannerBackendName(GlobalPlannerBackend backend);
 
 struct CliConfig {
   ControlMode control_mode{ControlMode::Autonomy};
-  GlobalPlannerBackend global_planner{
-      std::string_view(::lingtu::settings::global::native_nav::global::planner) == "far"
-          ? GlobalPlannerBackend::Far
-          : GlobalPlannerBackend::OctoPlanner3D};
+  GlobalPlannerBackend global_planner{GlobalPlannerBackend::OctoPlanner3D};
   nav_kernel::LocalPlannerBackend local_planner_backend{nav_kernel::LocalPlannerBackend::Scan};
   int domain_id{0};
   std::vector<nav_kernel::LocalPlannerBackend> local_planners{

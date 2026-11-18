@@ -433,104 +433,6 @@ void testOctoPlanner3DPhysicalContractIsConfigurable() {
   require(std::abs(octo.terminal_goal_z_tolerance_m - 0.18) < 1e-12, "goal Z tolerance must parse");
 }
 
-void testFarPlannerIsAnExplicitOptionalBackend() {
-  const auto defaults = parse({
-      "navd",
-      });
-  require(defaults.global_planner == GlobalPlannerBackend::OctoPlanner3D,
-          "OctoPlanner3D must remain the product default");
-
-  ScopedEnvironment map_id("LINGTU_MAP_ID", "active");
-  ScopedEnvironment map_epoch("LINGTU_MAP_CONTENT_EPOCH", "7");
-  ScopedEnvironment map_frame("LINGTU_MAP_FRAME", "map");
-  ScopedEnvironment octomap("OCTOPLANNER_MAP_PATH",
-                            "/tmp/lingtu/maps/active/octomap.ot");
-  ScopedEnvironment occupancy("FAR_OCCUPANCY_PATH",
-                              "/tmp/lingtu/maps/active/occupancy.npz");
-  const auto far = parse({
-      "navd",
-      "--global-planner",
-      "far",
-      "--far-robot-radius-m",
-      "0.28",
-      "--far-obstacle-clearance-m",
-      "0.12",
-      "--far-max-visibility-distance-m",
-      "24.0",
-      "--far-unknown-cost-multiplier",
-      "8.0",
-      "--far-corner-separation-cells",
-      "2",
-      "--far-snap-radius-cells",
-      "9",
-      "--far-max-graph-nodes",
-      "2048",
-      "--far-max-visibility-pairs",
-      "120000",
-      "--far-max-search-expansions",
-      "180000",
-      "--far-simplify-path",
-      "false",
-  });
-  require(far.global_planner == GlobalPlannerBackend::Far, "FAR backend must parse");
-  require(far.map_path == "/tmp/lingtu/maps/active/occupancy.npz",
-          "FAR must receive an explicit occupancy artifact");
-  require(std::abs(far.far_options.robot_radius_m - 0.28) < 1e-12, "FAR radius must parse");
-  require(std::abs(far.far_options.obstacle_clearance_m - 0.12) < 1e-12,
-          "FAR obstacle clearance must parse");
-  require(std::abs(far.far_options.max_visibility_distance_m - 24.0) < 1e-12,
-          "FAR visibility limit must parse");
-  require(far.far_options.corner_separation_cells == 2, "FAR corner spacing must parse");
-  require(far.far_options.snap_search_radius_cells == 9, "FAR snap radius must parse");
-  require(far.far_options.max_graph_nodes == 2048U, "FAR graph limit must parse");
-  require(!far.far_options.allow_unknown_fallback,
-          "Product FAR endpoint must never search unknown space");
-  require(!far.far_options.simplify_path, "FAR path simplification must be configurable");
-}
-
-void testFarPlannerRejectsInvalidConfiguration() {
-  bool backend_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--global-planner",
-        "unsupported",
-    });
-  } catch (const std::runtime_error &) {
-    backend_rejected = true;
-  }
-  require(backend_rejected, "unknown global planner backend must fail startup");
-
-  bool unknown_fallback_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--global-planner",
-        "far",
-        "--far-allow-unknown-fallback",
-        "true",
-    });
-  } catch (const std::runtime_error &) {
-    unknown_fallback_rejected = true;
-  }
-  require(unknown_fallback_rejected,
-          "Product endpoint must reject FAR unknown fallback configuration");
-
-  bool limit_rejected = false;
-  try {
-    (void)parse({
-        "navd",
-        "--global-planner",
-        "far",
-        "--far-max-graph-nodes",
-        "1",
-    });
-  } catch (const std::runtime_error &) {
-    limit_rejected = true;
-  }
-  require(limit_rejected, "unsafe FAR graph limits must fail startup");
-}
-
 void testNonFiniteMotionLimitsFailClosed() {
   bool rejected = false;
   try {
@@ -1631,7 +1533,6 @@ int main() {
     testEstopLatchFileIsConfigurable();
     testPlannerArtifactCarriesRuntimeMapIdentity();
     testOctoPlanner3DPhysicalContractIsConfigurable();
-    testFarPlannerIsAnExplicitOptionalBackend();
     testScanIsTheOnlyLocalBackend();
     testScanHasSingleCollisionEnvelope();
     testLocalPlannerUsesConfiguredTraversabilityPolicy();

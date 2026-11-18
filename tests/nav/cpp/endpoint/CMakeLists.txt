@@ -47,7 +47,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     "${_ENDPOINT_DIR}/nav/app/planner.cpp"
     "${_ENDPOINT_DIR}/nav/app/config/build.cpp")
   target_include_directories(test_planner_selection PRIVATE ${_EP_DIRS} "${_NAV_CORE_DIR}")
-  target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation lingtu_nav_far)
+  target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation)
   lingtu_endpoint_enable_warnings(test_planner_selection)
   add_test(NAME test_planner_selection COMMAND test_planner_selection)
 endif()
