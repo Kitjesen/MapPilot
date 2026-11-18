@@ -685,6 +685,22 @@ TEST(ScanHeading, PreviewClampsAtEndpointAndFallsBackLikeController) {
   EXPECT_EQ(stopped.headingDirection(end,stopped.getDerivative(),.8).squaredNorm(),0);
 }
 
+TEST(ScanHeading, SlowPreviewLooksPastAStairEntranceWiggle) {
+  using namespace nav_kernel::local::scan::upstream;
+  // A stair entrance: the curve backs off a few centimetres while rising, then climbs.
+  Eigen::MatrixXd controls(3,10);
+  controls.row(0) << 0,-.06,-.08,-.06,0,.15,.30,.45,.60,.75;
+  controls.row(1).setZero();
+  controls.row(2) << .5,.5,.55,.62,.70,.80,.90,1.0,1.1,1.2;
+  const UniformBspline curve(controls,3,.5);
+  const auto velocity=curve.getDerivative();
+  // Upstream's 0.8 s preview alone points backwards here.
+  const Eigen::Vector3d preview=curve.evaluateDeBoorT(.8)-curve.evaluateDeBoorT(0);
+  ASSERT_LT(preview.x(),0);
+  ASSERT_GT(preview.head<2>().squaredNorm(),1e-4);
+  EXPECT_GT(curve.headingDirection(0,velocity,.8).x(),.9);
+}
+
 TEST_F(ScanBodyTest, TranslationChecksBetweenFreeEndpointsAndBrakingUsesActualYaw) {
   raw.occupy({.05,.05,.55});
   snapshot();

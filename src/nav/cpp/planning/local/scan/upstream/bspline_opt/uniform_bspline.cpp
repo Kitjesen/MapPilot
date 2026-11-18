@@ -14,8 +14,19 @@ Eigen::Vector3d UniformBspline::headingDirection(
     const Eigen::Vector3d tangent = velocity.evaluateDeBoorT(time);
     return tangent.head<2>().norm() <= 0.03 ? Eigen::Vector3d::Zero().eval() : tangent;
   }
-  Eigen::Vector3d direction = evaluateDeBoorT(std::min(getTimeSum(), time + lookaheadS)) -
-                              evaluateDeBoorT(time);
+  const double end = getTimeSum();
+  const Eigen::Vector3d origin = evaluateDeBoorT(time);
+  Eigen::Vector3d direction = evaluateDeBoorT(std::min(end, time + lookaheadS)) - origin;
+  // LingTu: a 3-D stair entrance can rise before it advances, so the 0.8 s
+  // preview may move only a few centimetres and point backwards. Keep looking
+  // along the curve until it has advanced kMinPreviewXyM; faster curves reach
+  // that distance within the preview and keep the upstream result.
+  constexpr double kMinPreviewXyM = 0.10;
+  const double step = std::max(interval_, 1e-3);
+  for (double ahead = time + lookaheadS + step;
+       direction.head<2>().norm() < kMinPreviewXyM && ahead < end + step; ahead += step) {
+    direction = evaluateDeBoorT(std::min(end, ahead)) - origin;
+  }
   if (direction.head<2>().squaredNorm() < 1e-4)
     direction = velocity.evaluateDeBoorT(time);
   if (direction.head<2>().squaredNorm() < 1e-4) return Eigen::Vector3d::Zero();
