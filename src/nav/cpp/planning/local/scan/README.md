@@ -592,8 +592,8 @@ Backend include immutable body identity in cached-result invalidation, so a
 model replacement cannot reuse a spline approved for a previous model.
 
 `test_scan_body`, `test_body_support_map`,
-`LocalPlanTask.BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFrame`,
-`LocalPlanTask.ObservedBodySnapshotsDoNotReplaceCylinderPlanningEvidence`
+`LocalPlanTask.BodyModelChangeReplans`,
+`LocalPlanTask.ObservedBodyKeepsCylinderPlan`
 and `ScanBackend.BodyPoseSegmentsPreserveExactTurnCentreAndStoppedEndpoint`
 cover raw geometry, local support, snapshot ownership, model replacement and
 endpoint contracts. These native library interfaces do not activate a body

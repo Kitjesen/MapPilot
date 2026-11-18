@@ -31,9 +31,6 @@ NavStatusPublisherActions normalizeActions(NavStatusPublisherActions actions) {
   if (!actions.sample_loop_health) {
     throw std::invalid_argument("NavStatusPublisher requires a control-loop health sampler");
   }
-  if (!actions.sample_far_input) {
-    throw std::invalid_argument("NavStatusPublisher requires a FAR-input sampler");
-  }
   if (!actions.log) {
     actions.log = writeStatusLogToStderr;
   }
@@ -137,7 +134,6 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
     throw std::invalid_argument("NavStatusPublisher motion sample has no cluster view");
   }
   const ControlLoopHealthSnapshot loop_health = actions_.sample_loop_health();
-  const StatusFarInputSample far_input = actions_.sample_far_input();
 
   const auto status_log_start = SteadyClock::now();
   actions_.log(makeStatusLog(state, planner.obstacle_points, motion.stats));
@@ -172,7 +168,7 @@ bool NavStatusPublisher::publishIfDue(const StatusRuntimeState &state,
       snapshot_writer_, config_, wall_now_s, state.has_odom, state.has_map_odom_tf,
       state.path_active, state.estop_latched, state.estop_reason,
       finalCommandVelocity(config_, state), state.final_output, state.driver_control,
-      state.motion_stop_evidence, far_input,
+      state.motion_stop_evidence,
       config_.check_obstacle && config_.use_traversability_cost && planner.traversability_fresh,
       config_.check_obstacle && planner.terrain_map_fresh,
       config_.check_obstacle && planner.terrain_ext_fresh, *state.input_gate, *state.cloud_sync,

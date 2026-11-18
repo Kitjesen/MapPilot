@@ -48,29 +48,6 @@ bool sameFileState(const std::filesystem::path &path,
          std::filesystem::last_write_time(path, error) == modified && !error;
 }
 
-plan::far_planner::FarGridMap toFarMap(const lingtu::maps::OccupancyArtifactData &occupancy,
-                                       plan::MapIdentity identity,
-                                       std::uint64_t generation) {
-  plan::far_planner::FarGridMap out;
-  out.width = occupancy.cols;
-  out.height = occupancy.rows;
-  out.resolution_m = occupancy.resolution;
-  out.origin_x_m = occupancy.origin_x;
-  out.origin_y_m = occupancy.origin_y;
-  out.frame_id = identity.frame_id;
-  out.generation = generation;
-  out.identity = std::move(identity);
-  out.cells.resize(occupancy.grid.size(), plan::far_planner::kUnknownCell);
-  for (std::size_t i = 0; i < occupancy.grid.size(); ++i) {
-    const auto value = occupancy.grid[i];
-    out.cells[i] = value < 0     ? plan::far_planner::kUnknownCell
-                   : value >= 50 ? plan::far_planner::kOccupiedCell
-                                 : plan::far_planner::kFreeCell;
-  }
-  out.Validate();
-  return out;
-}
-
 }  // namespace
 
 ActiveOccupancyGateResult ActiveOccupancyGate::prepare(
@@ -119,37 +96,12 @@ ActiveOccupancyGateResult ActiveOccupancyGate::prepare(
     cleanup();
     return {nullptr, "occupancy generation counter exhausted"};
   }
-  auto map = toFarMap(occupancy, *bound.identity, next_generation_++);
+  const auto generation = next_generation_++;
   cleanup();
   cached_artifact_ =
-      std::shared_ptr<const ValidatedFarMap>(new ValidatedFarMap(std::move(map)));
+      std::shared_ptr<const ValidatedOccupancyMap>(
+          new ValidatedOccupancyMap(std::move(occupancy), *bound.identity, generation));
   return {cached_artifact_, {}};
-}
-
-plan::GlobalPlanResult runWithActiveOccupancy(
-    const ActiveOccupancyGate &gate,
-    const std::filesystem::path &configured_occupancy_path,
-    plan::far_planner::FarPlanner &planner,
-    const plan::GlobalPlanRequest &request,
-    const plan::GlobalPlanCancelCheck &cancel_check) {
-  if (cancel_check && cancel_check()) {
-    plan::GlobalPlanResult result;
-    result.cancelled = true;
-    result.options = request.options;
-    return result;
-  }
-  auto prepared = gate.prepare(configured_occupancy_path);
-  if (!prepared.ok()) {
-    throw std::runtime_error("active_occupancy_gate_rejected: " + prepared.reason);
-  }
-  planner.UpdateMap(prepared.artifact->map());
-  auto bound_request = request;
-  bound_request.map_identity = prepared.artifact->identity();
-  bound_request.map_generation = prepared.artifact->generation();
-  auto result = planner.Plan(bound_request, cancel_check);
-  result.map_identity = prepared.artifact->identity();
-  result.map_generation = prepared.artifact->generation();
-  return result;
 }
 
 }  // namespace lingtu::nav::endpoint

@@ -80,8 +80,6 @@ case "${RUN_TESTS,,}" in
       test_control_cadence \
       test_teleop_safety \
       test_active_occupancy_gate \
-      test_far_c_api \
-      test_far_planner \
       test_executor \
       test_path_follower_core \
       test_local_planner_core; do

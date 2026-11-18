@@ -899,7 +899,7 @@ def test_nav_runner_uses_product_bound_map_artifacts_without_a_map_root() -> Non
 
     assert "NAV_GLOBAL_PLANNER" in runner
     assert "OCTOPLANNER_MAP_PATH" in runner
-    assert "FAR_OCCUPANCY_PATH" in runner
+    assert "FAR_OCCUPANCY_PATH" not in runner
     assert "NAV_MAP_DIR" not in runner
 
 
@@ -951,11 +951,11 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "Environment=LINGTU_NAV_STATUS_S=" not in text
     assert "NAV_GLOBAL_PLANNER" in runner
     assert "OCTOPLANNER_MAP_PATH" in runner
-    assert "FAR_OCCUPANCY_PATH" in runner
+    assert "FAR_OCCUPANCY_PATH" not in runner
     assert 'case "${LINGTU_SLAM_MODE}" in' in runner
     assert "mapping|none)" in runner
     assert 'OCTOPLANNER_MAP_PATH=""' in runner
-    assert 'FAR_OCCUPANCY_PATH=""' in runner
+    assert 'FAR_OCCUPANCY_PATH=""' not in runner
     assert "LINGTU_ACTIVE_" not in runner
     assert "--max-speed-mps" in config_source
     assert "--max-accel-mps2" in config_source

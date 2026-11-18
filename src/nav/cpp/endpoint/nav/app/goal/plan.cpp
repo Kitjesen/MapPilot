@@ -15,7 +15,7 @@ namespace {
 
 bool retryableGlobalSearchFailure(const std::string &reason) {
   return reason == "empty_path" || reason == "no_path" || reason == "octomap_no_path" ||
-         reason == "far_no_path" || reason == "global_planner_failed" ||
+         reason == "global_planner_failed" ||
          reason == "goal_not_reached" || reason == "search_iteration_limit" ||
          reason == "support_disconnected" || reason == "start_pose_blocked" ||
          reason == "start_body_unknown" || reason == "start_body_occupied" ||

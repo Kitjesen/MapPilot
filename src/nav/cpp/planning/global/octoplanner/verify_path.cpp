@@ -395,8 +395,11 @@ struct OctoPlannerGridQueryTest
       const auto cell = planner.worldToPlanningGrid(point.x, point.y, point.z);
       OctoPlanner3D::TraversabilityFailure failure;
       const bool traversable=body_centre ?
-        (failure=planner.queryWorld(octomap::point3d(point.x,point.y,point.z),config.robot_radius,
-            config.ground_support&&i!=0,i!=0,yaw))==
+        (failure=config.body_collision
+          ? planner.queryWorld(octomap::point3d(point.x,point.y,point.z),config.robot_radius,
+              config.ground_support&&i!=0,i!=0,yaw)
+          : planner.queryBase(octomap::point3d(point.x,point.y,point.z),
+              config.ground_support&&i!=0))==
             OctoPlanner3D::TraversabilityFailure::None :
         planner.isPlanningCellTraversableDetailed(
             cell, config.robot_radius, config.ground_support,
@@ -450,7 +453,7 @@ struct OctoPlannerGridQueryTest
       }
       if (!planner.sweptRouteFree(
             from,
-            to, &sweep_failure, &failed_point,true,i==0,true,yaw)) {
+            to, &sweep_failure, &failed_point,config.body_collision,i==0,true,yaw)) {
         result.sweep_failures.push_back({i, failureName(sweep_failure),
           {from.x(), from.y(), from.z()}, {to.x(), to.y(), to.z()},
           PointPose{failed_point.x(), failed_point.y(), failed_point.z()}, horizontal, rise});
@@ -523,6 +526,7 @@ void writeSegmentFailures(const std::vector<Verification::SegmentFailure> & fail
 bool runSelfTest(const PlannerConfig & base_config)
 {
   PlannerConfig config = base_config;
+  config.body_collision = true;
   config.robot_radius = 0.10;
   std::vector<PointPose> clear_path, blocked_path;
   for (int x = -8; x <= 7; ++x) {

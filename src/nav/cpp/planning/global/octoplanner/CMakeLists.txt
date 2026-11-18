@@ -309,6 +309,7 @@ if(BUILD_TESTING)
       "${OCTOPLANNER3D_SOURCE_DIR}/planner/include"
       "${OCTOPLANNER3D_SOURCE_DIR}/octomap/include"
       "${OCTOMAP_INCLUDE_DIR}"
+      "${LINGTU_NAV_CPP_DIR}/../../maps/include"
   )
   add_test(
     NAME octoplanner3d_queue_node_compare_smoke

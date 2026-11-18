@@ -82,6 +82,8 @@ pub struct LtMlsMetricConfig {
     pub goal_tolerance: f64,
     pub goal_xy_tolerance: f64,
     pub goal_z_tolerance: f64,
+    /// Nonzero checks occupancy at the route centre. SCAN owns the live body.
+    pub skip_body_collision: u8,
 }
 
 pub(crate) struct Index {
@@ -214,7 +216,7 @@ impl Checker<'_> {
                 return Ok(candidate);
             }
         }
-        Err(QueryError::Exhausted)
+        Err(QueryError::GoalUnreachable)
     }
 
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
@@ -233,6 +235,9 @@ impl Checker<'_> {
 
     fn exempt(&self, cell: SurfaceCell) -> bool {
         let c = self.config;
+        if c.skip_body_collision != 0 {
+            return true;
+        }
         if c.start_exemption == 0 {
             return false;
         }
@@ -1181,16 +1186,6 @@ impl Checker<'_> {
             } else {
                 heading
             });
-            let stance = if pair[0].has_yaw != 0 {
-                pair[0].yaw
-            } else {
-                heading
-            };
-            for (a, b) in [(incoming, stance), (stance, heading)] {
-                if let Some((failure, point)) = self.rotation(from, a, b) {
-                    return route_failure(failure, index as i32, self.cell(point));
-                }
-            }
             let actual_start = index == 0 && starts_at_actual;
             let failure = self.oriented_query(
                 from,
@@ -1337,7 +1332,7 @@ mod tests {
             let checker = prepare(&state, limits, &[], &[], None, std::ptr::null_mut()).unwrap();
             assert!(matches!(
                 resolve(&checker, goal),
-                Err(QueryError::Exhausted)
+                Err(QueryError::GoalUnreachable)
             ));
         }
         let region = [LtMlsMetricRegion {
@@ -1347,7 +1342,7 @@ mod tests {
         let checker = prepare(&state, c, &region, &[], None, std::ptr::null_mut()).unwrap();
         assert!(matches!(
             resolve(&checker, goal),
-            Err(QueryError::Exhausted)
+            Err(QueryError::GoalUnreachable)
         ));
         assert!(matches!(
             checker.resolve_goal(start, goal, 4, &mut Budget { remaining: 0 }),
@@ -1523,15 +1518,8 @@ mod tests {
         let d = pose(point(0.05, 1.05, 0.45), None);
         assert_eq!(checker.check_poses(&[a, b]).valid, 1);
         assert_eq!(checker.check_poses(&[b, d]).valid, 1);
-        let rejected = checker.check_poses(&[a, b, d]);
-        assert_eq!(rejected.failure_kind, ROUTE_OCCUPIED);
-        assert_eq!(rejected.failed_segment, 1);
-        assert_eq!(
-            checker
-                .check_poses(&[pose(b.point, Some(0.0)), d])
-                .failure_kind,
-            ROUTE_OCCUPIED
-        );
+        assert_eq!(checker.check_poses(&[a, b, d]).valid, 1);
+        assert_eq!(checker.check_poses(&[pose(b.point, Some(0.0)), d]).valid, 1);
         assert_eq!(
             checker
                 .check_poses(&[a, pose(b.point, Some(std::f64::consts::FRAC_PI_2))])

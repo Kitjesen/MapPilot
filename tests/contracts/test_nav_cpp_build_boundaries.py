@@ -34,7 +34,7 @@ def test_navigation_runtime_install_does_not_publish_internal_headers() -> None:
         assert "INSTALL_INTERFACE:" not in source
         assert "DESTINATION include" not in source
         assert "ARCHIVE DESTINATION" not in source
-        assert "install(TARGETS lingtu_nav_far_c_api" not in source
+        assert "lingtu_nav_far" not in source
 
     assert "install(" not in root_cmake
     assert "install(" not in targets
@@ -225,16 +225,16 @@ def test_navigation_map_identity_is_runtime_bound_not_store_discovered() -> None
     assert "currentDeclaredIdentity" not in combined
 
 
-def test_far_is_optional_native_backend_with_active_map_gate() -> None:
+def test_only_octoplanner3d_is_the_native_global_backend() -> None:
     root_cmake = _read("src/nav/cpp/CMakeLists.txt")
     targets = _read("src/nav/cpp/cmake/NavCoreTargets.cmake")
     endpoint = _read("src/nav/cpp/endpoint/nav/main.cpp")
     gate = _read("src/nav/cpp/endpoint/nav/input/active/occupancy.cpp")
 
     assert "include(cmake/NavCoreTargets.cmake)" in root_cmake
-    assert "lingtu_nav_far" in targets
-    assert "GlobalPlannerBackend::Far" in endpoint
-    assert "runWithActiveOccupancy" in endpoint
+    assert "lingtu_nav_far" not in targets
+    assert "GlobalPlannerBackend::Far" not in endpoint
+    assert "runWithActiveOccupancy" not in endpoint
     assert "LoadOccupancyArtifact" in gate
     assert "cached_artifact_" in gate
 

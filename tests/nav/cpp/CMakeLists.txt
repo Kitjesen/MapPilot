@@ -61,8 +61,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
         test_validation
         test_terrain_core
         test_dynamic_clear_core
-        test_far_c_api
-        test_far_planner
         test_scan_planner
         test_scan_polynomial
         test_scan_search_metrics
@@ -95,12 +93,8 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     target_include_directories(test_terrain_core PRIVATE
       "${LINGTU_SRC_ROOT}/maps/include")
 
-    target_link_libraries(test_far_planner PRIVATE lingtu_nav_far)
-    target_link_libraries(test_far_c_api PRIVATE lingtu_nav_far_c_api)
     target_link_libraries(test_recovery_rotation PRIVATE lingtu_nav_navigation)
     target_link_libraries(test_local_planner_core PRIVATE lingtu_nav_navigation)
-    set_target_properties(test_far_c_api PROPERTIES
-      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
     lingtu_add_nav_gtest(test_executor test_executor.cpp)
     target_compile_definitions(test_executor PRIVATE
@@ -177,7 +171,7 @@ if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
     "${LINGTU_SRC_ROOT}/explore/cpp"
     "${LINGTU_SRC_ROOT}/maps/include")
   target_link_libraries(benchmark_saved_route PRIVATE
-    lingtu_nav_navigation lingtu_nav_far octoplanner3d_runtime
+    lingtu_nav_navigation octoplanner3d_runtime
     octoplanner3d_global_planner octomap_vendor octomath_vendor)
   target_compile_options(benchmark_saved_route PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
@@ -196,7 +190,7 @@ if(LINGTU_NAV_CPP_BUILD_BENCHMARKS
   target_compile_options(benchmark_body_execution PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
   target_link_libraries(benchmark_body_execution PRIVATE
-    lingtu_nav_navigation lingtu_nav_far octoplanner3d_runtime
+    lingtu_nav_navigation octoplanner3d_runtime
     octoplanner3d_global_planner octomap_vendor octomath_vendor)
   lingtu_nav_enable_performance(benchmark_body_execution)
 endif()

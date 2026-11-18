@@ -32,7 +32,7 @@ def native_gateway(monkeypatch, tmp_path):
     gateway._compiled_run_plan = SimpleNamespace(
         product="nav",
         lifecycle={"product": "nav", "session_mode": "navigating", "slam_mode": "localization", "requires_map": True},
-        native_nav={"control_mode": "autonomy", "global_planner": "far"},
+        native_nav={"control_mode": "autonomy", "global_planner": "octoplanner3d"},
         required_capabilities=(),
         native_process_environment={
             (f"LINGTU_{name}" if name.startswith("TELEOP_") else f"LINGTU_NAV_{name}"): "1.0"
@@ -63,9 +63,8 @@ def native_gateway(monkeypatch, tmp_path):
         "active_cmd_source": "autonomy",
         "control_authority": {"owner": "native_endpoint"},
         "control_mode": "autonomy",
-        "global_planner": "far",
+        "global_planner": "octoplanner3d",
         "planner_map": "/maps/yard/octomap.ot",
-        "far_input": {"required": True, "ready": True, "map_id": "yard", "content_epoch": 7},
         "publish_cmd_vel": True,
         "navigation_ready": True,
         "path_follower": dict.fromkeys(
@@ -100,7 +99,6 @@ def test_repeated_native_navigation_callbacks_do_not_query_full_session_or_maps(
             lambda state: state["input_gate"].update(ready=False, reason="map_identity_mismatch"),
             "native_input_gate_not_ready",
         ),
-        (lambda state: state["far_input"].update(content_epoch=0), "native_far_input_identity_invalid"),
         (lambda state: state["native_product"].update(product="map"), "native_product_mismatch"),
     ],
 )
@@ -148,10 +146,6 @@ def test_local_collision_input_hold_allows_goal_admission_but_holds_motion(nativ
             state["control_authority"].update(estop_latched=True),
         ),
         lambda state: state.update(stamp_s=time.time() - 10),
-        lambda state: (
-            state["input_gate"].update(ready=False, reason="collision_stale"),
-            state["far_input"].update(content_epoch=0),
-        ),
     ],
 )
 def test_non_collision_native_failures_still_block_goal_admission(native_gateway, change):

@@ -7,6 +7,9 @@ use crate::{adjacency, edges, graph_cells, nodes, GraphConfig, PlannerState, Sur
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum QueryError {
     Exhausted,
+    // No admissible surface exists within the endpoint snap radius.
+    StartUnreachable,
+    GoalUnreachable,
     Budget,
     Cancelled,
 }
@@ -237,7 +240,6 @@ impl SnapCandidates {
             .iter()
             .enumerate()
             .filter(|(index, _)| surface.allowed(*index))
-            .filter(|(_, &cell)| surface.connector_within_limits(target, cell))
             .map(|(index, &cell)| (squared_distance(target, cell), index))
             .filter(|&(distance, _)| distance <= limit)
             .collect::<Vec<_>>();
@@ -637,11 +639,11 @@ pub(crate) fn plan_budgeted_with_stage(
         let goal_added = goals.extend(surface, all, budget, &mut check)?;
         if starts.seeds.is_empty() {
             *stage = QueryStage::StartAttach;
-            return Err(QueryError::Exhausted);
+            return Err(QueryError::StartUnreachable);
         }
         if goals.seeds.is_empty() {
             *stage = QueryStage::GoalAttach;
-            return Err(QueryError::Exhausted);
+            return Err(QueryError::GoalUnreachable);
         }
         if all && !start_added && !goal_added {
             *stage = QueryStage::EndpointAttach;
@@ -1270,7 +1272,7 @@ mod tests {
             false,
             |_, _, kind| i32::from(kind == 3),
         );
-        assert_eq!(result, Err(QueryError::Exhausted));
+        assert_eq!(result, Err(QueryError::StartUnreachable));
     }
 
     #[test]
@@ -1295,7 +1297,7 @@ mod tests {
             false,
             |_, _, _| 1,
         );
-        assert_eq!(result, Err(QueryError::Exhausted));
+        assert_eq!(result, Err(QueryError::StartUnreachable));
     }
 
     #[test]

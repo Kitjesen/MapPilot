@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "planning/global/far/planner.hpp"
 #include "planning/global/contract.hpp"
 #include "command/ingress.hpp"
 #include "input/obstacle.hpp"
@@ -97,7 +96,6 @@ struct StatusWriterConfig {
   bool input_require_traversability{false};
   bool input_require_localization_health{false};
   lingtu::nav::plan::GlobalPlannerOptions octoplanner_options{};
-  lingtu::nav::plan::far_planner::FarPlannerConfig far_options{};
 };
 
 struct PlanDiagnostics {
@@ -306,14 +304,6 @@ class MotionStopEvidenceTracker {
   MotionStopEvidenceDiagnostics snapshot_{};
 };
 
-struct FarInputStatus {
-  bool required{false};
-  bool ready{false};
-  std::string reason{"not_required"};
-  std::string map_id;
-  std::int64_t content_epoch{0};
-};
-
 std::string scanFailureSnapshotJson(const nav_kernel::ScanFailureSnapshot &failure,
                                     const std::string &product_session_id);
 
@@ -322,7 +312,7 @@ void writeStatusSnapshot(
     bool has_odom, bool has_map_odom_tf, bool has_path, bool estop_latched,
     const std::string &estop_reason, const nav_kernel::Twist &final_cmd_vel,
     const FinalOutputDiagnostics &final_output, const DriverControlDiagnostics &driver_control,
-    const MotionStopEvidenceDiagnostics &motion_stop_evidence, const FarInputStatus &far_input,
+    const MotionStopEvidenceDiagnostics &motion_stop_evidence,
     bool has_traversability, bool has_terrain_map, bool has_terrain_map_ext,
     const InputGateState &input_gate, const CloudSyncDiagnostics &cloud_sync,
     const FrameDiagnostics &frames, const CommandDiagnostics &commands,

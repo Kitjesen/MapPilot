@@ -762,13 +762,8 @@ def _saved_map_environment(
     planner = plan.native_nav.get("global_planner")
     if plan.product == "map":
         environment["OCTOPLANNER_MAP_PATH"] = ""
-        environment["FAR_OCCUPANCY_PATH"] = ""
     elif planner == "octoplanner3d":
         environment["OCTOPLANNER_MAP_PATH"] = octomap_artifact(identity).uri
-        environment["FAR_OCCUPANCY_PATH"] = ""
-    elif planner == "far":
-        environment["OCTOPLANNER_MAP_PATH"] = ""
-        environment["FAR_OCCUPANCY_PATH"] = occupancy_artifact(identity).uri
     else:
         raise RuntimeError(f"unsupported native global planner: {planner}")
     environment["LINGTU_SLAM_MODE"] = "mapping" if plan.product == "map" else "localization"

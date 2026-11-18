@@ -2566,7 +2566,7 @@ void testPlanPreview() {
   response.start_valid = true;
   response.reason = const_cast<char*>("");
   response.elapsed_ms = 12.5;
-  response.planner = const_cast<char*>("far");
+  response.planner = const_cast<char*>("octoplanner3d");
   response.start = {1.0, 2.0, 0.5};
   response.goal = {4.0, 5.0, 0.5};
   std::array<lingtu_dds_Point, 2U> path{{
@@ -2585,7 +2585,7 @@ void testPlanPreview() {
       result.point_count == path.size() && result.feasible == 1 &&
           result.start_valid == 1 && std::string(result.request_id) == request_id &&
           std::string(result.frame_id) == "map" &&
-          std::string(result.planner) == "far" && result.elapsed_ms == 12.5,
+          std::string(result.planner) == "octoplanner3d" && result.elapsed_ms == 12.5,
       "plan preview result metadata was not preserved");
   call_result = lingtu_nav_client_preview_plan_v2(
       client,

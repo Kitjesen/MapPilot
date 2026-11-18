@@ -34,7 +34,6 @@ using lingtu::nav::endpoint::StatusMotionLayerSample;
 using lingtu::nav::endpoint::StatusPlannerSample;
 using lingtu::nav::endpoint::StatusRuntimeState;
 using lingtu::nav::endpoint::StatusWriterConfig;
-using lingtu::nav::endpoint::StatusFarInputSample;
 using lingtu::nav::endpoint::StopConfirmationConfig;
 using lingtu::nav::endpoint::StopConfirmationDiagnostics;
 using lingtu::nav::endpoint::StopConfirmationState;
@@ -217,9 +216,6 @@ struct Fixture {
       return StatusMotionLayerSample{17, motion_stats, &clusters};
     };
     result.sample_loop_health = [this]() { return loop_health; };
-    result.sample_far_input = []() {
-      return StatusFarInputSample{false, true, "not_required", "", 0};
-    };
     result.log = [this](const std::string &) { ++log_calls; };
     return result;
   }
@@ -463,9 +459,7 @@ void testStatusSnapshotPreservesPrecedenceCountersFreshnessAndTiming() {
               contains(autonomy, "\"thread_cpu_ms\":12.500000") &&
               contains(autonomy, "\"final_control\": 0.000000"),
           "publication must preserve intermediate overruns and their own stage context");
-  require(contains(autonomy,
-                   "\"far_input\": {\"required\": false, \"ready\": true, \"reason\": \"not_required\"") &&
-              contains(autonomy, "\"navigation_ready\": true"),
+  require(contains(autonomy, "\"navigation_ready\": true"),
           "rolling performance warnings must preserve native motion permission");
   require(contains(autonomy, "\"loop_ms\": {\"mean\": 49.750000") &&
               contains(autonomy, "\"p50\": 50.000000") &&
@@ -868,52 +862,6 @@ void testNonzeroOutputInvalidatesConfirmedMotionStopEvidence() {
           "a later nonzero final output must invalidate all evidence from the prior stop");
 }
 
-void testFarInputReadinessControlsNavigationReadiness() {
-  Fixture fixture;
-  fixture.loop_health.healthy = true;
-  fixture.loop_health.reason = "healthy";
-  auto actions = fixture.actions();
-  actions.sample_far_input = []() {
-    return StatusFarInputSample{true, false, "required occupancy artifact missing", "yard", 4};
-  };
-  auto config = fixture.config();
-  config.global_planner = "far";
-  config.publish_cmd_vel = true;
-  NavStatusPublisher publisher(std::move(config), 10.0, std::move(actions), fixture.sink());
-  TimingDiagnostics previous;
-  TimingDiagnostics current;
-  publisher.requestImmediate();
-  require(publisher.publishIfDue(fixture.state, fixture.commands, previous, current),
-          "FAR status snapshot must publish when occupancy is unavailable");
-  publisher.flush();
-  const auto blocked = fixture.writes.back();
-  require(contains(blocked,
-                   "\"far_input\": {\"required\": true, \"ready\": false, \"reason\": \"required occupancy artifact missing\", \"map_id\": \"yard\", \"content_epoch\": 4}") &&
-              contains(blocked, "\"navigation_ready\": false"),
-          "missing FAR occupancy must be explicit and must block navigation readiness");
-
-  Fixture ready_fixture;
-  ready_fixture.loop_health.healthy = true;
-  ready_fixture.loop_health.reason = "healthy";
-  auto ready_actions = ready_fixture.actions();
-  ready_actions.sample_far_input = []() {
-    return StatusFarInputSample{true, true, "ready", "yard", 5};
-  };
-  auto ready_config = ready_fixture.config();
-  ready_config.global_planner = "far";
-  ready_config.publish_cmd_vel = true;
-  NavStatusPublisher ready_publisher(std::move(ready_config), 10.0,
-                                     std::move(ready_actions), ready_fixture.sink());
-  ready_publisher.requestImmediate();
-  require(ready_publisher.publishIfDue(ready_fixture.state, ready_fixture.commands, previous, current),
-          "valid FAR occupancy status snapshot must publish");
-  ready_publisher.flush();
-  require(contains(ready_fixture.writes.back(),
-                   "\"far_input\": {\"required\": true, \"ready\": true, \"reason\": \"ready\", \"map_id\": \"yard\", \"content_epoch\": 5}") &&
-              contains(ready_fixture.writes.back(), "\"navigation_ready\": true"),
-          "validated FAR occupancy must make the FAR input ready");
-}
-
 void testScanFailureCaptureAndSafetyReasonSurviveStatusReset() {
   Fixture fixture;
   fixture.local_debug.backend = nav_kernel::LocalPlannerBackend::Scan;
@@ -1068,6 +1016,5 @@ int main() {
   testFailedMotionStopEvidenceKeepsExactFailure();
   testZeroKeepalivePreservesConfirmedMotionStopEvidence();
   testNonzeroOutputInvalidatesConfirmedMotionStopEvidence();
-  testFarInputReadinessControlsNavigationReadiness();
   return 0;
 }

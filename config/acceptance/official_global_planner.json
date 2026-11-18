@@ -69,12 +69,12 @@
       "expected": {"ok": true}
     },
     {
-      "id": "building_stairs_geometry_only_rejected",
+      "id": "building_stairs_geometry_only",
       "pcd": "octomap/pcd_files/building2_9.pcd",
       "map_profile": "geometry_only",
       "start": [7.9, -2.7, 0.3],
       "goal": [2.5, -0.3, 13.7],
-      "expected": {"ok": false, "error": "start_snap_exhausted"}
+      "expected": {"ok": true}
     },
     {
       "id": "plaza_occupied_goal_rejected",

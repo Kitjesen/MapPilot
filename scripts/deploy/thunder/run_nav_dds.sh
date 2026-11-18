@@ -49,9 +49,6 @@ case "${LINGTU_SLAM_MODE}" in
             octoplanner3d)
                 : "${OCTOPLANNER_MAP_PATH:?OctoPlanner3D requires OCTOPLANNER_MAP_PATH}"
                 ;;
-            far)
-                : "${FAR_OCCUPANCY_PATH:?FAR requires FAR_OCCUPANCY_PATH}"
-                ;;
             *)
                 echo "ERROR: unsupported NAV_GLOBAL_PLANNER=${NAV_GLOBAL_PLANNER}" >&2
                 exit 2
@@ -62,7 +59,6 @@ case "${LINGTU_SLAM_MODE}" in
         # Persistent unit defaults must never leak a previous saved map into a
         # map-free Product session.
         OCTOPLANNER_MAP_PATH=""
-        FAR_OCCUPANCY_PATH=""
         ;;
     *)
         echo "ERROR: unsupported LINGTU_SLAM_MODE=${LINGTU_SLAM_MODE}" >&2

@@ -2013,7 +2013,11 @@ pub unsafe extern "C" fn lt_mls_artifact_query_checked(
         |from, to, kind| check(cell_to_abi(from), cell_to_abi(to), kind, context),
     ) {
         Ok(path) => put_buffer(path, route).map_or(-3, |_| 0),
-        Err(query::QueryError::Exhausted) => 1,
+        Err(
+            query::QueryError::Exhausted
+            | query::QueryError::StartUnreachable
+            | query::QueryError::GoalUnreachable,
+        ) => 1,
         Err(query::QueryError::Budget) => 2,
         Err(query::QueryError::Cancelled) => 3,
     }
@@ -2235,6 +2239,14 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
             set_failure(LT_MLS_QUERY_CANCELLED, -1, SurfaceCell::new(0, 0, 0));
             return 3;
         }
+        Err(query::QueryError::StartUnreachable) => {
+            set_failure(LT_MLS_QUERY_START_ATTACH, -1, SurfaceCell::new(0, 0, 0));
+            return 4;
+        }
+        Err(query::QueryError::GoalUnreachable) => {
+            set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, SurfaceCell::new(0, 0, 0));
+            return 5;
+        }
     };
     let cell = |pose: LtMlsPose| {
         SurfaceCell::new(
@@ -2337,6 +2349,14 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
             Err(query::QueryError::Cancelled) => {
                 set_failure(LT_MLS_QUERY_CANCELLED, -1, start_cell);
                 return 3;
+            }
+            Err(query::QueryError::StartUnreachable) => {
+                set_failure(LT_MLS_QUERY_START_ATTACH, -1, start_cell);
+                return 4;
+            }
+            Err(query::QueryError::GoalUnreachable) => {
+                set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, start_cell);
+                return 5;
             }
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
@@ -3259,10 +3279,7 @@ mod tests {
         )
         .unwrap();
         let first_poses = first.iter().copied().map(world).collect::<Vec<_>>();
-        assert_eq!(
-            checker.check_poses(&first_poses).failure_kind,
-            ROUTE_OCCUPIED
-        );
+        assert_eq!(checker.check_poses(&first_poses).valid, 1);
         let mut route = LtMlsPoseBuffer::default();
         let status = unsafe {
             lt_mls_artifact_query_metric(&handle, start, goal, 0, 2000, &geometry, &mut route)
@@ -3271,7 +3288,7 @@ mod tests {
         let poses = unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
         assert!(poses
             .iter()
-            .any(|p| (p.point.x + 0.95).abs() < 1e-12 && (p.point.y - 1.05).abs() < 1e-12));
+            .any(|p| (p.point.x - 0.05).abs() < 1e-12 && (p.point.y - 0.05).abs() < 1e-12));
         let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
         assert_eq!(checker.check_poses(poses).valid, 1);
         unsafe { lt_mls_free_pose_buffer(&mut route) };

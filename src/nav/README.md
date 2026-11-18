@@ -69,8 +69,8 @@ planning contract below.
 
 - A goal is intent, not a motor command. It must pass through `navd` planning,
   tracking, safety, and authority before reaching the driver.
-- OctoPlanner3D is the default saved-map global planner. FAR is an explicit 2-D
-  occupancy option; it is not a silent fallback.
+- OctoPlanner3D is the saved-map global planner and the only native global
+  planning backend.
 - `LocalPlanner` is the local-planning module; SCAN and CMU are its selectable algorithms.
 - `real` and `sim` differ in endpoints and devices, not in navigation
   ownership. Both use native `navd` rather than a Python planning substitute.

@@ -67,7 +67,6 @@ std::atomic_bool g_running{true};
 // cache must never outlive that contract, even if the map-risk gate allows a
 // longer age.
 constexpr double kLocalTraversabilityMaxAgeS = 0.5;
-using lingtu::nav::endpoint::ActiveOccupancyGate;
 using lingtu::nav::endpoint::ActiveOctomapGate;
 using lingtu::nav::endpoint::AutonomyTickActions;
 using lingtu::nav::endpoint::AutonomyTickController;
@@ -129,7 +128,6 @@ using lingtu::nav::endpoint::parseArgs;
 using lingtu::nav::endpoint::PlanConfig;
 using lingtu::nav::endpoint::PlanData;
 using lingtu::nav::endpoint::PlanDiagnostics;
-using lingtu::nav::endpoint::runWithActiveOccupancy;
 using lingtu::nav::endpoint::runWithActiveOctomap;
 using lingtu::nav::endpoint::StatusMotionLayerSample;
 using lingtu::nav::endpoint::StatusPlannerSample;
@@ -217,7 +215,6 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "navd startup: config_parsed\n");
     std::fflush(stderr);
     auto active_octomap_gate = std::make_shared<ActiveOctomapGate>(cfg.map_identity);
-    auto active_occupancy_gate = std::make_shared<ActiveOccupancyGate>(cfg.map_identity);
     const auto planner_cache=cfg.map_path.empty() ? std::filesystem::path{} :
         std::filesystem::weakly_canonical(cfg.map_path).parent_path()/".nav";
     auto octomap_planner = std::make_shared<octoplanner3d::runtime::PlannerSession>(planner_cache);
@@ -238,12 +235,6 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "navd startup: dds_runtime_ready\n");
     std::fflush(stderr);
     if (cfg.control_mode == ControlMode::Autonomy && !cfg.map_path.empty()) {
-      if (cfg.global_planner == GlobalPlannerBackend::Far) {
-        auto preflight = active_occupancy_gate->prepare(cfg.map_path);
-        if (!preflight.ok()) {
-          std::fprintf(stderr, "navd startup: FAR input not ready: %s\n", preflight.reason.c_str());
-        }
-      } else {
         auto preflight = active_octomap_gate->prepare(cfg.map_path);
         if (!preflight.ok()) {
           throw std::runtime_error("active OctoMap failed native Maps preflight: " +
@@ -257,14 +248,6 @@ int main(int argc, char **argv) {
             std::chrono::steady_clock::now() - prepare_started).count();
         std::fprintf(stderr, "navd startup: octomap_planner_prepared duration_ms=%.3f\n",
                      prepare_ms);
-      }
-    }
-    if (!no_go_regions && !cfg.map_path.empty() &&
-        cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D) {
-      const auto prepared = active_octomap_gate->prepare(cfg.map_path);
-      if (!prepared.ok())
-        throw std::runtime_error("active OctoMap policy failed preflight: " + prepared.reason);
-      no_go_regions = prepared.artifact->noGoRegions();
     }
     MotionLayerConfig motion_config;
     motion_config.voxel_size_m = cfg.obstacle_voxel_size_m;
@@ -308,17 +291,11 @@ int main(int argc, char **argv) {
     lingtu::nav::navigation::Executor executor(executor_config,
                                                 std::move(local_planner));
     auto planner_lock = std::make_shared<std::mutex>();
-    auto far_planner =
-        std::make_shared<lingtu::nav::plan::far_planner::FarPlanner>(cfg.far_options);
-    auto global_planner = [active_octomap_gate, active_occupancy_gate, octomap_planner, far_planner,
-                           planner_lock, planner_backend = cfg.global_planner,
+    auto global_planner = [active_octomap_gate, octomap_planner,
+                           planner_lock,
                            configured_map_path = cfg.map_path](const auto &request,
                                                                const auto &cancel_check) {
       std::lock_guard<std::mutex> lock(*planner_lock);
-      if (planner_backend == GlobalPlannerBackend::Far) {
-        return runWithActiveOccupancy(*active_occupancy_gate, configured_map_path, *far_planner,
-                                      request, cancel_check);
-      }
       return runWithActiveOctomap(*active_octomap_gate, configured_map_path, request, cancel_check,
                                   [octomap_planner](const auto &map_path, const auto &map_identity,
                                                     const auto &plan_request, const auto &cancel) {
@@ -482,23 +459,6 @@ int main(int argc, char **argv) {
       };
     };
     nav_status_actions.sample_loop_health = [&]() { return control_loop_health.snapshot(true); };
-    nav_status_actions.sample_far_input = [&, active_occupancy_gate]() {
-      lingtu::nav::endpoint::StatusFarInputSample result;
-      result.required = cfg.global_planner == GlobalPlannerBackend::Far;
-      if (!result.required) {
-        result.ready = true;
-        result.reason = "not_required";
-        return result;
-      }
-      const auto prepared = active_occupancy_gate->prepare(cfg.map_path);
-      result.ready = prepared.ok();
-      result.reason = prepared.ok() ? "ready" : prepared.reason;
-      if (prepared.ok()) {
-        result.map_id = prepared.artifact->identity().map_id;
-        result.content_epoch = prepared.artifact->identity().content_epoch;
-      }
-      return result;
-    };
     NavStatusPublisher nav_status(std::move(status_cfg), cfg.status_s,
                                   std::move(nav_status_actions));
 
@@ -724,15 +684,9 @@ int main(int argc, char **argv) {
 
     auto current_map_identity = [&]() {
       GoalPlanMapIdentityResult result;
-      if (cfg.global_planner == GlobalPlannerBackend::Far) {
-        auto identity = active_occupancy_gate->currentIdentity(cfg.map_path);
-        result.identity = std::move(identity.identity);
-        result.reason = std::move(identity.reason);
-      } else {
-        auto identity = active_octomap_gate->currentIdentity(cfg.map_path);
-        result.identity = std::move(identity.identity);
-        result.reason = std::move(identity.reason);
-      }
+      auto identity = active_octomap_gate->currentIdentity(cfg.map_path);
+      result.identity = std::move(identity.identity);
+      result.reason = std::move(identity.reason);
       return result;
     };
 

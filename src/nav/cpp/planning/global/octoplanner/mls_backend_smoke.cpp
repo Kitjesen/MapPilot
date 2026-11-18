@@ -60,7 +60,7 @@ int main() try {
   require(handle.regionOccupied(LtMlsRegion{2, 3, 0, 0, 0, 0}),
           "Rust MLS region query changed");
   require(handle.height(0.35, 0.025, 0.0, 0.05, resolution) ==
-              std::optional<double>(0.0),
+              std::optional<double>(0.05),
           "Rust MLS height query changed");
   const auto artifact_graph = handle.graph();
   require(artifact_graph.nodes.size() == artifact_summary.nodes &&

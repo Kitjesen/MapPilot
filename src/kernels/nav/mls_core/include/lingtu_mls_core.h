@@ -185,6 +185,7 @@ typedef struct LtMlsMetricConfig {
   double goal_tolerance;
   double goal_xy_tolerance;
   double goal_z_tolerance;
+  uint8_t skip_body_collision;
 } LtMlsMetricConfig;
 
 typedef int32_t (*LtMlsCancelCheck)(void* context);
@@ -396,7 +397,8 @@ int32_t lt_mls_artifact_check_metric_poses(
     const LtMlsArtifact* handle, const LtMlsPose* route, uint64_t route_len,
     const LtMlsGeometry* geometry, LtMlsRouteCheckResult* result);
 
-// Same query statuses as query_checked. Geometry and turns run entirely in Rust.
+// Status 4 means the start has no admissible surface. Status 5 means the goal
+// has no admissible surface within the snap radius. Geometry runs in Rust.
 int32_t lt_mls_artifact_query_metric(
     const LtMlsArtifact* handle, LtMlsPose start, LtMlsPose goal,
     int32_t max_snap_cells, int32_t max_iterations,

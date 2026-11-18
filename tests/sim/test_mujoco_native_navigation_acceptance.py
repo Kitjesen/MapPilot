@@ -823,6 +823,11 @@ def test_multifloor_ground_is_visual_only():
     assert ground.get("conaffinity") == "0"
     assert ground.get("group") == "5"
 
+    grid = root.find(".//geom[@name='grid_x_l1_22']")
+    assert grid is not None
+    assert grid.get("contype") == "0"
+    assert grid.get("conaffinity") == "0"
+
 
 def test_multifloor_bridge_covers_floor_corner():
     root = ET.fromstring(saved_map_plan_gate._stairs3d_scene_xml("multifloor_stack_3"))
@@ -3667,7 +3672,7 @@ def test_native_acceptance_manifest_declares_exact_product_chain():
     assert manifest["asset_builder"]["kind"] == "saved_map_plan_gate"
     assert manifest["asset_builder"]["map_source"] == "mujoco_lidar"
     assert manifest["world"] == ""
-    assert manifest["map_dir"] == ""
+    assert manifest["map_dir"] == "build/mujoco_native_navigation_acceptance/prepared_assets/same_source_map"
 
 
 @pytest.mark.parametrize(

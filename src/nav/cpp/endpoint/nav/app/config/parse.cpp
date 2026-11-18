@@ -55,10 +55,7 @@ GlobalPlannerBackend parseGlobalPlannerBackend(const std::string &raw, const cha
   if (value == "octoplanner3d" || value == "octo") {
     return GlobalPlannerBackend::OctoPlanner3D;
   }
-  if (value == "far") {
-    return GlobalPlannerBackend::Far;
-  }
-  throw std::runtime_error(std::string(name) + " expects octoplanner3d or far");
+  throw std::runtime_error(std::string(name) + " expects octoplanner3d");
 }
 
 nav_kernel::LocalPlannerBackend parseLocalPlannerBackend(
@@ -666,18 +663,6 @@ CliConfig parseArgs(int argc, char **argv) {
                  "LINGTU_NAV_OCTO_TERMINAL_GOAL_XY_TOLERANCE_M");
   applyEnvDouble(cfg.octoplanner_options.terminal_goal_z_tolerance_m,
                  "LINGTU_NAV_OCTO_TERMINAL_GOAL_Z_TOLERANCE_M");
-  applyEnvDouble(cfg.far_options.robot_radius_m, "LINGTU_NAV_FAR_ROBOT_RADIUS_M");
-  applyEnvDouble(cfg.far_options.obstacle_clearance_m, "LINGTU_NAV_FAR_OBSTACLE_CLEARANCE_M");
-  applyEnvDouble(cfg.far_options.max_visibility_distance_m,
-                 "LINGTU_NAV_FAR_MAX_VISIBILITY_DISTANCE_M");
-  applyEnvDouble(cfg.far_options.unknown_cost_multiplier, "LINGTU_NAV_FAR_UNKNOWN_COST_MULTIPLIER");
-  applyEnvInt(cfg.far_options.corner_separation_cells, "LINGTU_NAV_FAR_CORNER_SEPARATION_CELLS");
-  applyEnvInt(cfg.far_options.snap_search_radius_cells, "LINGTU_NAV_FAR_SNAP_RADIUS_CELLS");
-  applyEnvSize(cfg.far_options.max_graph_nodes, "LINGTU_NAV_FAR_MAX_GRAPH_NODES");
-  applyEnvSize(cfg.far_options.max_visibility_pairs, "LINGTU_NAV_FAR_MAX_VISIBILITY_PAIRS");
-  applyEnvSize(cfg.far_options.max_search_expansions, "LINGTU_NAV_FAR_MAX_SEARCH_EXPANSIONS");
-  applyEnvBool(cfg.far_options.simplify_path, "LINGTU_NAV_FAR_SIMPLIFY_PATH");
-
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto next = [&]() -> std::string {
@@ -903,26 +888,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.octoplanner_options.terminal_goal_xy_tolerance_m = parseDouble(next(), arg.c_str());
     } else if (arg == "--octo-terminal-goal-z-tolerance-m") {
       cfg.octoplanner_options.terminal_goal_z_tolerance_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--far-robot-radius-m") {
-      cfg.far_options.robot_radius_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--far-obstacle-clearance-m") {
-      cfg.far_options.obstacle_clearance_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--far-max-visibility-distance-m") {
-      cfg.far_options.max_visibility_distance_m = parseDouble(next(), arg.c_str());
-    } else if (arg == "--far-unknown-cost-multiplier") {
-      cfg.far_options.unknown_cost_multiplier = parseDouble(next(), arg.c_str());
-    } else if (arg == "--far-corner-separation-cells") {
-      cfg.far_options.corner_separation_cells = parseInt(next(), arg.c_str());
-    } else if (arg == "--far-snap-radius-cells") {
-      cfg.far_options.snap_search_radius_cells = parseInt(next(), arg.c_str());
-    } else if (arg == "--far-max-graph-nodes") {
-      cfg.far_options.max_graph_nodes = parseSize(next(), arg.c_str());
-    } else if (arg == "--far-max-visibility-pairs") {
-      cfg.far_options.max_visibility_pairs = parseSize(next(), arg.c_str());
-    } else if (arg == "--far-max-search-expansions") {
-      cfg.far_options.max_search_expansions = parseSize(next(), arg.c_str());
-    } else if (arg == "--far-simplify-path") {
-      cfg.far_options.simplify_path = parseBool(next(), "--far-simplify-path");
     } else if (arg == "--status-file") {
       cfg.status_file = next();
     } else if (arg == "--estop-latch-file") {
@@ -934,7 +899,7 @@ CliConfig parseArgs(int argc, char **argv) {
           "usage: navd --path-library DIR "
           "[--control-mode autonomy|teleop|teleop_avoid] "
           "[--product PRODUCT] "
-          "[--global-planner octoplanner3d|far] [--local-planner cmu|scan] "
+          "[--global-planner octoplanner3d] [--local-planner cmu|scan] "
           "[--allow-teleop-takeover true|false] "
           "[--teleop-local-planner true|false] "
           "[--map PLANNER_ARTIFACT] [--domain-id N] [--tick-hz HZ] "
@@ -977,9 +942,7 @@ CliConfig parseArgs(int argc, char **argv) {
   }
 
   if (cfg.map_path.empty()) {
-    cfg.map_path = cfg.global_planner == GlobalPlannerBackend::Far
-                       ? envOrEmpty("FAR_OCCUPANCY_PATH")
-                       : envOrEmpty("OCTOPLANNER_MAP_PATH");
+    cfg.map_path = envOrEmpty("OCTOPLANNER_MAP_PATH");
   }
   if (!cfg.map_path.empty()) {
     cfg.map_identity.map_id = envOrEmpty("LINGTU_MAP_ID");
@@ -1251,15 +1214,6 @@ CliConfig parseArgs(int argc, char **argv) {
   octo.terminal_goal_tolerance_m = std::max(0.0, octo.terminal_goal_tolerance_m);
   octo.terminal_goal_xy_tolerance_m = std::max(0.0, octo.terminal_goal_xy_tolerance_m);
   octo.terminal_goal_z_tolerance_m = std::max(0.0, octo.terminal_goal_z_tolerance_m);
-  // Construction performs the same strict validation used by the planning
-  // runtime. Normalize kernel argument errors at the CLI boundary so callers
-  // receive one stable startup-configuration error category.
-  try {
-    const lingtu::nav::plan::far_planner::FarPlanner far_config_probe(cfg.far_options);
-    (void)far_config_probe;
-  } catch (const std::invalid_argument &exc) {
-    throw std::runtime_error(std::string("invalid FAR configuration: ") + exc.what());
-  }
   if (cfg.control_mode == ControlMode::Teleop) {
     cfg.check_obstacle = false;
     cfg.use_traversability_cost = false;

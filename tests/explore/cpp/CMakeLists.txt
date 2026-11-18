@@ -102,7 +102,7 @@ add_executable(test_saved_coverage_grid
   "${_EXPLORE_ENDPOINT}/saved_coverage_grid.cpp")
 target_include_directories(test_saved_coverage_grid PRIVATE
   ${_EXPLORE_INCLUDES})
-target_link_libraries(test_saved_coverage_grid PRIVATE lingtu_nav_far)
+target_link_libraries(test_saved_coverage_grid PRIVATE lingtu_maps)
 lingtu_add_explore_test(test_saved_coverage_grid)
 
 if(LINGTU_NAV_CPP_BUILD_ENDPOINT)

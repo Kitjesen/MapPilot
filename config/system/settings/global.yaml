@@ -53,18 +53,6 @@ native_nav:
     # body_clearance_below_m and body_clearance_above_m use the collision profile.
     # Fixed values here would override the selected platform's geometry.
 
-  # Options for the alternative FAR backend; used only when selected.
-  far_robot_radius_m: 0.35
-  far_obstacle_clearance_m: 0.10
-  far_max_visibility_distance_m: 30.0
-  far_unknown_cost_multiplier: 6.0
-  far_corner_separation_cells: 1
-  far_snap_search_radius_cells: 12
-  far_max_graph_nodes: 4096
-  far_max_visibility_pairs: 500000
-  far_max_search_expansions: 500000
-  far_simplify_path: true
-
 standalone:
   native_nav:
     global:

@@ -467,6 +467,10 @@ PreparedArtifactHandle::MetricQueryResult PreparedArtifactHandle::metricQuery(
                     failure_segment, failure_cell};
     case 3: return {QueryStatus::Cancelled, {}, failure_stage,
                     failure_segment, failure_cell};
+    case 4: return {QueryStatus::StartUnreachable, {}, failure_stage,
+                    failure_segment, failure_cell};
+    case 5: return {QueryStatus::GoalUnreachable, {}, failure_stage,
+                    failure_segment, failure_cell};
     default: throw std::runtime_error("Rust MLS metric query failed: " + std::to_string(status));
   }
 }

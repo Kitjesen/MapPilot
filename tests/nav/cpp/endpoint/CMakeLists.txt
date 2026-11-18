@@ -35,7 +35,6 @@ if(LINGTU_NAV_CPP_BUILD_TESTS
     ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_nav_endpoint_config PRIVATE
-    lingtu_nav_far
     lingtu_nav_follower
     lingtu_nav_local_planner)
   lingtu_endpoint_enable_warnings(test_nav_endpoint_config)
@@ -48,7 +47,7 @@ if(LINGTU_NAV_CPP_BUILD_TESTS)
     "${_ENDPOINT_DIR}/nav/app/planner.cpp"
     "${_ENDPOINT_DIR}/nav/app/config/build.cpp")
   target_include_directories(test_planner_selection PRIVATE ${_EP_DIRS} "${_NAV_CORE_DIR}")
-  target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation lingtu_nav_far)
+  target_link_libraries(test_planner_selection PRIVATE lingtu_nav_navigation)
   target_compile_definitions(test_planner_selection PRIVATE
     LINGTU_TEST_PATH_LIBRARY="${LINGTU_NAV_CPP_ROOT}/planning/local/cmu/paths/go2")
   lingtu_endpoint_enable_warnings(test_planner_selection)
@@ -1843,9 +1842,7 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_occupancy_gate.cpp")
     "${_ENDPOINT_DIR}"
     ${_EP_DIRS}
     "${_NAV_CORE_DIR}")
-  target_link_libraries(test_active_occupancy_gate PRIVATE
-    lingtu_maps
-    lingtu_nav_far)
+  target_link_libraries(test_active_occupancy_gate PRIVATE lingtu_maps)
   lingtu_endpoint_enable_warnings(test_active_occupancy_gate)
   add_test(NAME test_active_occupancy_gate COMMAND test_active_occupancy_gate)
 endif()

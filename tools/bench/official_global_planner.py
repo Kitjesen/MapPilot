@@ -117,10 +117,11 @@ def _run(command: list[str], *, timeout_s: float, stdin: bytes | None = None) ->
 
 
 def _require_binary(build_dir: Path, name: str) -> Path:
-    binary = build_dir / name
-    if not binary.is_file():
-        raise RegressionError(f"required binary not found: {binary}")
-    return binary
+    candidates = (build_dir / name, build_dir / f"{name}.exe")
+    for binary in candidates:
+        if binary.is_file():
+            return binary
+    raise RegressionError(f"required binary not found: {candidates[0]}")
 
 
 def _materialize_dataset(

@@ -57,7 +57,7 @@ detours and retries share the request budget,
 and cancellation returns without publishing a route. Exhaustion and errors
 return from that same backend; a second C++ search no longer hides its result.
 The old grid and C++ `SurfaceGraph` remain only for explicit legacy
-callers. New `.8` prepared artifacts restore the Rust graph directly and attach
+callers. New `.9` prepared artifacts restore the Rust graph directly and attach
 raw occupied/free evidence from the same OctoMap without rebuilding the graph.
 The map-bound geometry index is reused by edge checks and invalidated by updates.
 
@@ -131,9 +131,6 @@ The vendored code derives from
 `9a9cc431ea905a5878975cc6fbbce6c9618b31a4`, under the MIT license. LingTu's
 copy includes robot-envelope, ground-support, floor-continuity, step/slope,
 terminal-tolerance, and cancellation changes. See `LICENSE`.
-
-FAR is a separate optional 2D global planner under `../far`; it is not part of
-this vendor tree and does not replace OctoPlanner3D as the product default.
 
 ## Runtime ownership
 

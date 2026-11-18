@@ -1123,7 +1123,6 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
         global_planner: str = "octoplanner3d",
         planner_map: str = "/maps/active/octomap.ot",
         product: str | None = None,
-        far_input: dict | None = None,
         ) -> None:
         native_status = {}
         if product:
@@ -1172,14 +1171,6 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
                         "teleop_planner_max_deviation_deg"
                     ],
                 )
-        if far_input is None and global_planner == "far":
-            far_input = {
-                "required": True,
-                "ready": True,
-                "reason": "ready",
-                "map_id": "yard",
-                "content_epoch": 7,
-            }
         status_path.write_text(
             json.dumps(
                 {
@@ -1203,7 +1194,6 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
                     },
                     "global_planner": global_planner,
                     "planner_map": planner_map,
-                    **({"far_input": far_input} if far_input is not None else {}),
                     "publish_cmd_vel": publish_cmd_vel,
                     "active_cmd_source": "none",
                     "control_authority": {
@@ -1287,59 +1277,10 @@ def test_native_endpoint_readiness_requires_product_control_mode_and_cmd_vel_pub
     assert terrain_disabled["ok"] is False
     assert terrain_disabled["blockers"] == ["native_traversability_cost_mismatch"]
 
-    write_status(
-        "autonomy",
-        True,
-        global_planner="far",
-        planner_map="/maps/active/occupancy.npz",
-    )
-    far = _native_endpoint_readiness({"mode": "navigating", "global_planner": "far"})
-    assert far["ok"] is True
-    assert far["navigation_ready"] is True
-    assert far["far_input"]["content_epoch"] == 7
-    assert far["global_planner"] == "far"
-    assert {"planner_map", "active_octomap", "active_occupancy"}.isdisjoint(far)
-
-    write_status(
-        "autonomy",
-        True,
-        global_planner="far",
-        planner_map="/maps/active/occupancy.npz",
-        far_input={},
-    )
-    far_missing = _native_endpoint_readiness(
-        {"mode": "navigating", "global_planner": "far"}
-    )
-    assert far_missing["navigation_ready"] is False
-    assert "native_far_input_status_missing" in far_missing["blockers"]
-
-    write_status(
-        "autonomy",
-        True,
-        global_planner="far",
-        planner_map="/maps/active/occupancy.npz",
-        far_input={
-            "required": True,
-            "ready": False,
-            "reason": "required occupancy artifact missing",
-            "map_id": "yard",
-            "content_epoch": 7,
-        },
-    )
-    far_not_ready = _native_endpoint_readiness(
-        {"mode": "navigating", "global_planner": "far"}
-    )
-    assert far_not_ready["navigation_ready"] is False
-    assert "native_far_input_not_ready" in far_not_ready["blockers"]
-
     write_status("autonomy", True)
-    octo_without_far_status = _native_endpoint_readiness({"mode": "navigating"})
-    assert octo_without_far_status["ok"] is True
-    assert octo_without_far_status["far_input"] == {}
-
-    mismatch = _native_endpoint_readiness({"mode": "navigating", "global_planner": "far"})
-    assert mismatch["ok"] is False
-    assert "native_global_planner_mismatch" in mismatch["blockers"]
+    octo_status = _native_endpoint_readiness({"mode": "navigating"})
+    assert octo_status["ok"] is True
+    assert "far_input" not in octo_status
 
 
 @pytest.mark.parametrize(

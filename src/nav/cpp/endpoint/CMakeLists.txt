@@ -208,7 +208,6 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     lingtu_inspection_core
     lingtu_maps_artifacts
     lingtu_maps
-    lingtu_nav_far
     lingtu_nav_navigation
     lingtu_nav_rolling_segment
     lingtu_nav_velocity_smoother
@@ -294,7 +293,6 @@ add_executable(lingtu_explore_dds
     lingtu_settings
     lingtu_dds_messages
     lingtu_maps_artifacts
-    lingtu_nav_far
     CycloneDDS::ddsc
     lingtu_dds_contracts
     Threads::Threads)

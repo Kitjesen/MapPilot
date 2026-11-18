@@ -513,7 +513,7 @@ PlanResult runPreparedPlanner(
       nonnegativeOrDefault(request.options.terminal_goal_xy_tolerance_m, terminal_tolerance);
     const double terminal_z_tolerance =
       nonnegativeOrDefault(request.options.terminal_goal_z_tolerance_m, 0.75);
-    // All configured bounds constrain the snapped endpoint, as in FAR.
+    // All configured bounds constrain the snapped endpoint.
     // An in-tolerance 3D distance must not override a tighter XY or Z bound.
     result.reached_goal =
       result.goal_error_m <= terminal_tolerance + kMetricToleranceEpsilonM &&

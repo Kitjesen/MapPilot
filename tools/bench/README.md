@@ -158,7 +158,7 @@ packages or access a robot.
 | Building cross-building route | Reach the other building; equal endpoint heights do not imply a level route. |
 | Building stairs | Reach the upper floor through supported, collision-free 26-neighbor vertices. |
 | Plaza route | Reach the target across the central plaza. |
-| Building geometry only | Reject the start when the PCD supplies no known-free body cells. |
+| Building geometry only | Route over the modeled surface with the global centerline contract. |
 | Plaza occupied goal | Reject a goal enclosed by an injected occupied box. |
 | Plaza missing support | Reject a goal whose surrounding floor has been replaced by explicit free space. |
 
@@ -168,7 +168,7 @@ surfaces, not a time series of laser rays and sensor origins. Conversion uses
 free layers above exposed, locally connected surface cells using the existing
 offline converter; original occupied cells are retained. This inferred free
 space is a benchmark assumption, not measured free-space evidence. The
-geometry-only negative case disables it. Field saved-scan ray replay remains
+The geometry-only profile disables modeled free layers. Field saved-scan ray replay remains
 the source of real navigation maps.
 
 The fixed profile uses a 0.155 m route radius, body clearance of 0.10 m above

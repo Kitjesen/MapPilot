@@ -104,6 +104,7 @@ namespace global_planner
         body_offset_m_ = config.body_offset_m;
         body_clearance_below_m_ = config.body_clearance_below_m;
         body_clearance_above_m_ = config.body_clearance_above_m;
+        body_collision_ = config.body_collision;
         ground_support_ = config.ground_support;
         direct_support_only_ = config.direct_support_only;
         support_depth_cells_ = config.support_depth_cells;
@@ -583,7 +584,10 @@ namespace global_planner
                 metric.actual_start=1;
                 metric.start={ {start_point_.x,start_point_.y,start_point_.z},
                     start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
-                metric.start_exemption=static_cast<bool>(start_exemption_);
+                // Global admission owns centerline occupancy, support, steps,
+                // slope and no-go regions. SCAN owns the live compound body.
+                metric.skip_body_collision = static_cast<uint8_t>(!body_collision_);
+                metric.start_exemption = static_cast<bool>(start_exemption_);
                 metric.goal_tolerance=terminal_goal_tolerance_m_;
                 metric.goal_xy_tolerance=terminal_goal_xy_tolerance_m_;
                 metric.goal_z_tolerance=terminal_goal_z_tolerance_m_;
@@ -615,12 +619,27 @@ namespace global_planner
                     search_info_.rust_failure = "Rust surface route budget exhausted";
                     return false;
                 }
-                if (query.status == QueryStatus::Exhausted) {
+                if (query.status == QueryStatus::GoalUnreachable) {
                     search_info_.outcome = SearchInfo::Outcome::Exhausted;
                     search_info_.rust_failure_kind = "query";
-                    search_info_.rust_failure = std::string("Rust surface route exhausted at ") +
-                        search_info_.rust_failure_stage;
+                    search_info_.rust_failure = "Rust goal has no admissible surface";
                     ++search_info_.rust_query_failures;
+                    endpoint_resolution_.failure = EndpointResolutionInfo::Failure::GoalSnapExhausted;
+                    return false;
+                }
+                if (query.status == QueryStatus::Exhausted ||
+                    query.status == QueryStatus::StartUnreachable) {
+                    const bool no_start = query.status == QueryStatus::StartUnreachable;
+                    search_info_.outcome = SearchInfo::Outcome::Exhausted;
+                    search_info_.rust_failure_kind = "query";
+                    search_info_.rust_failure = no_start
+                        ? "Rust start has no admissible surface"
+                        : std::string("Rust surface route exhausted at ") +
+                            search_info_.rust_failure_stage;
+                    ++search_info_.rust_query_failures;
+                    if (no_start) {
+                        endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                    }
                     // Keep the public blocked-start diagnosis without launching another planner.
                     metric.actual_start = 0;
                     metric.ground_support = 0;

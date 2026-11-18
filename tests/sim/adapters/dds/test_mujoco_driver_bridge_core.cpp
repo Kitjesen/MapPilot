@@ -591,6 +591,22 @@ void testWriterLossUsesTimeoutAndAmbiguityStops() {
   }
 }
 
+void testWriterChangesBeforeControllerDoNotCloseBridge() {
+  const auto start = TimePoint{} + 18s;
+  MujocoDriverBridgeCore core(config());
+
+  check(!core.onWriterCount(1, start).has_value(),
+        "writer discovery before controller must not emit a command");
+  check(core.status(start).lifecycle == BridgeLifecycle::AwaitController,
+        "writer discovery must wait for the controller");
+  check(!core.onWriterCount(0, start + 1ms).has_value(),
+        "writer loss before controller must remain a wait state");
+  check(!core.onWriterCount(2, start + 2ms).has_value(),
+        "ambiguous writers before controller must remain a wait state");
+  check(core.status(start + 2ms).fault == BridgeFaultCode::None,
+        "pre-authenticated writer changes must not fault the bridge");
+}
+
 void testPlannedDeactivateClearsAckAndStopsAfterZero() {
   const auto start = TimePoint{} + 20s;
   MujocoDriverBridgeCore core(config());
@@ -986,6 +1002,7 @@ int main() {
     testEveryControlEntryUsesHeartbeatTimeoutZeroBarrier();
     testLateEventsCannotBypassDeadlines();
     testWriterLossUsesTimeoutAndAmbiguityStops();
+    testWriterChangesBeforeControllerDoNotCloseBridge();
     testPlannedDeactivateClearsAckAndStopsAfterZero();
     testPlannedDeactivatePublishesTypedPhysicalStopEvidence();
     testInvalidDeactivateAppliedNeverPublishesStopEvidence();

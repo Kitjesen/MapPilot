@@ -24,7 +24,7 @@ _LEGACY_NAV_PARAMETER_KEYS = frozenset(
         "path_follower_max_accel",
     }
 )
-_GLOBAL_PLANNERS = frozenset({"octoplanner3d", "far"})
+_GLOBAL_PLANNERS = frozenset({"octoplanner3d"})
 _LOCAL_PLANNERS = frozenset({"cmu", "scan"})
 _RECOVERY_ACTIONS = frozenset({"translate", "rotate"})
 NATIVE_NAV_ENVIRONMENT = {
@@ -110,16 +110,6 @@ _CMU_ENVIRONMENT = {
         "cmu_follower_slowdown_distance_m",
     )
 }
-_FAR_ENVIRONMENT = {
-    field: f"LINGTU_NAV_{field.upper()}"
-    for field in (
-        "far_robot_radius_m", "far_obstacle_clearance_m",
-        "far_max_visibility_distance_m", "far_unknown_cost_multiplier",
-        "far_corner_separation_cells", "far_snap_search_radius_cells",
-        "far_max_graph_nodes", "far_max_visibility_pairs",
-        "far_max_search_expansions", "far_simplify_path",
-    )
-}
 _TUNING_INTEGER_FIELDS = frozenset({
     "cmu_points_per_path",
     "cmu_slow_path_count",
@@ -127,15 +117,13 @@ _TUNING_INTEGER_FIELDS = frozenset({
     "max_obstacle_points", "local_planner_threads",
     "local_planner_debug_candidates", "local_map_debug_points",
     "live_obstacle_max_clearing_rays", "live_obstacle_min_hits",
-    "far_corner_separation_cells", "far_snap_search_radius_cells",
-    "far_max_graph_nodes", "far_max_visibility_pairs", "far_max_search_expansions",
 })
 _TUNING_BOOLEAN_FIELDS = frozenset({
     "cmu_direction_to_vehicle",
     "cmu_scale_by_speed",
     "cmu_range_by_speed",
     "cmu_crop_by_goal",
-    "smoother_scale_velocities", "live_obstacle_ray_clearing", "far_simplify_path",
+    "smoother_scale_velocities", "live_obstacle_ray_clearing",
 })
 _OCTOPLANNER_ENVIRONMENT = {
     "octoplanner3d_robot_radius": "LINGTU_NAV_OCTO_ROBOT_RADIUS_M",
@@ -500,7 +488,7 @@ def compile_native_nav_config(
         raise ValueError("native_control_mode must be autonomy, teleop, or teleop_avoid")
     global_planner = str(native_nav_config.get("global_planner") or defaults["global_planner"]).strip().lower()
     if global_planner not in _GLOBAL_PLANNERS:
-        raise ValueError("native_nav.global_planner must be octoplanner3d or far")
+        raise ValueError("native_nav.global_planner must be octoplanner3d")
     try:
         local_planner = local_planner_name(native_nav_config.get("local_planner") or defaults["local_planner"])
     except ValueError as exc:
@@ -637,8 +625,6 @@ def compile_native_nav_config(
             _finite_number(native_nav_config, "scan_motion_voxel_size_m")
         )
     tuning_fields = dict(_TUNING_ENVIRONMENT)
-    if global_planner == "far":
-        tuning_fields.update(_FAR_ENVIRONMENT)
     if local_planner == "cmu":
         tuning_fields.update(_CMU_ENVIRONMENT)
     for key, env_key in tuning_fields.items():

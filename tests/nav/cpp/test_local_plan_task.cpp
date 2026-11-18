@@ -796,7 +796,7 @@ TEST(LocalPlanTask, BodyHeadingChangesDiscardCachedCollisionFootprint) {
 }
 
 
-TEST(LocalPlanTask, BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFrame) {
+TEST(LocalPlanTask, BodyModelChangeReplans) {
   namespace collision = lingtu::nav::collision;
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());
@@ -848,7 +848,7 @@ TEST(LocalPlanTask, BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFra
   EXPECT_GT(std::get<nav_kernel::SplineTarget>(recovered.plan.target()).trajectoryId,initialId);
 }
 
-TEST(LocalPlanTask, ObservedBodySnapshotsDoNotReplaceCylinderPlanningEvidence) {
+TEST(LocalPlanTask, ObservedBodyKeepsCylinderPlan) {
   namespace collision = lingtu::nav::collision;
   nav_kernel::local::scan::Task task(scanParams());
   ASSERT_TRUE(task.configure());

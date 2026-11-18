@@ -104,6 +104,7 @@ struct PlannerConfig
   double body_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
+  bool body_collision{false};
   int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
   int snap_search_radius_cells{::lingtu::settings::global::native_nav::global::snap_search_radius_cells};
   double terminal_goal_tolerance_m{::lingtu::settings::global::native_nav::global::terminal_tolerance_m};
@@ -129,7 +130,7 @@ struct PlannerConfig
   int obstacle_clearance_radius_cells{::lingtu::settings::global::native_nav::global::obstacle_clearance_radius_cells};
   double obstacle_clearance_weight{::lingtu::settings::global::native_nav::global::obstacle_clearance_weight};
 
-  std::array<double,24> preparation() const {
+  std::array<double,25> preparation() const {
     return {surface_closing_radius_m,surface_max_hole_area_m2,surface_max_slope,
       search_resolution_m,robot_radius,body_offset_m,body_clearance_below_m,body_clearance_above_m,
       double(ground_support),double(direct_support_only),double(support_depth_cells),
@@ -137,7 +138,8 @@ struct PlannerConfig
       double(support_patch_min_samples),double(enable_preblocked_costmap),
       double(preblocked_costmap_radius_cells),preblocked_costmap_weight,
       double(lowest_traversable_only),floor_change_penalty,max_step_height,max_slope,
-      double(obstacle_clearance_radius_cells),obstacle_clearance_weight};
+      double(obstacle_clearance_radius_cells),obstacle_clearance_weight,
+      double(body_collision)};
   }
 };
 
@@ -442,6 +444,7 @@ private:
   double body_offset_m_ = 0.0;
   double body_clearance_below_m_ = 0.0;
   double body_clearance_above_m_ = 0.0;
+  bool body_collision_ = PlannerConfig{}.body_collision;
   int max_iterations_ = PlannerConfig{}.max_iterations;
   int snap_search_radius_cells_ = PlannerConfig{}.snap_search_radius_cells;
   double terminal_goal_tolerance_m_ = PlannerConfig{}.terminal_goal_tolerance_m;

@@ -988,7 +988,8 @@ int main(int argc, char **argv) {
       if (!prepared.ok()) {
         throw std::runtime_error("saved_map_occupancy_not_ready: " + prepared.reason);
       }
-      if (prepared.artifact->map().CellCount() > config.policy.max_grid_cells) {
+      const auto &occupancy = prepared.artifact->data();
+      if (occupancy.grid.size() > config.policy.max_grid_cells) {
         throw std::runtime_error("saved_map_occupancy_exceeds_max_grid_cells");
       }
       ExploreMapIdentity expected_identity;
@@ -998,7 +999,8 @@ int main(int argc, char **argv) {
       expected_identity.reset_epoch = 1U;
       expected_identity.generation = 1U;
       expected_identity.live = false;
-      auto coverage = lingtu::nav::endpoint::buildSavedCoverageGrid(prepared.artifact->map(),
+      auto coverage = lingtu::nav::endpoint::buildSavedCoverageGrid(occupancy,
+                                                                   prepared.artifact->identity(),
                                                                    expected_identity);
       if (!coverage.ok()) {
         throw std::runtime_error(coverage.reason);

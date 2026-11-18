@@ -327,11 +327,12 @@ class Backend::Impl {
     }
 
     const auto gridStarted = std::chrono::steady_clock::now();
-    // Candidate search and execution must use the same configured body. The
-    // final controller still repeats the sweep with the live observation, but
-    // planning without the configured footprint can publish a route that the
-    // next safety check must immediately reject.
-    Grid grid(params_, input);
+    // SCAN candidates use Mapd's inflated twin-cylinder evidence. The native
+    // final motion checks apply the configured and observed body geometry.
+    auto collisionRequest = input;
+    collisionRequest.body.reset();
+    collisionRequest.observedBody.reset();
+    Grid grid(params_, collisionRequest);
     debug_.gridTimeMs = elapsedMs(gridStarted);
     debug_.occupiedCellCount = grid.occupiedCellCount();
     debug_.collisionPointCount = grid.collisionPointCount();
