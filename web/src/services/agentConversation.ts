@@ -469,7 +469,7 @@ export const conversationToolNames: Record<string, string> = {
   navigate_to: '前往目标位置', navigate_to_object: '前往目标物体', navigate_to_deg: '转向目标方向',
   find_object: '查找物体', detect_object: '识别物体', query_memory: '查询记忆', ask_user: '补充信息', done: '提交结果',
   list_saved_maps: '查询地图库', inspect_saved_map: '检查地图状态', view_saved_map: '查看三维地图',
-  find_inspection_points: '查找巡检点', preview_map_edits: '预览点云编辑',
+  find_inspection_points: '查找巡检点', get_inspection_status: '巡检状态', preview_map_edits: '预览点云编辑',
   save_map_copy: '另存地图', set_navigation_region: '保存导航区域',
   save_inspection_point: '保存巡检点', get_agent_status: '查询任务状态',
   follow_person: '跟随人员', cancel_agent_task: '取消当前任务',
