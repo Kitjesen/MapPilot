@@ -1256,12 +1256,13 @@ class AgentPlannerModule(Module, layer=4):
             return
         if name in {"start_navigation", "start_inspection_route"}:
             accepted = payload.get("accepted") is True or payload.get("ok") is True
-            if accepted:
+            task_id = str(payload.get("task_id") or "").strip()
+            if accepted and task_id:
                 run.motion_attempted = True
                 run.motion_submitted = True
                 run.motion_success = False
                 run.persistent_task = True
-                run.domain_task_id = str(payload.get("task_id") or "")
+                run.domain_task_id = task_id
                 run.domain_task_type = "inspection" if name == "start_inspection_route" else "navigation"
             return
         if name not in {"get_navigation_status", "get_inspection_status"}:
