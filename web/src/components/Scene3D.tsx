@@ -700,7 +700,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     const last = path[path.length - 1]
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.03, 12, 8),
+      new THREE.SphereGeometry(0.06, 12, 8),
       new THREE.MeshBasicMaterial({ color: 0x436b91, wireframe: true }),
     )
     mesh.position.set(...lingtuToThree([last.x, last.y, (last.z ?? 0) + 0.08]))
@@ -717,7 +717,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     marker.position.set(...lingtuToThree([pendingGoal.x, pendingGoal.y,
       underlayDisplayZ !== undefined ? underlayDisplayZ + 0.012 : (pendingGoal.z ?? 0) + 0.05]))
     const center = new THREE.Mesh(
-      new THREE.CircleGeometry(0.03, 24),
+      new THREE.CircleGeometry(0.09, 24),
       new THREE.MeshBasicMaterial({ color: 0xe8edf1, depthTest: false, depthWrite: false }),
     )
     center.rotation.x = -Math.PI / 2
@@ -748,7 +748,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (separateEndpoint && endpointOffset) {
       const endpoint = new THREE.Group()
       endpoint.position.copy(endpointOffset)
-      const dot = new THREE.Mesh(new THREE.SphereGeometry(.03, 12, 8),
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(.06, 12, 8),
         new THREE.MeshBasicMaterial({ color: 0x67d9df, depthTest: false, depthWrite: false }))
       dot.renderOrder = 53; endpoint.add(dot)
       const endpointLabel = makeGoalLabel('规划终点', '#67d9df', textures)

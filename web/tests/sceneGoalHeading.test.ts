@@ -214,7 +214,7 @@ test('tap and cancelled first drag leave no fabricated direction or ready previe
   }
 })
 
-test('a goal renders as a small point with no acceptance ring or default heading arrow', () => {
+test('a goal renders as a visible point with no acceptance ring or default heading arrow', () => {
   const scene = new THREE.Scene()
   const pendingGoalArrowRef = { current: null as THREE.ArrowHelper | null }
   const cleanup = expression(node => ts.isCallExpression(node) && node.expression.getText(file) === 'useEffect'
@@ -229,7 +229,7 @@ test('a goal renders as a small point with no acceptance ring or default heading
   const meshes = marker.children.filter((child): child is THREE.Mesh => child instanceof THREE.Mesh)
   assert.equal(meshes.length, 1)
   assert.ok(meshes[0].geometry instanceof THREE.CircleGeometry)
-  assert.equal(meshes[0].geometry.parameters.radius, .03)
+  assert.equal(meshes[0].geometry.parameters.radius, .09)
   assert.equal(pendingGoalArrowRef.current!.visible, false)
   cleanup()
 })

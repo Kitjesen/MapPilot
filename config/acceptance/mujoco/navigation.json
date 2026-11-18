@@ -10,11 +10,22 @@
     "slam_mode": "localization",
     "requires_map": true
   },
+  "localization": "mujoco_truth",
+  "slam_runtime": {
+    "provider": "mujoco_navigation_fixture",
+    "mode": "localization"
+  },
   "domain_id_base": 220,
   "world": "",
   "start": [0.0, 0.0, 0.48, 0.0],
   "goal": [1.0, 0.0, 0.3, 0.0],
   "map_dir": "",
+  "collision_geometry": {
+    "collision_cylinder_radius_m": 0.32,
+    "collision_cylinder_offset_m": 0.23,
+    "collision_clearance_below_m": 0.05,
+    "collision_clearance_above_m": 0.35
+  },
   "asset_builder": {
     "kind": "saved_map_plan_gate",
     "scene_preset": "corridor",
@@ -35,6 +46,10 @@
     "slam": "map.pcd",
     "planner": "octomap.ot",
     "metadata": "metadata.json"
+  },
+  "sensor_runtime": {
+    "publish_odom_prior": true,
+    "scan_time_profile": "instantaneous"
   },
   "paths": {
     "slam_config": "src/localization/ltlio/config/sim_mid360_slam.yaml",

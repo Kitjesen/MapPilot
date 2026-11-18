@@ -75,7 +75,7 @@ def _motion_health_collection_active(motion_complete_marker: Path) -> bool:
 
 
 SENSOR_PUBLISHER_PROBE_TIMEOUT_S = 60.0
-WSL_RUNTIME_PROBE_TIMEOUT_S = 5.0
+WSL_RUNTIME_PROBE_TIMEOUT_S = 20.0
 _NON_BLOCKING_SLAM_ACCURACY_GAP_PREFIXES = (
     "native_slam_not_tracking:",
     "native_slam_quality_low:",
