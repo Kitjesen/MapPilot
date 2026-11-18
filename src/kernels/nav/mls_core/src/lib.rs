@@ -715,7 +715,7 @@ pub struct LtMlsPoseBuffer {
     pub cap: u64,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 10;
+pub const LT_MLS_ABI_VERSION: u32 = 11;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {

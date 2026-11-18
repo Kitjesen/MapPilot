@@ -892,6 +892,8 @@ void writeStatusSnapshot(
         << "\"body_offset_m\": " << cfg.octoplanner_options.body_offset_m << ", "
         << "\"max_iterations\": " << cfg.octoplanner_options.max_iterations << ", "
         << "\"snap_radius_cells\": " << cfg.octoplanner_options.snap_search_radius_cells << ", "
+        << "\"body_collision\": "
+        << (cfg.octoplanner_options.body_collision ? "true" : "false") << ", "
         << "\"ground_support\": "
         << (cfg.octoplanner_options.ground_support ? "true" : "false") << ", "
         << "\"direct_support_only\": "

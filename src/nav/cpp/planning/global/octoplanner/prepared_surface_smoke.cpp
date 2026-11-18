@@ -38,6 +38,7 @@ struct OctoPlannerGridQueryTest {
     using Failure=OctoPlanner3D::TraversabilityFailure;
     constexpr double pi=3.14159265358979323846;
     PlannerConfig config;
+    config.body_collision = true;
     config.robot_radius=.32;
     config.body_offset_m=.23;
     config.body_clearance_below_m=.05;
@@ -84,6 +85,7 @@ struct OctoPlannerGridQueryTest {
 
   static void checkWallCost() {
     PlannerConfig config;
+    config.body_collision = true;
     config.robot_radius=.32;
     config.ground_support=false;
     config.body_clearance_below_m=.05;
@@ -110,6 +112,7 @@ struct OctoPlannerGridQueryTest {
   static void checkSweep() {
     using TraversabilityFailure = OctoPlanner3D::TraversabilityFailure;
     PlannerConfig config;
+    config.body_collision = true;
     config.robot_radius = .32;
     config.body_clearance_below_m = .05;
     config.body_clearance_above_m = .35;
@@ -261,6 +264,7 @@ int main() try {
   OctoPlannerGridQueryTest::checkWallCost();
   OctoPlannerGridQueryTest::checkSweep();
   PlannerConfig config;
+  config.body_collision = true;
   config.robot_radius = .1;
   config.body_clearance_below_m = .1;
   config.body_clearance_above_m = .2;

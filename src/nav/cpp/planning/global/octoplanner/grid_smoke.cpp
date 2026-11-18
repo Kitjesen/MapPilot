@@ -53,6 +53,7 @@ std::shared_ptr<octomap::OcTree> cloneTree(const octomap::OcTree &source)
 // These synthetic geometry probes use raw occupancy spacing and no surface closing.
 static PlannerConfig gridFixtureConfig() {
   PlannerConfig config;
+  config.body_collision = true;
   config.surface_closing_radius_m = 0.0;
   config.search_resolution_m = 0.0;
   config.max_iterations = 250000;

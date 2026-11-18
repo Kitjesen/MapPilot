@@ -99,6 +99,7 @@ _TUNING_BOOLEAN_FIELDS = frozenset({
 _OCTOPLANNER_ENVIRONMENT = {
     "octoplanner3d_max_iterations": "LINGTU_NAV_OCTO_MAX_ITERATIONS",
     "octoplanner3d_snap_search_radius_cells": "LINGTU_NAV_OCTO_SNAP_RADIUS_CELLS",
+    "octoplanner3d_body_collision": "LINGTU_NAV_OCTO_BODY_COLLISION",
     "octoplanner3d_ground_support": "LINGTU_NAV_OCTO_GROUND_SUPPORT",
     "octoplanner3d_direct_support_only": "LINGTU_NAV_OCTO_DIRECT_SUPPORT_ONLY",
     "octoplanner3d_support_depth_cells": "LINGTU_NAV_OCTO_SUPPORT_DEPTH_CELLS",

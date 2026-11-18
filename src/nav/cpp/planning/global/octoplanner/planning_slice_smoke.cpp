@@ -39,6 +39,7 @@ int main() {
     tree->updateNode(octomap::point3d(-0.3F, 1.1F, 0.3F), true);
     tree->updateInnerOccupancy();
     global_planner::PlannerConfig config;
+    config.body_collision = true;
     config.robot_radius = 0.2;
     config.support_depth_cells = 1;
     config.direct_support_only = true;

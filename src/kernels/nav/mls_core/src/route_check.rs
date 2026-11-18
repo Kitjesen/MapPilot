@@ -82,6 +82,9 @@ pub struct LtMlsMetricConfig {
     pub goal_tolerance: f64,
     pub goal_xy_tolerance: f64,
     pub goal_z_tolerance: f64,
+    /// Nonzero checks map occupancy at the route centre only; SCAN owns the
+    /// body. No-go regions and preblocked cells still use the body extent.
+    pub skip_body_collision: u8,
 }
 
 pub(crate) struct Index {
@@ -233,6 +236,9 @@ impl Checker<'_> {
 
     fn exempt(&self, cell: SurfaceCell) -> bool {
         let c = self.config;
+        if c.skip_body_collision != 0 {
+            return true;
+        }
         if c.start_exemption == 0 {
             return false;
         }

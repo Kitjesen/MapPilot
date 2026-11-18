@@ -90,6 +90,7 @@ namespace global_planner
         body_offset_m_ = config.body_offset_m;
         body_clearance_below_m_ = config.body_clearance_below_m;
         body_clearance_above_m_ = config.body_clearance_above_m;
+        body_collision_ = config.body_collision;
         ground_support_ = config.ground_support;
         direct_support_only_ = config.direct_support_only;
         support_depth_cells_ = config.support_depth_cells;
@@ -567,6 +568,7 @@ namespace global_planner
                 metric.start={ {start_point_.x,start_point_.y,start_point_.z},
                     start_point_.yaw.value_or(0.0),static_cast<uint8_t>(start_point_.yaw.has_value())};
                 metric.start_exemption=static_cast<bool>(start_exemption_);
+                metric.skip_body_collision=!body_collision_;
                 metric.goal_tolerance=terminal_goal_tolerance_m_;
                 metric.goal_xy_tolerance=terminal_goal_xy_tolerance_m_;
                 metric.goal_z_tolerance=terminal_goal_z_tolerance_m_;
@@ -1283,7 +1285,7 @@ namespace global_planner
                 if (!external_preblocked_cells_.empty() &&
                     external_preblocked_cells_.count(nearby_idx) != 0)
                     return TraversabilityFailure::ExternalPreblockedBody;
-                if (isOccupiedCell(nearby_idx)) {
+                if (body_collision_ && isOccupiedCell(nearby_idx)) {
                     const double r=octree_->getResolution();
                     if (start_exemption_ && start_exemption_(
                         {(nearby_idx.x+.5)*r,(nearby_idx.y+.5)*r,(nearby_idx.z+.5)*r},r)) continue;
@@ -2025,7 +2027,7 @@ namespace global_planner
                         const GridIndex voxel{x, y, z};
                         if (external_preblocked_cells_.count(voxel))
                             return TraversabilityFailure::ExternalPreblockedBody;
-                        if ((occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
+                        if (body_collision_ && (occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
                             !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
                             return TraversabilityFailure::OccupiedBody;
                     }
@@ -2033,8 +2035,9 @@ namespace global_planner
             }
             return TraversabilityFailure::None;
         };
+        if (!body_collision_ && external_preblocked_cells_.empty()) return TraversabilityFailure::None;
         octomap::OcTreeKey low_key, high_key;
-        if (external_preblocked_cells_.empty() &&
+        if (body_collision_ && external_preblocked_cells_.empty() &&
             octree_->coordToKeyChecked(gridToWorld(low), low_key) &&
             octree_->coordToKeyChecked(gridToWorld(high), high_key)) {
             // Free and unknown leaves cannot collide. Occupied coarse leaves
@@ -2088,7 +2091,7 @@ namespace global_planner
             return false;
         };
         for(auto leaf=octree_->begin_leafs_bbx(gridToWorld(low),gridToWorld(high)),
-                end=octree_->end_leafs_bbx();leaf!=end;++leaf) {
+                end=octree_->end_leafs_bbx();body_collision_ && leaf!=end;++leaf) {
             if(!octree_->isNodeOccupied(*leaf))continue;
             const int span=static_cast<int>(std::lround(leaf.getSize()/r));
             const GridIndex lo{static_cast<int>(std::lround((leaf.getX()-.5*leaf.getSize())/r)),
@@ -2202,7 +2205,7 @@ namespace global_planner
             if (failed_point) *failed_point = (from + to) * .5f;
             return false;
         }
-        if (check_body && !sweptBodyFree(from, to, failed_point, yaw)) {
+        if (check_body && body_collision_ && !sweptBodyFree(from, to, failed_point, yaw)) {
             if (failure_out) *failure_out = TraversabilityFailure::OccupiedBody;
             return false;
         }
