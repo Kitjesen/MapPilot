@@ -446,6 +446,7 @@ export const conversationToolNames: Record<string, string> = {
   skills_list: '查找技能',
   read_assistant_memory: '查看偏好记忆',
   context_compaction: '整理对话上下文',
+  navigation_goal_status: '导航状态', inspection_task_event: '巡检状态',
   list_mcp_connections: '查看 MCP 连接',
   list_mcp_resources: '查看 MCP 资源',
   read_mcp_resource: '读取 MCP 资源',
