@@ -159,6 +159,10 @@ imports. Machine-enforced ownership lives in
   distinct surfaces at the same XY. Retain observed ground, unknown-space
   evidence, and the robot's executable motion constraints. A projection may
   suggest candidates or aid inspection, but cannot authorize motion.
+- Global routes own support, step, slope, no-go regions and occupancy at the
+  route centre. Exact body-to-voxel collision belongs to SCAN, which checks the
+  body against live data; the global planner keeps it off by default
+  (`native_nav.global.body_collision`).
 - Field `mapd` owns live map state, standalone traversability owns
   `/nav/traversability`, and save-time pruning owns persistent-map cleanup.
   Python map layers are development/simulation fallbacks and must not compete

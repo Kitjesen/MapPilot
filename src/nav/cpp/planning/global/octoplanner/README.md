@@ -326,6 +326,19 @@ A returned global route is guidance for SCAN, not proof of executable motion.
 
 ## Support surfaces and collision envelopes
 
+Global body collision is off by default (`native_nav.global.body_collision:
+false`, a LingTu setting rather than an upstream default). The route still
+checks ground support, step height, slope, no-go regions, external preblocked
+cells and occupancy at the route centre. SCAN checks the compound body against
+live data. Comparing the exact body with every map voxel in the global route
+added nothing SCAN does not already check. On the coarse planning grid it also
+rejected stances where the body only grazed the top of its own support voxel,
+and the Rust route checker and the independent verifier disagreed on those
+cells. With `body_collision: true` the body cylinder and sweep checks below
+apply as before; the body smokes and the verifier self-test enable it. The
+pinned public-map acceptance and the product use the default.
+
+
 Global vertices and continuous edges check the configured three-dimensional
 cylindrical corridor against saved occupancy. The global query also checks
 ground support, slope and step limits.

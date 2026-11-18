@@ -46,6 +46,7 @@ struct GlobalPlannerOptions {
   double body_offset_m{0.0};
   double body_clearance_below_m{0.0};
   double body_clearance_above_m{0.0};
+  bool body_collision{::lingtu::settings::global::native_nav::global::body_collision};
   int max_iterations{::lingtu::settings::global::native_nav::global::max_iterations};
   int snap_search_radius_cells{::lingtu::settings::global::native_nav::global::snap_search_radius_cells};
   bool ground_support{::lingtu::settings::global::native_nav::global::ground_support};
