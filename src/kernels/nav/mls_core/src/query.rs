@@ -653,7 +653,7 @@ pub(crate) fn plan_budgeted_with_stage(
         }
         if goals.seeds.is_empty() {
             *stage = QueryStage::GoalAttach;
-            return Err(QueryError::Exhausted);
+            return Err(QueryError::GoalUnreachable);
         }
         if all && !start_added && !goal_added {
             *stage = QueryStage::EndpointAttach;

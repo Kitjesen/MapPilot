@@ -1639,7 +1639,6 @@ int main() {
     testScanCollisionEnvelopeIsConfigurable();
     testScanGlobalCorridorEnvironmentAndLargerOverrides();
     testScanGlobalCorridorUsesThunderGeometry();
-    testFarPlannerRejectsInvalidConfiguration();
     testNonFiniteMotionLimitsFailClosed();
     testControlModesLockTheirSafetyContract();
     testPureTeleopDoesNotRequirePlannerAssets();

@@ -135,9 +135,6 @@ The vendored code derives from
 copy includes robot-envelope, ground-support, floor-continuity, step/slope,
 terminal-tolerance, and cancellation changes. See `LICENSE`.
 
-FAR is a separate optional 2D global planner under `../far`; it is not part of
-this vendor tree and does not replace OctoPlanner3D as the product default.
-
 ## Runtime ownership
 
 OctoPlanner3D generates XYZ reference routes from the activated immutable

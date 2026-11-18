@@ -139,7 +139,8 @@ struct PlannerConfig
       double(support_patch_min_samples),double(enable_preblocked_costmap),
       double(preblocked_costmap_radius_cells),preblocked_costmap_weight,
       double(lowest_traversable_only),floor_change_penalty,max_step_height,max_slope,
-      double(obstacle_clearance_radius_cells),obstacle_clearance_weight};
+      double(obstacle_clearance_radius_cells),obstacle_clearance_weight,
+      double(body_collision)};
   }
 };
 
@@ -440,6 +441,7 @@ private:
   double body_clearance_below_m_ = 0.0;
   bool body_collision_ = true;
   double body_clearance_above_m_ = 0.0;
+  bool body_collision_ = PlannerConfig{}.body_collision;
   int max_iterations_ = PlannerConfig{}.max_iterations;
   int snap_search_radius_cells_ = PlannerConfig{}.snap_search_radius_cells;
   double terminal_goal_tolerance_m_ = PlannerConfig{}.terminal_goal_tolerance_m;

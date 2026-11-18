@@ -75,7 +75,7 @@ def _motion_health_collection_active(motion_complete_marker: Path) -> bool:
 
 
 SENSOR_PUBLISHER_PROBE_TIMEOUT_S = 60.0
-WSL_RUNTIME_PROBE_TIMEOUT_S = 5.0
+WSL_RUNTIME_PROBE_TIMEOUT_S = 20.0
 _NON_BLOCKING_SLAM_ACCURACY_GAP_PREFIXES = (
     "native_slam_not_tracking:",
     "native_slam_quality_low:",
@@ -119,6 +119,13 @@ from lingtu.sim.acceptance import validate_runner_plan
 from lingtu.sim.viewer_goal import ViewerGoal
 
 DEFAULT_MANIFEST = ROOT / "config" / "acceptance" / "mujoco" / "navigation.json"
+DEFAULT_MAP_DIR = (
+    ROOT
+    / "build"
+    / "mujoco_native_navigation_acceptance"
+    / "prepared_assets"
+    / "same_source_map"
+)
 DEFAULT_THUNDERV4_MJCF = (
     ROOT / "sim" / "packages" / "robots" / "doso" / "thunder_v4" / "mjcf" / "thunderv4.xml"
 )
@@ -410,10 +417,20 @@ def _resolve_binary(spec: dict[str, Any]) -> Path | None:
     values = _ordered_binary_candidates(
         [str(value) for value in spec.get("candidates") or []]
     )
+    native_root = str(
+        os.environ.get("LINGTU_MUJOCO_NATIVE_ROOT")
+        or os.environ.get("LINGTU_NATIVE_BUILD_ROOT")
+        or ""
+    ).strip()
+    root = Path(native_root).expanduser() if native_root else None
     for value in values:
         if not value or (value.startswith("/home/") and os.name == "nt"):
             continue
-        candidate = _repo_path(value)
+        candidate = (
+            (root / value).resolve()
+            if root is not None and not Path(value).is_absolute()
+            else _repo_path(value)
+        )
         if candidate.is_file():
             return candidate
     return None
@@ -1433,7 +1450,12 @@ class NativeEvidence:
 def _validate_map(manifest: dict[str, Any]) -> tuple[dict[str, Path], list[str], dict[str, Any]]:
     blockers: list[str] = []
     map_dir_override = str(os.environ.get("LINGTU_MUJOCO_MAP_DIR", ""))
-    map_dir = _repo_path(map_dir_override or str(manifest.get("map_dir") or ""))
+    configured_map_dir = str(manifest.get("map_dir") or "").strip()
+    map_dir = _repo_path(
+        map_dir_override
+        or configured_map_dir
+        or str(DEFAULT_MAP_DIR)
+    )
     names = manifest.get("map_files") or {}
     paths = {
         "map_dir": map_dir,
@@ -1537,7 +1559,7 @@ def _prepare_acceptance_assets(
 ) -> dict[str, Any]:
     world_value = str(manifest.get("world") or "")
     world_path = _repo_path(world_value) if world_value else None
-    _, map_blockers, _ = _validate_map(manifest)
+    map_paths, map_blockers, _ = _validate_map(manifest)
     if world_path is not None and world_path.is_file() and not map_blockers:
         from sim.scripts.mujoco.comparison_scene import (
             build_comparison_scene,
@@ -1568,7 +1590,7 @@ def _prepare_acceptance_assets(
             "ok": True,
             "reason": "configured_assets_ready",
             "scene_xml": str(effective_world),
-            "map_dir": str(_repo_path(str(manifest.get("map_dir") or ""))),
+            "map_dir": str(map_paths["map_dir"]),
             "presentation": presentation,
         }
 

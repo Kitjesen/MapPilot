@@ -177,6 +177,43 @@ def test_bootstrap_environment_keeps_local_map_location(
         assert environment["HOME"] == "/home/robot"
 
 
+def test_host_process_receives_model_runtime_environment_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = tmp_path / "worker.py"
+    artifact.write_text("pass\n", encoding="utf-8")
+    host = replace(
+        _role_process(tmp_path, artifact, "host"),
+        name="host_runtime",
+        target="host_runtime",
+    )
+    plan = _plan(
+        tmp_path,
+        artifact,
+        process_name="nav_runtime",
+        process_target="nav_runtime",
+        additional_processes=(host,),
+    )
+    monkeypatch.setenv("PATH", "C:\\codex")
+    monkeypatch.setenv("CODEX_HOME", "C:\\Users\\robot\\.codex")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test-key")
+
+    manager = SimProcessManager(tmp_path)
+    manager.bind(
+        plan,
+        run_plan_path=_publish_plan(tmp_path / "session", plan),
+        product_session_id=PRODUCT_SESSION_ID,
+    )
+
+    host_environment = manager._bound["host_runtime"].environment
+    native_environment = manager._bound["nav_runtime"].environment
+    assert host_environment["PATH"] == "C:\\codex"
+    assert host_environment["CODEX_HOME"] == "C:\\Users\\robot\\.codex"
+    assert host_environment["MOONSHOT_API_KEY"] == "test-key"
+    assert "MOONSHOT_API_KEY" not in native_environment
+
+
 def _minimal_simulation() -> dict[str, Any]:
     session = {
         "schema": "lingtu.sim.session.v1",

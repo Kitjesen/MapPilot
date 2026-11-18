@@ -755,7 +755,7 @@ The specific regression is
 `ScanBackend.BodyPoseSegmentsPreserveExactTurnCentreAndStoppedEndpoint`, which
 includes the corner demo's first moving segment and its former short residual.
 Raw-query and model-swap regressions live in `test_scan_body` and
-`LocalPlanTask.BodyModelReplacementDiscardsCachedSplineWithoutNewRouteOrFrame`.
+`LocalPlanTask.BodyModelChangeReplans`.
 They establish native component behavior, not field deployment or gait safety.
 
 ## Global route and local collision ownership

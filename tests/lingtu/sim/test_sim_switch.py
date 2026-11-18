@@ -187,18 +187,15 @@ def _plan(
         "global_planner",
         "required_artifact",
         "expected_octomap",
-        "expected_occupancy",
     ),
     (
-        ("octoplanner3d", "octomap", "/maps/yard/map.bt", ""),
-        ("far", "occupancy", "", "/maps/yard/occupancy.yaml"),
+        ("octoplanner3d", "octomap", "/maps/yard/map.bt"),
     ),
 )
 def test_saved_map_environment_selects_one_backend_map(
     global_planner: str,
     required_artifact: str,
     expected_octomap: str,
-    expected_occupancy: str,
 ) -> None:
     raw_identity = _native_identity("yard")
     raw_identity["artifacts"] = [
@@ -218,7 +215,7 @@ def test_saved_map_environment_selects_one_backend_map(
 
     assert environment["LINGTU_SLAM_MAP"] == "/maps/yard/map.pcd"
     assert environment["OCTOPLANNER_MAP_PATH"] == expected_octomap
-    assert environment["FAR_OCCUPANCY_PATH"] == expected_occupancy
+    assert "FAR_OCCUPANCY_PATH" not in environment
     assert environment["EXPLORE_OCCUPANCY_PATH"] == ""
     assert not any(name.startswith("LINGTU_ACTIVE_") for name in environment)
 
@@ -259,7 +256,7 @@ def test_mapping_restore_selects_archive_and_seed_without_fixed_planner_map() ->
     assert environment["LINGTU_SLAM_MAP"] == "/maps/yard/map.pcd"
     assert float(environment["LINGTU_SLAM_TRACK_INITIAL_Z"]) == 0.4
     assert environment["OCTOPLANNER_MAP_PATH"] == ""
-    assert environment["FAR_OCCUPANCY_PATH"] == ""
+    assert "FAR_OCCUPANCY_PATH" not in environment
 
 
 def test_explore_saved_map_environment_exposes_coverage_occupancy() -> None:
@@ -274,7 +271,7 @@ def test_explore_saved_map_environment_exposes_coverage_occupancy() -> None:
     )
 
     assert environment["OCTOPLANNER_MAP_PATH"] == "/maps/yard/map.bt"
-    assert environment["FAR_OCCUPANCY_PATH"] == ""
+    assert "FAR_OCCUPANCY_PATH" not in environment
     assert environment["EXPLORE_OCCUPANCY_PATH"] == "/maps/yard/occupancy.yaml"
 
 
@@ -1322,7 +1319,7 @@ def test_saved_map_switch_journals_token_before_stage_and_binds_final_plan(
     assert rebound.native_process_environment["OCTOPLANNER_MAP_PATH"] == (
         "/maps/yard/map.bt"
     )
-    assert rebound.native_process_environment["FAR_OCCUPANCY_PATH"] == ""
+    assert "FAR_OCCUPANCY_PATH" not in rebound.native_process_environment
     assert rebound.native_process_environment["EXPLORE_OCCUPANCY_PATH"] == ""
     assert not any(
         name.startswith("LINGTU_ACTIVE_")

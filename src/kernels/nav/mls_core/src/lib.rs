@@ -2249,6 +2249,14 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
                 set_failure(LT_MLS_QUERY_CANCELLED, -1, start_cell);
                 return 3;
             }
+            Err(query::QueryError::StartUnreachable) => {
+                set_failure(LT_MLS_QUERY_START_ATTACH, -1, start_cell);
+                return 4;
+            }
+            Err(query::QueryError::GoalUnreachable) => {
+                set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, start_cell);
+                return 5;
+            }
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
         poses.push(start);

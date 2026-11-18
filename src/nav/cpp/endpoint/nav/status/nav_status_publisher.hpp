@@ -77,14 +77,11 @@ struct StatusMotionLayerSample {
   const std::vector<DynamicCluster> *dynamic_clusters{nullptr};
 };
 
-using StatusFarInputSample = FarInputStatus;
-
 struct NavStatusPublisherActions {
   std::function<double()> steady_now_s;
   std::function<double()> wall_now_s;
   std::function<StatusPlannerSample(double, TimingDiagnostics &)> sample_planner;
   std::function<StatusMotionLayerSample(double)> sample_motion_layer;
-  std::function<StatusFarInputSample()> sample_far_input;
   std::function<ControlLoopHealthSnapshot()> sample_loop_health;
   std::function<void(const std::string &)> log;
 };

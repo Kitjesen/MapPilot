@@ -167,8 +167,8 @@ Route/Executor、SCAN、Recovery 和原生最终指令仲裁，不在线加载 U
 保守包成 AABB，与同一 OBB 按时间和扫掠检查。完整 roll/pitch、腿部步态范围与实机包络
 仍需独立测量和验证，不能由固定 yaw 盒体推出。
 
-这是主组合的统一几何合同，不覆盖所有兼容后端：FAR + SCAN 保留 FAR 的 XYZ 全局候选，
-SCAN 局部/恢复/最终仲裁使用 OBB；CMU 保留既有 XYZ/空 Body 兼容路径。
+这是主组合的统一几何合同：OctoPlanner3D + SCAN 的全局、局部、恢复和最终仲裁
+都使用 OBB；CMU 保留既有 XYZ/空 Body 兼容路径。
 楼梯保留模式切换、梯段朝向、限速与取消，并由同一局部 OBB 验证转身/运动。
 当前 Executor 116项、SCAN Body 12项、SCAN planner 101项、姿态路线14项及 Recovery sequence 16项本地回归通过，
 不等于楼梯物理或现场资格。Executor 显式 Body 覆盖已通过外部时钟推进后的实际运动检查。

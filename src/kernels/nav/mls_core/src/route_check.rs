@@ -217,7 +217,7 @@ impl Checker<'_> {
                 return Ok(candidate);
             }
         }
-        Err(QueryError::Exhausted)
+        Err(QueryError::GoalUnreachable)
     }
 
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
@@ -1327,7 +1327,7 @@ mod tests {
             let checker = prepare(&state, limits, &[], &[], None, std::ptr::null_mut()).unwrap();
             assert!(matches!(
                 resolve(&checker, goal),
-                Err(QueryError::Exhausted)
+                Err(QueryError::GoalUnreachable)
             ));
         }
         let region = [LtMlsMetricRegion {
@@ -1337,7 +1337,7 @@ mod tests {
         let checker = prepare(&state, c, &region, &[], None, std::ptr::null_mut()).unwrap();
         assert!(matches!(
             resolve(&checker, goal),
-            Err(QueryError::Exhausted)
+            Err(QueryError::GoalUnreachable)
         ));
         assert!(matches!(
             checker.resolve_goal(start, goal, 4, &mut Budget { remaining: 0 }),

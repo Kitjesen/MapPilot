@@ -767,7 +767,7 @@ void writeStatusSnapshot(
     bool has_odom, bool has_map_odom_tf, bool has_path, bool estop_latched,
     const std::string &estop_reason, const nav_kernel::Twist &final_cmd_vel,
     const FinalOutputDiagnostics &final_output, const DriverControlDiagnostics &driver_control,
-    const MotionStopEvidenceDiagnostics &motion_stop_evidence, const FarInputStatus &far_input,
+    const MotionStopEvidenceDiagnostics &motion_stop_evidence,
     bool has_traversability, bool has_terrain_map,
     bool has_terrain_map_ext, const InputGateState &input_gate,
     const CloudSyncDiagnostics &cloud_sync, const FrameDiagnostics &frames,
@@ -816,8 +816,7 @@ void writeStatusSnapshot(
     const bool navigation_ready =
         !cfg.product_session_id.empty() && has_odom && has_map_odom_tf && input_gate.ready &&
         !estop_latched &&
-        !held && cfg.publish_cmd_vel &&
-        (!far_input.required || far_input.ready);
+        !held && cfg.publish_cmd_vel;
     std::ostringstream out;
     out << std::fixed << std::setprecision(6);
     out << "{\n"
@@ -875,15 +874,7 @@ void writeStatusSnapshot(
     out << "  \"global_planner\": \"" << jsonEscape(cfg.global_planner) << "\",\n"
         << "  \"local_planner\": \"" << jsonEscape(cfg.local_planner) << "\",\n"
         << "  \"planner_map\": \"" << jsonEscape(cfg.map_path) << "\",\n"
-        << "  \"active_octomap\": \""
-        << (cfg.global_planner == "octoplanner3d" ? jsonEscape(cfg.map_path) : "") << "\",\n"
-        << "  \"active_occupancy\": \""
-        << (cfg.global_planner == "far" ? jsonEscape(cfg.map_path) : "") << "\",\n"
-        << "  \"far_input\": {\"required\": " << (far_input.required ? "true" : "false")
-        << ", \"ready\": " << (far_input.ready ? "true" : "false")
-        << ", \"reason\": \"" << jsonEscape(far_input.reason)
-        << "\", \"map_id\": \"" << jsonEscape(far_input.map_id)
-        << "\", \"content_epoch\": " << far_input.content_epoch << "},\n"
+        << "  \"active_octomap\": \"" << jsonEscape(cfg.map_path) << "\",\n"
         << "  \"navigation_ready\": " << (navigation_ready ? "true" : "false") << ",\n"
         << "  \"octoplanner3d\": {"
         << "\"robot_radius_m\": " << cfg.octoplanner_options.robot_radius << ", "
@@ -924,19 +915,6 @@ void writeStatusSnapshot(
         << cfg.octoplanner_options.terminal_goal_xy_tolerance_m << ", "
         << "\"terminal_goal_z_tolerance_m\": "
         << cfg.octoplanner_options.terminal_goal_z_tolerance_m << "},\n"
-        << "  \"far\": {"
-        << "\"robot_radius_m\": " << cfg.far_options.robot_radius_m << ", "
-        << "\"obstacle_clearance_m\": " << cfg.far_options.obstacle_clearance_m << ", "
-        << "\"max_visibility_distance_m\": " << cfg.far_options.max_visibility_distance_m << ", "
-        << "\"unknown_cost_multiplier\": " << cfg.far_options.unknown_cost_multiplier << ", "
-        << "\"corner_separation_cells\": " << cfg.far_options.corner_separation_cells << ", "
-        << "\"snap_radius_cells\": " << cfg.far_options.snap_search_radius_cells << ", "
-        << "\"max_graph_nodes\": " << cfg.far_options.max_graph_nodes << ", "
-        << "\"max_visibility_pairs\": " << cfg.far_options.max_visibility_pairs << ", "
-        << "\"max_search_expansions\": " << cfg.far_options.max_search_expansions << ", "
-        << "\"allow_unknown_fallback\": "
-        << (cfg.far_options.allow_unknown_fallback ? "true" : "false") << ", "
-        << "\"simplify_path\": " << (cfg.far_options.simplify_path ? "true" : "false") << "},\n"
         << "  \"path_library\": \"" << jsonEscape(cfg.path_library_dir) << "\",\n"
         << "  \"max_obstacle_points\": " << cfg.max_obstacle_points << ",\n"
         << "  \"obstacle_voxel_size_m\": " << cfg.obstacle_voxel_size_m << ",\n"

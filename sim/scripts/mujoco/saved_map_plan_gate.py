@@ -1061,9 +1061,14 @@ def _stairs3d_scene_xml(scene_preset: str = "stairs3d") -> str:
         rgba = geom.get("rgba", "0.7 0.7 0.7 1")
         size = " ".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in geom["size"])
         pos = " ".join(f"{float(v):.4f}".rstrip("0").rstrip(".") for v in geom["pos"])
+        collision = (
+            'contype="0" conaffinity="0"'
+            if geom["name"].startswith("grid_")
+            else 'contype="1" conaffinity="1"'
+        )
         geom_lines.append(
             f'    <geom name="{geom["name"]}" type="{geom["type"]}" '
-            f'pos="{pos}" size="{size}" rgba="{rgba}" contype="1" conaffinity="1" group="1"/>\n'
+            f'pos="{pos}" size="{size}" rgba="{rgba}" {collision} group="1"/>\n'
         )
     start_values, goal_values = stair_scene_default_start_goal(scene_preset)
     start = " ".join(str(v) for v in start_values)
