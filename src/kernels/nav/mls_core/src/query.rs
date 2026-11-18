@@ -267,6 +267,11 @@ impl SnapCandidates {
     }
 }
 
+// Lazy A*: a neighbour enters the queue unchecked, and its edge is checked only
+// when it is popped as the cheapest way to settle that cell. Geometry checks
+// dominate query time, and most queued candidates are never popped. Every
+// candidate parent stays queued because the cheapest one may fail its check,
+// so the settled cost is the same as checking every edge eagerly.
 fn surface_search(
     surface: &Surface,
     seeds: &[(usize, f32)],
@@ -283,6 +288,7 @@ fn surface_search(
         previous: vec![usize::MAX; surface.cells.len()],
         seeds: HashSet::new(),
     };
+    let mut settled = vec![false; surface.cells.len()];
     let estimate = |index: usize| {
         goals.map_or(0.0, |goals| {
             goals
@@ -296,24 +302,49 @@ fn surface_search(
     };
     // On equal lower bounds, advance one route instead of expanding every
     // equally good prefix before reaching a goal.
-    let mut queue = BinaryHeap::<Reverse<(OrderedF32, Reverse<OrderedF32>, usize)>>::new();
+    let mut queue =
+        BinaryHeap::<Reverse<(OrderedF32, Reverse<OrderedF32>, usize, usize)>>::new();
     for &(seed, cost) in seeds {
-        tree.distance[seed] = cost;
-        tree.seeds.insert(seed);
         queue.push(Reverse((
             OrderedF32(cost + estimate(seed)),
             Reverse(OrderedF32(cost)),
             seed,
+            usize::MAX,
         )));
     }
     let mut best_goal = f32::INFINITY;
     let mut detour = Vec::new();
-    while let Some(Reverse((OrderedF32(bound), Reverse(OrderedF32(cost)), current))) = queue.pop() {
-        if cost > tree.distance[current] + 1e-6 {
+    while let Some(Reverse((OrderedF32(bound), Reverse(OrderedF32(cost)), current, parent))) =
+        queue.pop()
+    {
+        if settled[current] {
             continue;
         }
         if bound >= best_goal - 1e-6 {
             break;
+        }
+        if parent != usize::MAX {
+            let pair = if reverse {
+                (current, parent)
+            } else {
+                (parent, current)
+            };
+            let allowed = if let Some(&allowed) = admitted.get(&pair) {
+                allowed
+            } else {
+                let allowed = checked(check, surface.cells[pair.0], surface.cells[pair.1], 0)?;
+                admitted.insert(pair, allowed);
+                allowed
+            };
+            if !allowed {
+                continue;
+            }
+        }
+        settled[current] = true;
+        tree.distance[current] = cost;
+        tree.previous[current] = parent;
+        if parent == usize::MAX {
+            tree.seeds.insert(current);
         }
         budget.spend()?;
         checked(check, surface.cells[current], surface.cells[current], 3)?;
@@ -327,7 +358,8 @@ fn surface_search(
             &surface.adjacency[current]
         };
         for &(next, base) in links {
-            if !surface.allowed(next)
+            if settled[next]
+                || !surface.allowed(next)
                 || (!centers.is_empty()
                     && !centers.iter().any(|&(point, radius)| {
                         squared_distance(point, surface.cells[next])
@@ -336,33 +368,25 @@ fn surface_search(
             {
                 continue;
             }
-            let next_cost = cost + surface.cost(current, next, base);
-            let next_bound = next_cost + estimate(next);
-            if next_cost + 1e-6 >= tree.distance[next] || next_bound >= best_goal - 1e-6 {
-                continue;
-            }
             let pair = if reverse {
                 (next, current)
             } else {
                 (current, next)
             };
-            let allowed = if let Some(&allowed) = admitted.get(&pair) {
-                allowed
-            } else {
-                let allowed = checked(check, surface.cells[pair.0], surface.cells[pair.1], 0)?;
-                admitted.insert(pair, allowed);
-                allowed
-            };
-            if allowed {
-                tree.distance[next] = next_cost;
-                tree.previous[next] = current;
-                tree.seeds.remove(&next);
-                queue.push(Reverse((
-                    OrderedF32(next_bound),
-                    Reverse(OrderedF32(next_cost)),
-                    next,
-                )));
+            if admitted.get(&pair) == Some(&false) {
+                continue;
             }
+            let next_cost = cost + surface.cost(current, next, base);
+            let next_bound = next_cost + estimate(next);
+            if next_bound >= best_goal - 1e-6 {
+                continue;
+            }
+            queue.push(Reverse((
+                OrderedF32(next_bound),
+                Reverse(OrderedF32(next_cost)),
+                next,
+                current,
+            )));
         }
     }
     Ok(tree)
@@ -1526,5 +1550,27 @@ mod tests {
         };
         assert_eq!(status, -2);
         assert_eq!(route.len, 0);
+    }
+
+    #[test]
+    fn rejected_cheapest_parent_still_reaches_through_another() {
+        let cells = (0..4)
+            .flat_map(|x| (0..2).map(move |y| SurfaceCell::new(x, y, 0)))
+            .collect();
+        let state = state(cells, SurfaceGraph::default(), GraphConfig::default());
+        let (a, b) = (SurfaceCell::new(0, 0, 0), SurfaceCell::new(1, 0, 0));
+        let route = plan(
+            &state,
+            a,
+            SurfaceCell::new(3, 0, 0),
+            0,
+            1000,
+            false,
+            |from, to, kind| i32::from(!(kind == 0 && from == a && to == b)),
+        )
+        .expect("the second row stays open");
+        assert!(route.windows(2).all(|pair| pair != [a, b]));
+        assert_eq!(route.first(), Some(&a));
+        assert_eq!(route.last(), Some(&SurfaceCell::new(3, 0, 0)));
     }
 }

@@ -107,6 +107,13 @@ Rust artifact and query caches under the same mutex. The
 standalone C++ graph remains available for regression comparisons; new prepared
 caches contain only the Rust artifact.
 
+Surface search checks an edge only when it is popped as the cheapest way to
+settle a cell (lazy A*). The artifact also keeps surface-pair admissions from
+earlier metric queries while the map, body geometry, no-go regions and
+preblocked cells stay the same; a map update clears them. Endpoint connectors and
+the actual-start pose are checked per request. Measurements and open items are in
+[`docs/research/mls-query-speed-20261118.md`](../../../../../../docs/research/mls-query-speed-20261118.md).
+
 Rust exposes metric route checks for production queries and same-input geometry
 comparison. Inputs include body-reference poses in metres, dual-cylinder radius
 and offset, vertical extent, support calibration, step/slope limits, no-go,

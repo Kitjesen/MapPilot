@@ -217,6 +217,14 @@ impl Checker<'_> {
         Err(QueryError::Exhausted)
     }
 
+    pub(crate) fn regions(&self) -> &[LtMlsMetricRegion] {
+        self.regions
+    }
+
+    pub(crate) fn preblocked(&self) -> Vec<SurfaceCell> {
+        self.preblocked.iter().copied().collect()
+    }
+
     fn occupied_z(&self, x: i32, y: i32, low: i32, high: i32) -> &[i32] {
         let Some(levels) = self.occupied_columns.get(&(x, y)) else {
             return &[];

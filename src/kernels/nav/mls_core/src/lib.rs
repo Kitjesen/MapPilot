@@ -230,6 +230,67 @@ pub struct PlannerState {
     surface_source: bool,
     query_surface: std::sync::OnceLock<query::Surface>,
     geometry_index: std::sync::OnceLock<route_check::Index>,
+    metric_edges: std::sync::Mutex<MetricEdges>,
+}
+
+/// Surface-pair admissions from earlier metric queries on this map.
+///
+/// Repeated queries otherwise redo the same body sweeps, which dominate query
+/// time. Entries are valid only for the geometry `key` that produced them and
+/// are dropped with the map whenever the source evidence changes.
+#[derive(Default)]
+struct MetricEdges {
+    key: Vec<u64>,
+    admitted: HashMap<(SurfaceCell, SurfaceCell), bool>,
+}
+
+// About 20-30 MB of entries. A long session on a large map could otherwise
+// keep every pair it ever checked.
+const METRIC_EDGE_LIMIT: usize = 500_000;
+
+/// Every geometry input a surface-pair check reads besides the map itself.
+fn metric_key(
+    config: &LtMlsMetricConfig,
+    regions: &[LtMlsMetricRegion],
+    preblocked: &[SurfaceCell],
+) -> Vec<u64> {
+    let point = |p: &LtMlsPoint| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+    let mut key = vec![
+        config.resolution.to_bits(),
+        config.robot_radius.to_bits(),
+        config.below.to_bits(),
+        config.above.to_bits(),
+        config.support_height.to_bits(),
+        config.support_tolerance.to_bits(),
+        config.max_step.to_bits(),
+        config.max_slope.to_bits(),
+        config.body_offset.to_bits(),
+        config.support_depth_cells as u64,
+        config.support_patch_radius_cells as u64,
+        config.support_patch_min_samples as u64,
+        u64::from(config.ground_support),
+        u64::from(config.direct_support_only),
+        u64::from(config.start_exemption),
+    ];
+    key.extend(point(&config.min));
+    key.extend(point(&config.max));
+    // The start exemption clears occupied cells around the start body.
+    if config.start_exemption != 0 {
+        key.extend(point(&config.start.point));
+        key.extend([config.start.yaw.to_bits(), u64::from(config.start.has_yaw)]);
+    }
+    key.push(regions.len() as u64);
+    for region in regions {
+        key.extend(point(&region.min));
+        key.extend(point(&region.max));
+    }
+    let mut blocked = preblocked.to_vec();
+    blocked.sort_unstable();
+    blocked.dedup();
+    for cell in blocked {
+        key.extend([cell.x as u64, cell.y as u64, cell.z as u64]);
+    }
+    key
 }
 
 impl PlannerState {
@@ -249,6 +310,7 @@ impl PlannerState {
             surface_source: false,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
+            metric_edges: Default::default(),
         };
         state.occupied.sort_unstable();
         state.occupied.dedup();
@@ -285,6 +347,7 @@ impl PlannerState {
             surface_source: true,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
+            metric_edges: Default::default(),
         }
     }
 
@@ -309,6 +372,7 @@ impl PlannerState {
             surface_source: true,
             query_surface: std::sync::OnceLock::new(),
             geometry_index: std::sync::OnceLock::new(),
+            metric_edges: Default::default(),
         }
     }
 
@@ -340,6 +404,10 @@ impl PlannerState {
         self.surface_source = false;
         self.query_surface.take();
         self.geometry_index.take();
+        *self
+            .metric_edges
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner()) = MetricEdges::default();
     }
 
     /// Replace occupied/free source evidence. Extracted-surface artifacts reject source updates.
@@ -354,6 +422,10 @@ impl PlannerState {
         }
         self.query_surface.take();
         self.geometry_index.take();
+        *self
+            .metric_edges
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner()) = MetricEdges::default();
         let incremental_graph = self.incremental_graph.get_or_insert_with(|| {
             IncrementalGraph::from_graph(&graph_cells(&self.artifact.surface), &self.artifact.graph)
         });
@@ -2134,7 +2206,17 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     let virtual_goal =
         |cell: SurfaceCell| goal_attachment == Some(cell) && same_xy(goal.point, pose(cell).point);
     let mut rejected = HashSet::<(SurfaceCell, SurfaceCell, u32)>::new();
-    loop {
+    let state = &(*handle).state;
+    let key = metric_key(&config, checker.regions(), &checker.preblocked());
+    let mut known = {
+        let mut edges = state.metric_edges.lock().unwrap_or_else(|e| e.into_inner());
+        if edges.key == key {
+            std::mem::take(&mut edges.admitted)
+        } else {
+            HashMap::new()
+        }
+    };
+    let status = 'query: loop {
         let path = match query::plan_budgeted(
             &(*handle).state,
             start_cell,
@@ -2155,6 +2237,11 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
                 if rejected.contains(&(a, b, kind)) {
                     return 0;
                 }
+                if kind == 0 {
+                    if let Some(&allowed) = known.get(&(a, b)) {
+                        return i32::from(allowed);
+                    }
+                }
                 let (from, to) = if kind == 1 && virtual_start(b) {
                     (start, start)
                 } else if kind == 2 && virtual_goal(a) {
@@ -2169,16 +2256,19 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
                     config.actual_start != 0 && from.point.native() == start.point.native();
                 let result = checker.check_connection(from, to, actual);
                 if result.failure_kind == route_check::CANCELLED {
-                    -1
-                } else {
-                    i32::from(result.valid != 0)
+                    return -1;
                 }
+                // Endpoint connectors and the actual-start pose depend on this request.
+                if kind == 0 && !actual {
+                    known.insert((a, b), result.valid != 0);
+                }
+                i32::from(result.valid != 0)
             },
         ) {
             Ok(path) => path,
-            Err(query::QueryError::Exhausted) => return 1,
-            Err(query::QueryError::Budget) => return 2,
-            Err(query::QueryError::Cancelled) => return 3,
+            Err(query::QueryError::Exhausted) => break 'query 1,
+            Err(query::QueryError::Budget) => break 'query 2,
+            Err(query::QueryError::Cancelled) => break 'query 3,
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
         poses.push(start);
@@ -2201,18 +2291,25 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
         }
         let checked = checker.check_poses(&poses);
         if checked.valid != 0 {
-            return put_raw(poses, &mut output.ptr, &mut output.len, &mut output.cap)
+            break 'query put_raw(poses, &mut output.ptr, &mut output.len, &mut output.cap)
                 .map_or(-3, |_| 0);
         }
         if checked.failure_kind == route_check::CANCELLED {
-            return 3;
+            break 'query 3;
         }
         let index = checked.failed_segment.max(0) as usize;
         let edge = keys[index];
         if !rejected.insert(edge) {
-            return 1;
+            break 'query 1;
         }
+    };
+    if known.len() > METRIC_EDGE_LIMIT {
+        known.clear();
     }
+    let mut edges = state.metric_edges.lock().unwrap_or_else(|e| e.into_inner());
+    edges.key = key;
+    edges.admitted = known;
+    status
 }
 
 #[no_mangle]
@@ -3967,6 +4064,332 @@ mod tests {
             if let Some(&id) = original_ids.get(&node.cell) {
                 assert_eq!(node.id, id);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod metric_edge_reuse {
+    use super::*;
+
+    const R: f64 = 0.05;
+
+    unsafe extern "C" fn count_checks(context: *mut std::ffi::c_void) -> i32 {
+        *(context as *mut u32) += 1;
+        0
+    }
+
+    // 3 x 1.6 m floor. `wall` adds a 1 m high wall across x = 0 with a 1 m gap.
+    fn floor(wall: bool) -> Vec<SurfaceCell> {
+        let mut occupied = Vec::new();
+        for x in -30..30 {
+            for y in -16..16 {
+                occupied.push(SurfaceCell::new(x, y, 0));
+                if wall && (0..2).contains(&x) && !(4..16).contains(&y) {
+                    occupied.extend((1..=20).map(|z| SurfaceCell::new(x, y, z)));
+                }
+            }
+        }
+        occupied
+    }
+
+    fn handle(occupied: Vec<SurfaceCell>) -> LtMlsArtifactHandle {
+        let state = PlannerState::new(
+            occupied,
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 16,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig {
+                node_spacing_cells: 2,
+                max_link_cells: 9,
+                wall_buffer_cells: 8,
+                wall_buffer_weight: 2.0,
+                max_slope: 0.577_350_3,
+                max_step_cells: 9,
+                horizontal_hop_cells: 2,
+                ..GraphConfig::default()
+            },
+        );
+        LtMlsArtifactHandle { state, revision: 1 }
+    }
+
+    fn pose(x: f64) -> LtMlsPose {
+        LtMlsPose {
+            point: LtMlsPoint {
+                x,
+                y: 0.025,
+                z: 0.05 + 0.435,
+            },
+            ..LtMlsPose::default()
+        }
+    }
+
+    /// Returns the route and how many geometry checks the query ran.
+    fn query(handle: &LtMlsArtifactHandle, radius: f64) -> (Vec<(f64, f64, f64)>, u32) {
+        let (start, goal) = (pose(-1.225), pose(1.275));
+        let mut calls = 0u32;
+        let geometry = LtMlsGeometry {
+            config: LtMlsMetricConfig {
+                resolution: R,
+                robot_radius: radius,
+                body_offset: 0.23,
+                below: 0.05,
+                above: 0.35,
+                support_height: 0.435,
+                support_tolerance: 0.10,
+                max_step: 0.45,
+                max_slope: 0.577_350_3,
+                ground_support: 1,
+                actual_start: 1,
+                start,
+                min: LtMlsPoint {
+                    x: -2.0,
+                    y: -1.0,
+                    z: -0.5,
+                },
+                max: LtMlsPoint {
+                    x: 2.0,
+                    y: 1.0,
+                    z: 1.5,
+                },
+                ..LtMlsMetricConfig::default()
+            },
+            regions: std::ptr::null(),
+            regions_len: 0,
+            preblocked: std::ptr::null(),
+            preblocked_len: 0,
+            cancel: Some(count_checks),
+            context: (&mut calls as *mut u32).cast(),
+        };
+        let mut buffer = LtMlsPoseBuffer::default();
+        let status = unsafe {
+            lt_mls_artifact_query_metric(handle, start, goal, 24, 500_000, &geometry, &mut buffer)
+        };
+        assert_eq!(status, 0);
+        let route = unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len as usize) }
+            .iter()
+            .map(|p| (p.point.x, p.point.y, p.point.z))
+            .collect();
+        unsafe { lt_mls_free_pose_buffer(&mut buffer) };
+        (route, calls)
+    }
+
+    #[test]
+    fn repeated_query_reuses_surface_checks() {
+        let handle = handle(floor(true));
+        let (first, first_calls) = query(&handle, 0.32);
+        let (second, second_calls) = query(&handle, 0.32);
+        assert_eq!(first, second);
+        assert!(
+            second_calls * 4 < first_calls,
+            "{second_calls} vs {first_calls}"
+        );
+    }
+
+    #[test]
+    fn changed_geometry_does_not_reuse_checks() {
+        let reused = handle(floor(true));
+        query(&reused, 0.32);
+        let fresh = handle(floor(true));
+        assert_eq!(query(&reused, 0.30), query(&fresh, 0.30));
+    }
+
+    #[test]
+    fn map_update_drops_reused_checks() {
+        let region = RegionBounds {
+            min_x: -30,
+            max_x: 29,
+            min_y: -16,
+            max_y: 15,
+            min_z: -1,
+            max_z: 30,
+        };
+        // A regional update can leave a different graph than a full rebuild,
+        // so the reference takes the same update without an earlier query.
+        let mut reused = handle(floor(false));
+        let mut reference = handle(floor(false));
+        let (open, _) = query(&reused, 0.32);
+        for target in [&mut reused, &mut reference] {
+            target.state.update_region(region, &floor(true), &[]).unwrap();
+        }
+        let after = query(&reused, 0.32);
+        assert_ne!(after.0, open);
+        assert_eq!(after, query(&reference, 0.32));
+    }
+}
+
+#[cfg(test)]
+mod query_speed {
+    //! Synthetic scenes for global-query timing. Run explicitly:
+    //! `cargo test --release --lib query_speed -- --ignored --nocapture`
+    use super::*;
+
+    const R: f64 = 0.05;
+
+    unsafe extern "C" fn count_polls(context: *mut std::ffi::c_void) -> i32 {
+        *(context as *mut u64) += 1;
+        0
+    }
+
+    fn column(occupied: &mut Vec<SurfaceCell>, x: i32, y: i32, top: i32) {
+        occupied.extend(((top - 3).max(-1)..=top).map(|z| SurfaceCell::new(x, y, z)));
+    }
+
+    // Floor, a 2 m wide ramp rising 2 m, then an upper floor.
+    fn ramp(degrees: f64) -> (Vec<SurfaceCell>, [f64; 3], [f64; 3]) {
+        let tan = degrees.to_radians().tan();
+        let run = (2.0 / tan / R).ceil() as i32;
+        let mut occupied = Vec::new();
+        for x in -30..=run + 30 {
+            let h = if x < 0 {
+                0.0
+            } else if x < run {
+                (x as f64 + 0.5) * R * tan
+            } else {
+                2.0
+            };
+            for y in -20..=20 {
+                column(&mut occupied, x, y, (h / R).floor() as i32);
+            }
+        }
+        let goal = [(run as f64 + 20.0) * R + 0.025, 0.025, 2.05];
+        (occupied, [-0.975, 0.025, 0.05], goal)
+    }
+
+    // Eight 0.15 m risers with 0.30 m treads, 1.5 m wide.
+    fn stairs() -> (Vec<SurfaceCell>, [f64; 3], [f64; 3]) {
+        let mut occupied = Vec::new();
+        for x in -30..78 {
+            let step = if x < 0 { 0 } else { (x / 6 + 1).min(8) };
+            for y in -15..=15 {
+                column(&mut occupied, x, y, step * 3);
+            }
+        }
+        (occupied, [-0.975, 0.025, 0.05], [3.425, 0.025, 1.25])
+    }
+
+    // Solid wall across the room with a 0.5 m slot on the straight line
+    // (narrower than the body) and a 1 m opening to the side.
+    fn slot() -> (Vec<SurfaceCell>, [f64; 3], [f64; 3]) {
+        let mut occupied = Vec::new();
+        for x in -60..60 {
+            for y in -40..40 {
+                if (-2..2).contains(&x) && !((-5..5).contains(&y) || (20..40).contains(&y)) {
+                    occupied.extend((-1..=20).map(|z| SurfaceCell::new(x, y, z)));
+                } else {
+                    column(&mut occupied, x, y, 0);
+                }
+            }
+        }
+        (occupied, [-2.475, 0.025, 0.05], [2.475, 0.025, 0.05])
+    }
+
+    fn pose(p: [f64; 3]) -> LtMlsPose {
+        LtMlsPose {
+            point: LtMlsPoint {
+                x: p[0],
+                y: p[1],
+                z: p[2] + 0.435,
+            },
+            ..LtMlsPose::default()
+        }
+    }
+
+    #[test]
+    #[ignore = "timing run; use --release --ignored --nocapture"]
+    fn query_speed_scenes() {
+        for (name, (occupied, start, goal)) in [
+            ("ramp30", ramp(30.0)),
+            ("ramp35", ramp(35.0)),
+            ("stairs", stairs()),
+            ("slot", slot()),
+        ] {
+            let state = PlannerState::new(
+                occupied,
+                Vec::new(),
+                SurfaceConfig {
+                    clearance_cells: 16,
+                    ..SurfaceConfig::default()
+                },
+                GraphConfig {
+                    node_spacing_cells: 2,
+                    max_link_cells: 9,
+                    wall_buffer_cells: 8,
+                    wall_buffer_weight: 2.0,
+                    max_slope: 0.577_350_3,
+                    max_step_cells: 9,
+                    horizontal_hop_cells: 2,
+                    ..GraphConfig::default()
+                },
+            );
+            let handle = LtMlsArtifactHandle { state, revision: 1 };
+            let (start, goal) = (pose(start), pose(goal));
+            let mut polls = 0u64;
+            let geometry = LtMlsGeometry {
+                config: LtMlsMetricConfig {
+                    resolution: R,
+                    robot_radius: 0.32,
+                    body_offset: 0.23,
+                    below: 0.05,
+                    above: 0.35,
+                    support_height: 0.435,
+                    support_tolerance: 0.10,
+                    max_step: 0.45,
+                    max_slope: 0.577_350_3,
+                    ground_support: 1,
+                    actual_start: 1,
+                    start,
+                    min: LtMlsPoint {
+                        x: -5.0,
+                        y: -5.0,
+                        z: -0.5,
+                    },
+                    max: LtMlsPoint {
+                        x: 15.0,
+                        y: 5.0,
+                        z: 4.0,
+                    },
+                    ..LtMlsMetricConfig::default()
+                },
+                regions: std::ptr::null(),
+                regions_len: 0,
+                preblocked: std::ptr::null(),
+                preblocked_len: 0,
+                cancel: Some(count_polls),
+                context: (&mut polls as *mut u64).cast(),
+            };
+            let mut line = format!("{name:7}");
+            let mut route = Vec::new();
+            for label in ["first", "repeat"] {
+                polls = 0;
+                let mut buffer = LtMlsPoseBuffer::default();
+                let begin = std::time::Instant::now();
+                let status = unsafe {
+                    lt_mls_artifact_query_metric(
+                        &handle, start, goal, 24, 500_000, &geometry, &mut buffer,
+                    )
+                };
+                let ms = begin.elapsed().as_secs_f64() * 1e3;
+                route = unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len as usize) }
+                    .to_vec();
+                unsafe { lt_mls_free_pose_buffer(&mut buffer) };
+                line += &format!(" {label} status={status} {ms:8.1} ms polls={polls:7}");
+            }
+            let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+            let length: f64 = route
+                .windows(2)
+                .map(|w| {
+                    let (a, b) = (w[0].point, w[1].point);
+                    ((b.x - a.x).powi(2) + (b.y - a.y).powi(2) + (b.z - a.z).powi(2)).sqrt()
+                })
+                .sum();
+            line += &format!(
+                " route_valid={} length={length:.3} m",
+                checker.check_poses(&route).valid
+            );
+            println!("{line}");
         }
     }
 }
