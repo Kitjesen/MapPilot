@@ -1113,7 +1113,8 @@ namespace global_planner
             const double yaw=(to-from).norm()>1e-9?std::atan2(to.y()-from.y(),to.x()-from.x()):start_point_.yaw.value_or(0.0);
             const bool actual_start=has_start_&&from==octomap::point3d(start_point_.x,start_point_.y,start_point_.z);
             // The actual start may contain the robot or incomplete ground observations.
-            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,!actual_start,yaw);
+            const auto origin=queryWorld(from,robot_radius_,ground_support_&&!actual_start,true,yaw,
+                body_offset_m_ == 0.0);
             if(origin!=TraversabilityFailure::None){if(failure)*failure=origin;return false;}
             if(from==to)return true;
             const auto target=queryWorld(to,robot_radius_,ground_support_,true,yaw);
@@ -2064,8 +2065,9 @@ namespace global_planner
                         const GridIndex voxel{x, y, z};
                         if (external_preblocked_cells_.count(voxel))
                             return TraversabilityFailure::ExternalPreblockedBody;
-                        if (allow_center_occupancy && voxel.x == center.x &&
-                            voxel.y == center.y && voxel.z <= center.z) continue;
+                        if (allow_center_occupancy && start_exemption_ &&
+                            voxel.x == center.x && voxel.y == center.y && voxel.z <= center.z &&
+                            start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)) continue;
                         if (body_collision_ && (occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
                             !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
                             return TraversabilityFailure::OccupiedBody;

@@ -486,7 +486,12 @@ impl Checker<'_> {
                             continue;
                         }
                         let cell = SurfaceCell::new(x, y, z);
-                        if allow_initial_center && x == center.x && y == center.y && z <= center.z {
+                        if allow_initial_center
+                            && c.start_exemption != 0
+                            && x == center.x
+                            && y == center.y
+                            && z <= center.z
+                        {
                             continue;
                         }
                         if !self.exempt(cell) && !self.is_support_terrain(cell, support_z) {
@@ -505,7 +510,12 @@ impl Checker<'_> {
                     if self.preblocked.contains(&cell) {
                         return ROUTE_NO_GO;
                     }
-                    if allow_initial_center && x == center.x && y == center.y && z <= center.z {
+                    if allow_initial_center
+                        && c.start_exemption != 0
+                        && x == center.x
+                        && y == center.y
+                        && z <= center.z
+                    {
                         continue;
                     }
                     if self.occupied.contains(&cell)
