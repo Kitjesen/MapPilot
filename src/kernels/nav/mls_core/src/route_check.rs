@@ -437,9 +437,23 @@ impl Checker<'_> {
     }
 
     fn body_query(&self, point: LtMlsPoint, radius: f64) -> u32 {
+        self.body_query_with_initial_center(point, radius, false)
+    }
+
+    fn body_query_initial(&self, point: LtMlsPoint, radius: f64) -> u32 {
+        self.body_query_with_initial_center(point, radius, true)
+    }
+
+    fn body_query_with_initial_center(
+        &self,
+        point: LtMlsPoint,
+        radius: f64,
+        allow_initial_center: bool,
+    ) -> u32 {
         let c = self.config;
         let (below, above) = self.body_extent();
         let support_z = self.floor(point);
+        let center = self.cell(point);
         let low = self.cell(LtMlsPoint {
             x: point.x - radius,
             y: point.y - radius,
@@ -472,6 +486,9 @@ impl Checker<'_> {
                             continue;
                         }
                         let cell = SurfaceCell::new(x, y, z);
+                        if allow_initial_center && x == center.x && y == center.y && z <= center.z {
+                            continue;
+                        }
                         if !self.exempt(cell) && !self.is_support_terrain(cell, support_z) {
                             return ROUTE_OCCUPIED;
                         }
@@ -488,6 +505,9 @@ impl Checker<'_> {
                     if self.preblocked.contains(&cell) {
                         return ROUTE_NO_GO;
                     }
+                    if allow_initial_center && x == center.x && y == center.y && z <= center.z {
+                        continue;
+                    }
                     if self.occupied.contains(&cell)
                         && !self.exempt(cell)
                         && !self.is_support_terrain(cell, support_z)
@@ -495,6 +515,34 @@ impl Checker<'_> {
                         return ROUTE_OCCUPIED;
                     }
                 }
+            }
+        }
+        ROUTE_OK
+    }
+
+    fn actual_start_query(&self, point: LtMlsPoint, yaw: f64) -> u32 {
+        let failure = self.base_query(point, false);
+        if failure != ROUTE_OK {
+            return failure;
+        }
+        let (below, above) = self.body_extent();
+        for offset in self.offsets() {
+            let center = shifted(point, offset, yaw);
+            if self.regions.iter().any(|region| {
+                no_go(
+                    *region,
+                    center,
+                    center,
+                    self.config.robot_radius,
+                    below,
+                    above,
+                )
+            }) {
+                return ROUTE_NO_GO;
+            }
+            let failure = self.body_query_initial(center, self.config.robot_radius);
+            if failure != ROUTE_OK {
+                return failure;
             }
         }
         ROUTE_OK
@@ -1238,12 +1286,16 @@ impl Checker<'_> {
             // turns along a continuous spline and checks that sweep against
             // live occupancy. Only an explicit terminal yaw needs a turn here.
             let actual_start = index == 0 && starts_at_actual;
-            let failure = self.oriented_query(
-                from,
-                heading,
-                config.ground_support != 0 && !actual_start,
-                !actual_start,
-            );
+            let failure = if actual_start && config.body_offset == 0.0 {
+                self.actual_start_query(from, heading)
+            } else {
+                self.oriented_query(
+                    from,
+                    heading,
+                    config.ground_support != 0 && !actual_start,
+                    !actual_start,
+                )
+            };
             if failure != ROUTE_OK {
                 return route_failure(failure, index as i32, self.cell(from));
             }
