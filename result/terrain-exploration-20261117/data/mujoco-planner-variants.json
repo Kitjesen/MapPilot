@@ -1,0 +1,86 @@
+[
+  {
+    "name": "base",
+    "ok": false,
+    "error": "empty_path",
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "cell": [
+      10,
+      28,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 788.5798
+  },
+  {
+    "name": "no_support",
+    "ok": true,
+    "error": null,
+    "stage": "none",
+    "failure": "",
+    "cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 148,
+    "elapsed_ms": 77.3887
+  },
+  {
+    "name": "large_slope",
+    "ok": false,
+    "error": "empty_path",
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "cell": [
+      10,
+      28,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 550.4329
+  },
+  {
+    "name": "small_body",
+    "ok": true,
+    "error": null,
+    "stage": "none",
+    "failure": "",
+    "cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 8,
+    "elapsed_ms": 668.1719
+  },
+  {
+    "name": "no_floor_preference",
+    "ok": false,
+    "error": "empty_path",
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "cell": [
+      10,
+      28,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 877.1424
+  },
+  {
+    "name": "zero_tol",
+    "ok": false,
+    "error": "empty_path",
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "cell": [
+      10,
+      28,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 852.6861
+  }
+]

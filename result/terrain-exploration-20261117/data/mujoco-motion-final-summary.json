@@ -1,0 +1,33 @@
+{
+  "preflight_ok": true,
+  "motion_ok": false,
+  "prepared_map_rebuilt_with_abi11": true,
+  "prepared_map_log": "OctoPlanner3D saved prepared map",
+  "planner_failure": "formal navd repeated A* planning failed after fresh prepared map",
+  "global_path_points": 0,
+  "local_path_points": 0,
+  "cmd_vel_published": 0,
+  "net_displacement_xy_m": 0.05741289473996804,
+  "peak_xy_speed_mps": 0.024590076238058662,
+  "goal_distance_reduction_m": -0.05446988176968759,
+  "terminal_stop_ok": true,
+  "blockers": [
+    "octoplanner3d_plan_not_accepted",
+    "global_path_too_short",
+    "local_planner_path_not_found",
+    "local_path_too_short",
+    "embedded_path_follower_command_missing",
+    "native_endpoint_did_not_publish_cmd_vel",
+    "mujoco_policy_received_too_few_nonzero_cmd_vel_samples",
+    "mujoco_truth_peak_xy_speed_below_threshold",
+    "signed_linear_command_evidence_missing",
+    "forward_linear_command_fraction_below_threshold",
+    "input_gate_ready_fraction_below_threshold",
+    "thunderv4_motion_below_threshold",
+    "net_displacement_below_threshold",
+    "goal_distance_did_not_decrease",
+    "final_goal_error_above_threshold",
+    "native_goal_not_reached",
+    "sensor_or_slam_acceptance_failed"
+  ]
+}

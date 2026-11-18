@@ -396,9 +396,11 @@ export function AgentConversation({ locale, controller: conversation, onBotChang
   const mapSettings = useMapSettings()
   const [expanded, setExpanded] = useState(false)
   const [sharingId, setSharingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState<string | null>(null)
   const currentId = conversation.snapshot?.conversation_id
   useEffect(() => { setBotProfile(readBotProfile(conversation.botId)); setBotRoster(readBotRoster()) }, [conversation.botId])
   useEffect(() => { setSharingId(null) }, [currentId])
+  useEffect(() => { setEditingTitle(null) }, [currentId])
   const [anchorId, setAnchorId] = useState<string | null>(null)
   const root = useRef<HTMLElement>(null)
   const historyEnd = useRef<HTMLDivElement>(null)
@@ -560,7 +562,7 @@ export function AgentConversation({ locale, controller: conversation, onBotChang
       : botState === 'waiting' ? text('Waiting for you', '等待你的确认')
       : botState === 'unavailable' ? text('Model unavailable', '模型未连接')
         : botState === 'error' ? text('Connection error', '连接异常')
-        : botState === 'done' ? text('Completed', '已完成') : botProfile.name)
+        : botState === 'done' ? text('Reply complete', '回复完成') : botProfile.name)
   const botHeaderDetails = [botProfile.role ?? text('General assistant', '通用助手'), botState === 'idle' ? text('Ready', '就绪') : botLabel,
     ...(botProfile.capabilities ?? [])].join(' · ')
   const botSwitcher = <details className={styles.botSwitcher}>
@@ -569,14 +571,14 @@ export function AgentConversation({ locale, controller: conversation, onBotChang
       <span>{botProfile.name}</span><ChevronDown size={12} aria-hidden="true" />
     </summary>
     <div className={styles.botSwitcherPanel} role="menu" aria-label={text('Bot roster', 'Bot 列表')}>
-      {botRoster.map(profile => <button key={profile.id} type="button" role="menuitemradio" aria-checked={profile.id === conversation.botId}
+      {[botProfile, ...botRoster.filter(profile => profile.id !== botProfile.id)].map(profile => <button key={profile.id} type="button" role="menuitemradio" aria-checked={profile.id === botProfile.id}
         onClick={event => { onBotChange?.(profile.id); event.currentTarget.closest('details')?.removeAttribute('open') }}>
         <Bot state={profile.id === conversation.botId ? botState : 'idle'} shape={profile.shape} color={profile.color} size={32} />
-        <span><strong>{profile.name}</strong><small>{profile.role ?? text('General assistant', '通用助手')}</small></span>
-        {profile.id === conversation.botId && <Check size={14} aria-hidden="true" />}
+        <span className={styles.botOptionText}><strong>{profile.name}</strong><small>{profile.role ?? text('General assistant', '通用助手')}</small></span>
+        {profile.id === botProfile.id && <Check size={14} aria-hidden="true" />}
       </button>)}
       <button type="button" className={styles.botSwitcherEdit} role="menuitem" onClick={event => { event.currentTarget.closest('details')?.removeAttribute('open'); setBotStudioOpen(true) }}>
-        <SlidersHorizontal size={14} aria-hidden="true" /><span>{text('Edit current Bot', '编辑当前 Bot')}</span>
+        <SlidersHorizontal size={14} aria-hidden="true" /><span>{text('Bot name and appearance', 'Bot 名称与外观')}</span>
       </button>
     </div>
   </details>
@@ -665,13 +667,30 @@ export function AgentConversation({ locale, controller: conversation, onBotChang
       {showHistory && (
         <div className={styles.history}>
           <header className={styles.heading}>
-            <button type="button" className={styles.conversationTitle} aria-expanded={Boolean(conversation.sessionListOpen)}
+            <button type="button" className={styles.iconButton} aria-expanded={Boolean(conversation.sessionListOpen)}
               aria-label={text('Conversation history', '会话历史')} title={text('Conversation history', '会话历史')}
               onClick={() => conversation.setSessionListOpen(!conversation.sessionListOpen)}>
-              <History size={16} aria-hidden="true" /><span>{conversation.snapshot?.metadata?.title || text('Conversation', '对话')}</span>
-              <ChevronDown size={13} aria-hidden="true" /></button>
-            {botSwitcher}
-            <span className={styles.botCapability} title={botHeaderDetails}>{botHeaderDetails}</span>
+              <History size={16} aria-hidden="true" /></button>
+            {editingTitle !== null ? <form className={styles.renameForm} onSubmit={async event => {
+              event.preventDefault()
+              if (!currentId || !editingTitle.trim() || conversation.sessionBusy) return
+              try { await conversation.renameConversation(currentId, editingTitle.trim()); setEditingTitle(null) }
+              catch { /* Keep the draft; the controller displays the error. */ }
+            }}>
+              <input autoFocus aria-label={text('Conversation title', '会话名称')} maxLength={120} value={editingTitle}
+                onChange={event => setEditingTitle(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setEditingTitle(null) } }} />
+              <button type="submit" className={styles.iconButton} disabled={!editingTitle.trim() || Boolean(conversation.sessionBusy)}
+                aria-label={text('Save title', '保存名称')}><Check size={16} /></button>
+              <button type="button" className={styles.iconButton} onClick={() => setEditingTitle(null)}
+                aria-label={text('Cancel rename', '取消重命名')}><X size={16} /></button>
+            </form> : <button type="button" className={styles.conversationTitle} disabled={!currentId || Boolean(conversation.sessionBusy)}
+              aria-label={text('Rename conversation', '修改会话标题')} title={text('Rename conversation', '修改会话标题')}
+              onClick={() => setEditingTitle(conversation.snapshot?.metadata?.title || '')}>
+              <span>{conversation.snapshot?.metadata?.title || text('Conversation', '对话')}</span><Pencil size={12} aria-hidden="true" />
+            </button>}
+            {editingTitle === null && botSwitcher}
+            {editingTitle === null && workStatus && <span className={styles.botCapability} title={botHeaderDetails}>{workStatus}</span>}
             <button type="button" className={styles.iconButton} aria-label={text('Share conversation', '分享对话')}
               title={text('Preview and share this conversation', '预览并分享当前会话')}
               disabled={!currentId || initialLoading || Boolean(conversation.sessionBusy || conversation.shareBusy || conversation.sending || conversation.uploading || conversation.approvalBusy)}

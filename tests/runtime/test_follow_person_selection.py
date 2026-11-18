@@ -133,6 +133,9 @@ def _vision_follow(
     vs._target_label = "person in red"
     vs._follow_select_method = "clip"
     vs._person_tracker.set_dino_encoder(_FakeDino())
+    # These tests exercise the remote-verification gate explicitly. The
+    # production default now accepts a strong local DINO match immediately.
+    vs._person_tracker.LOCAL_REACQUIRE_MIN_SIMILARITY = 1.01
     vs._latest_bgr = np.ones((32, 32, 3), dtype=np.uint8)
     vs._person_tracker.lock_target(
         _person("original", "person", 4.0, [0, 0, 16, 16]) | {"ts": 1.0},
@@ -941,6 +944,7 @@ def test_follow_rejects_empty_and_wrong_product_sessions():
 def test_camera_restart_keeps_identity_but_requires_three_new_observations():
     vs = VisualServoModule()
     vs._person_tracker.set_dino_encoder(_FakeDino())
+    vs._person_tracker.LOCAL_REACQUIRE_MIN_SIMILARITY = 1.01
     ref = vs.start_follow(description="person in red")
     vs._follow_select_pending = False
     vs._follow_select_method = "clip"

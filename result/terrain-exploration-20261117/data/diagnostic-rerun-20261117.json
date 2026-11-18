@@ -1,0 +1,398 @@
+[
+  {
+    "scene": "wave_gap",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      4
+    ],
+    "path_points": 0,
+    "elapsed_ms": 5115.8113
+  },
+  {
+    "scene": "wave_gap",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      -6
+    ],
+    "path_points": 0,
+    "elapsed_ms": 3561.9889
+  },
+  {
+    "scene": "wave_ceiling",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      1
+    ],
+    "path_points": 0,
+    "elapsed_ms": 2117.6242
+  },
+  {
+    "scene": "wave_ceiling",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      -3
+    ],
+    "path_points": 0,
+    "elapsed_ms": 2044.0732
+  },
+  {
+    "scene": "wave_upper",
+    "request": "upper_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      1
+    ],
+    "path_points": 0,
+    "elapsed_ms": 7782.4873
+  },
+  {
+    "scene": "wave_upper",
+    "request": "upper_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      25
+    ],
+    "path_points": 0,
+    "elapsed_ms": 10295.5679
+  },
+  {
+    "scene": "cross_55",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 404.3798
+  },
+  {
+    "scene": "cross_55",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 379.865
+  },
+  {
+    "scene": "cross_65",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 458.6507
+  },
+  {
+    "scene": "cross_65",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      0
+    ],
+    "path_points": 0,
+    "elapsed_ms": 476.2826
+  },
+  {
+    "scene": "wave_35_120",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      -4
+    ],
+    "path_points": 0,
+    "elapsed_ms": 19633.1237
+  },
+  {
+    "scene": "wave_35_120",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      2
+    ],
+    "path_points": 0,
+    "elapsed_ms": 551.3186
+  },
+  {
+    "scene": "wave_50_200",
+    "request": "along_forward",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at goal_attach",
+    "rust_failure_stage": "goal_attach",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      15,
+      0,
+      5
+    ],
+    "path_points": 0,
+    "elapsed_ms": 459.8166
+  },
+  {
+    "scene": "wave_50_200",
+    "request": "along_reverse",
+    "previous_status": "no_route",
+    "status": "no_route",
+    "returncode": 2,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted at edge_search",
+    "rust_failure_stage": "edge_search",
+    "rust_failure_segment": -1,
+    "rust_failure_cell": [
+      145,
+      0,
+      -9
+    ],
+    "path_points": 0,
+    "elapsed_ms": 3387.0704
+  },
+  {
+    "scene": "wave_40_400",
+    "request": "along_forward",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 48,
+    "elapsed_ms": 625.1208
+  },
+  {
+    "scene": "wave_40_400",
+    "request": "along_reverse",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 48,
+    "elapsed_ms": 552.9746
+  },
+  {
+    "scene": "crest_30",
+    "request": "along_forward",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 90,
+    "elapsed_ms": 678.0877
+  },
+  {
+    "scene": "crest_30",
+    "request": "along_reverse",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 90,
+    "elapsed_ms": 508.9533
+  },
+  {
+    "scene": "valley_30",
+    "request": "along_forward",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 84,
+    "elapsed_ms": 611.1298
+  },
+  {
+    "scene": "valley_30",
+    "request": "along_reverse",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 84,
+    "elapsed_ms": 804.7682
+  },
+  {
+    "scene": "chicane_ramp",
+    "request": "along_forward",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 54,
+    "elapsed_ms": 998.853
+  },
+  {
+    "scene": "chicane_ramp",
+    "request": "along_reverse",
+    "previous_status": "rust_pass",
+    "status": "rust_pass",
+    "returncode": 0,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "rust_failure_stage": "none",
+    "rust_failure_segment": 0,
+    "rust_failure_cell": [
+      0,
+      0,
+      0
+    ],
+    "path_points": 63,
+    "elapsed_ms": 831.6688
+  }
+]

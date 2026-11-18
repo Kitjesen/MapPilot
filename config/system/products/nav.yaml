@@ -93,6 +93,7 @@ native_nav:
   local_planner: scan
   local_planners: [scan]
   use_traversability_cost: false
+  path_follower_max_speed_mps: 1.0
   follower:
     max_accel_mps2: 0.75
     max_yaw_rate_rad_s: 1.0
@@ -104,7 +105,8 @@ native_nav:
     planner: true
 parameters:
   scan_planner.acceleration_tolerance: 1.2
-  scan_follower.max_vx_mps: 1.2
+  scan_follower.max_vx_mps: 1.0
+  scan_follower.max_vy_mps: 1.0
   scan_follower.position_gain: 1.5
 processes:
   - lidar

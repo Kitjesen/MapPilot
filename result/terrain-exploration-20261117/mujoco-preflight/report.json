@@ -1,0 +1,158 @@
+{
+  "acceptance_evaluated": false,
+  "blockers": [],
+  "evidence_scope": "preflight",
+  "manifest": "D:\\inovxio\\brain\\lingtu\\config\\acceptance\\mujoco\\nav_3d_course.json",
+  "ok": true,
+  "phases": {},
+  "preflight": {
+    "asset_preparation": {
+      "artifact_gate": {
+        "blockers": [],
+        "native": {
+          "accepted": true,
+          "activation_token": "v3.TFRNQVAzAQAAAA9zYW1lX3NvdXJjZV9tYXAAAAGh6JsGcQAAAANtYXAAAAACAAAACW9jdG9tYXAzZAAAAHdEOlxpbm92eGlvXGJyYWluXGxpbmd0dVxyZXN1bHRcdGVycmFpbi1leHBsb3JhdGlvbi0yMDI2MTExN1xtdWpvY28tcHJlZmxpZ2h0XHByZXBhcmVkX2Fzc2V0c1xzYW1lX3NvdXJjZV9tYXBcb2N0b21hcC5vdAAAAApwb2ludGNsb3VkAAAAdEQ6XGlub3Z4aW9cYnJhaW5cbGluZ3R1XHJlc3VsdFx0ZXJyYWluLWV4cGxvcmF0aW9uLTIwMjYxMTE3XG11am9jby1wcmVmbGlnaHRccHJlcGFyZWRfYXNzZXRzXHNhbWVfc291cmNlX21hcFxtYXAucGNkAA",
+          "active": {
+            "artifacts": [],
+            "content_epoch": 0,
+            "frame_id": "",
+            "map_id": "",
+            "present": false
+          },
+          "changed": false,
+          "message": "prepared",
+          "native_returncode": 0,
+          "operation": "prepare",
+          "previous": {
+            "artifacts": [],
+            "content_epoch": 0,
+            "frame_id": "",
+            "map_id": "",
+            "present": false
+          },
+          "producer_boot_id": "",
+          "request_id": "mapctl-47192-11584515236100",
+          "schema_version": "lingtu.map_activation.v2",
+          "target": {
+            "artifacts": [
+              {
+                "type": "octomap3d",
+                "uri": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\octomap.ot"
+              },
+              {
+                "type": "pointcloud",
+                "uri": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\map.pcd"
+              }
+            ],
+            "content_epoch": 1794903836273,
+            "frame_id": "map",
+            "map_id": "same_source_map",
+            "present": true
+          }
+        },
+        "ok": true
+      },
+      "artifact_gate_ok": true,
+      "attempted": true,
+      "blockers": [],
+      "build": {
+        "action": "build_octomap",
+        "build_id": "OCTOMAP_ARTIFACT_11582421553",
+        "map_id": "same_source_map",
+        "metadata": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\metadata.json",
+        "mode": "native_transaction",
+        "native_returncode": 0,
+        "octomap": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\octomap.ot",
+        "octomap_result": {
+          "action": "build_octomap",
+          "algorithm_embedded": true,
+          "map_id": "same_source_map",
+          "metadata": {
+            "ok": true,
+            "path": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map\\metadata.json"
+          },
+          "mode": "native_octomap",
+          "octomap": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map\\octomap.ot",
+          "report": {
+            "build_mode": "native_octomap",
+            "frame_id": "map",
+            "input_points": 534921,
+            "map_dir": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map",
+            "metadata_path": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map\\metadata.json",
+            "occupied_voxels": 41845,
+            "octomap_path": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map\\octomap.ot",
+            "ok": true,
+            "pcd_path": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\.builds\\OCTOMAP_ARTIFACT_11582421553_transaction\\staging_map\\map.pcd",
+            "resolution": 0.2,
+            "status": "built",
+            "success": true
+          },
+          "status": "built",
+          "success": true
+        },
+        "ok": true,
+        "rolled_back": false,
+        "status": "built",
+        "success": true,
+        "transactional_visibility": "staged_until_commit"
+      },
+      "build_ok": true,
+      "map_dir": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map",
+      "map_source": "synthetic_hits",
+      "ok": true,
+      "out_dir": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets",
+      "point_count": 534921,
+      "reason": "prepared",
+      "registration_source": "synthetic_scene_geometry",
+      "scene_xml": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\scene.xml"
+    },
+    "binaries": {
+      "driver_bridge": "D:\\inovxio\\brain\\lingtu\\build\\windows-native-dds-adapter\\Release\\lingtu_mujoco_driver_bridge.exe",
+      "mapd": "D:\\inovxio\\brain\\lingtu\\build\\maps-windows\\Release\\mapd.exe",
+      "navigation": "D:\\inovxio\\brain\\lingtu\\build\\nav-cpp\\windows-x64-nav-endpoint\\Release\\navd.exe",
+      "navigation_control": "D:\\inovxio\\brain\\lingtu\\build\\nav-cpp\\windows-x64-nav-endpoint\\Release\\lingtu_nav_control.exe",
+      "sensor_publisher": "D:\\inovxio\\brain\\lingtu\\build\\windows-native-dds-adapter\\Release\\lingtu_mujoco_sensor_publisher.exe"
+    },
+    "blockers": [],
+    "build_helper": {},
+    "map_provenance": {
+      "artifact_storage": {
+        "detail": "native_windows_filesystem",
+        "ok": true,
+        "path": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight"
+      },
+      "driver_bridge": {
+        "path": "D:\\inovxio\\brain\\lingtu\\build\\windows-native-dds-adapter\\Release\\lingtu_mujoco_driver_bridge.exe"
+      },
+      "map_exists": true,
+      "map_format_ok": true,
+      "metadata_frame_id": "map",
+      "metadata_schema": "lingtu.saved_map_artifacts.v1",
+      "native_asset_mirror": {
+        "enabled": false,
+        "ok": true,
+        "reason": "native_windows_pe"
+      },
+      "native_runtime_probe": {
+        "detail": "native_windows_pe",
+        "ok": true
+      },
+      "planner_exists": true,
+      "planner_format_ok": true,
+      "run_plan_binary_bindings": {},
+      "sensor_publisher_probe": "sensor records: clouds=0 imu=0 odom=0 registered_clouds=0 camera=0 simulation_clocks=0 gnss=0 measurements=0 bytes=0 mode=replay"
+    },
+    "ok": true,
+    "paths": {
+      "map_dir": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map",
+      "metadata": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\metadata.json",
+      "planner": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\octomap.ot",
+      "policy": "D:\\inovxio\\brain\\lingtu\\sim\\packages\\controllers\\doso\\thunder_v4\\cts_moe\\policy\\policy_cts_moe_v39_61128.onnx",
+      "sensor_runner": "D:\\inovxio\\brain\\lingtu\\sim\\scripts\\mujoco\\native_dds_sensors.py",
+      "slam": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\same_source_map\\map.pcd",
+      "world": "D:\\inovxio\\brain\\lingtu\\result\\terrain-exploration-20261117\\mujoco-preflight\\prepared_assets\\scene.xml"
+    }
+  },
+  "product_acceptance_passed": false,
+  "schema_version": "lingtu.mujoco.native_navigation.acceptance.v1"
+}

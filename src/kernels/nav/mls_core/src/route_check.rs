@@ -365,6 +365,14 @@ impl Checker<'_> {
             .find(|&z| self.observed_support(SurfaceCell::new(cell.x, cell.y, z)))
     }
 
+    pub(crate) fn observed_floor(&self, point: LtMlsPoint) -> Option<i32> {
+        let cell = self.cell(point);
+        let (low, high) = self.support_range(point);
+        (low..=high)
+            .map(|depth| cell.z - depth)
+            .find(|&z| self.observed_support(SurfaceCell::new(cell.x, cell.y, z)))
+    }
+
     pub(crate) fn attachment(&self, point: LtMlsPoint) -> Option<SurfaceCell> {
         let cell = self.cell(point);
         if let Some(z) = self.floor(point) {

@@ -1,0 +1,877 @@
+[
+  {
+    "name": "fig01_multilevel",
+    "caption": "Static body-reference routes on four multi-level OctoMap scenes. Outer walls are omitted for visibility; axes have equal metric scale. Green circles and orange stars denote the actual starts and requested goals. These results establish geometric planning feasibility, not foothold or physical locomotion performance.",
+    "requests": [
+      "l_120/forward",
+      "u_120/forward",
+      "three_levels/forward",
+      "overlap_linked/forward"
+    ]
+  },
+  {
+    "name": "fig03_steps",
+    "caption": "Bidirectional single-step probes with the same declared body and 0.45 m step limit. Routes and independent geometry checks pass at 0.35, 0.40 and 0.45 m; no route is returned at 0.50 m. No physical climbing experiment is represented.",
+    "requests": [
+      "step_35/forward",
+      "step_35/reverse",
+      "step_40/forward",
+      "step_40/reverse",
+      "step_45/forward",
+      "step_45/reverse",
+      "step_50/forward",
+      "step_50/reverse"
+    ]
+  },
+  {
+    "name": "fig04_ramps",
+    "caption": "Bidirectional routes on nominal 20, 25, 30 and 35 degree ramp maps. Map inclination is distinct from individual route-segment slope. The 35 degree scene uses winding routes and took 101.503 s forward and 22.194 s reverse in this run; it is not a real-time or physical-climbing result.",
+    "requests": [
+      "ramp_20/forward",
+      "ramp_20/reverse",
+      "ramp_25/forward",
+      "ramp_25/reverse",
+      "ramp_30/forward",
+      "ramp_30/reverse",
+      "ramp_35/forward",
+      "ramp_35/reverse"
+    ]
+  },
+  {
+    "name": "fig05_obstacles",
+    "caption": "Obstacle and clearance cases. The box detour and 0.80 m doorway return checked routes. The 0.60 m doorway and mid-route 0.50 m ground gap return no route. Empty results are shown with endpoints only, without invented connecting trajectories.",
+    "requests": [
+      "wall_detour/00-000",
+      "door_080/00-000",
+      "door_060/00-000",
+      "open_gap/00-000"
+    ]
+  },
+  {
+    "name": "fig02_departure",
+    "caption": "Departure comparison using identical starts and body envelopes. Distances are horizontal offsets from the body reference point to the observed floor edge, not step heights or measured foot gaps. Missing observations inside the initial body footprint are tolerated only on the initial connector; occupancy, no-go and measured lower ground remain checked. The map itself is unchanged.",
+    "requests": [
+      "edge_00/01-000",
+      "edge_20/06-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__00-000",
+    "caption": "Observed floor begins at x = 0 m; request 00-000. Start [0.0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/00-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__00-090",
+    "caption": "Observed floor begins at x = 0 m; request 00-090. Start [0.0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/00-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__00-180",
+    "caption": "Observed floor begins at x = 0 m; request 00-180. Start [0.0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/00-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__01-000",
+    "caption": "Observed floor begins at x = 0 m; request 01-000. Start [-0.02, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/01-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__01-090",
+    "caption": "Observed floor begins at x = 0 m; request 01-090. Start [-0.02, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/01-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__01-180",
+    "caption": "Observed floor begins at x = 0 m; request 01-180. Start [-0.02, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/01-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__02-000",
+    "caption": "Observed floor begins at x = 0 m; request 02-000. Start [-0.04, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/02-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__02-090",
+    "caption": "Observed floor begins at x = 0 m; request 02-090. Start [-0.04, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/02-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__02-180",
+    "caption": "Observed floor begins at x = 0 m; request 02-180. Start [-0.04, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/02-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__03-000",
+    "caption": "Observed floor begins at x = 0 m; request 03-000. Start [-0.06, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/03-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__03-090",
+    "caption": "Observed floor begins at x = 0 m; request 03-090. Start [-0.06, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/03-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__03-180",
+    "caption": "Observed floor begins at x = 0 m; request 03-180. Start [-0.06, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/03-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__04-000",
+    "caption": "Observed floor begins at x = 0 m; request 04-000. Start [-0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/04-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__04-090",
+    "caption": "Observed floor begins at x = 0 m; request 04-090. Start [-0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/04-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__04-180",
+    "caption": "Observed floor begins at x = 0 m; request 04-180. Start [-0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/04-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__05-000",
+    "caption": "Observed floor begins at x = 0 m; request 05-000. Start [-0.15, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/05-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__05-090",
+    "caption": "Observed floor begins at x = 0 m; request 05-090. Start [-0.15, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/05-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__05-180",
+    "caption": "Observed floor begins at x = 0 m; request 05-180. Start [-0.15, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/05-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__06-000",
+    "caption": "Observed floor begins at x = 0 m; request 06-000. Start [-0.22, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/06-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__06-090",
+    "caption": "Observed floor begins at x = 0 m; request 06-090. Start [-0.22, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/06-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__06-180",
+    "caption": "Observed floor begins at x = 0 m; request 06-180. Start [-0.22, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/06-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__07-000",
+    "caption": "Observed floor begins at x = 0 m; request 07-000. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/07-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__07-090",
+    "caption": "Observed floor begins at x = 0 m; request 07-090. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/07-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__07-180",
+    "caption": "Observed floor begins at x = 0 m; request 07-180. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/07-180"
+    ]
+  },
+  {
+    "name": "scene_edge_00__08-000",
+    "caption": "Observed floor begins at x = 0 m; request 08-000. Start [-0.45, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/08-000"
+    ]
+  },
+  {
+    "name": "scene_edge_00__08-090",
+    "caption": "Observed floor begins at x = 0 m; request 08-090. Start [-0.45, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: probe_rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/08-090"
+    ]
+  },
+  {
+    "name": "scene_edge_00__08-180",
+    "caption": "Observed floor begins at x = 0 m; request 08-180. Start [-0.45, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_00/08-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__00-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 00-000. Start [0.2, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/00-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__00-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 00-090. Start [0.2, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/00-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__00-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 00-180. Start [0.2, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/00-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__01-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 01-000. Start [0.18000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/01-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__01-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 01-090. Start [0.18000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/01-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__01-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 01-180. Start [0.18000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/01-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__02-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 02-000. Start [0.16, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/02-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__02-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 02-090. Start [0.16, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/02-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__02-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 02-180. Start [0.16, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/02-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__03-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 03-000. Start [0.14, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/03-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__03-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 03-090. Start [0.14, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/03-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__03-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 03-180. Start [0.14, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/03-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__04-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 04-000. Start [0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/04-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__04-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 04-090. Start [0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/04-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__04-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 04-180. Start [0.1, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/04-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__05-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 05-000. Start [0.05000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/05-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__05-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 05-090. Start [0.05000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/05-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__05-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 05-180. Start [0.05000000000000002, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/05-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__06-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 06-000. Start [-0.01999999999999999, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/06-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__06-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 06-090. Start [-0.01999999999999999, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/06-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__06-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 06-180. Start [-0.01999999999999999, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/06-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__07-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 07-000. Start [-0.09999999999999998, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/07-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__07-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 07-090. Start [-0.09999999999999998, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/07-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__07-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 07-180. Start [-0.09999999999999998, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/07-180"
+    ]
+  },
+  {
+    "name": "scene_edge_20__08-000",
+    "caption": "Observed floor begins at x = 0.20 m; request 08-000. Start [-0.25, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/08-000"
+    ]
+  },
+  {
+    "name": "scene_edge_20__08-090",
+    "caption": "Observed floor begins at x = 0.20 m; request 08-090. Start [-0.25, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: probe_rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/08-090"
+    ]
+  },
+  {
+    "name": "scene_edge_20__08-180",
+    "caption": "Observed floor begins at x = 0.20 m; request 08-180. Start [-0.25, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "edge_20/08-180"
+    ]
+  },
+  {
+    "name": "scene_blind_patch__00-000",
+    "caption": "Unobserved patch under the initial body; request 00-000. Start [0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "blind_patch/00-000"
+    ]
+  },
+  {
+    "name": "scene_blind_patch__00-090",
+    "caption": "Unobserved patch under the initial body; request 00-090. Start [0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "blind_patch/00-090"
+    ]
+  },
+  {
+    "name": "scene_blind_patch__00-180",
+    "caption": "Unobserved patch under the initial body; request 00-180. Start [0, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "blind_patch/00-180"
+    ]
+  },
+  {
+    "name": "scene_open_gap__00-000",
+    "caption": "Mid-route ground gap (0.50 m); request 00-000. Start [-0.6, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "open_gap/00-000"
+    ]
+  },
+  {
+    "name": "scene_open_gap__00-090",
+    "caption": "Mid-route ground gap (0.50 m); request 00-090. Start [-0.6, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "open_gap/00-090"
+    ]
+  },
+  {
+    "name": "scene_open_gap__00-180",
+    "caption": "Mid-route ground gap (0.50 m); request 00-180. Start [-0.6, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "open_gap/00-180"
+    ]
+  },
+  {
+    "name": "scene_wall_detour__00-000",
+    "caption": "Box-obstacle detour; request 00-000. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "wall_detour/00-000"
+    ]
+  },
+  {
+    "name": "scene_wall_detour__00-090",
+    "caption": "Box-obstacle detour; request 00-090. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "wall_detour/00-090"
+    ]
+  },
+  {
+    "name": "scene_wall_detour__00-180",
+    "caption": "Box-obstacle detour; request 00-180. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "wall_detour/00-180"
+    ]
+  },
+  {
+    "name": "scene_door_080__00-000",
+    "caption": "Doorway width: 0.80 m; request 00-000. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_080/00-000"
+    ]
+  },
+  {
+    "name": "scene_door_080__00-090",
+    "caption": "Doorway width: 0.80 m; request 00-090. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_080/00-090"
+    ]
+  },
+  {
+    "name": "scene_door_080__00-180",
+    "caption": "Doorway width: 0.80 m; request 00-180. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_080/00-180"
+    ]
+  },
+  {
+    "name": "scene_door_060__00-000",
+    "caption": "Doorway width: 0.60 m; request 00-000. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_060/00-000"
+    ]
+  },
+  {
+    "name": "scene_door_060__00-090",
+    "caption": "Doorway width: 0.60 m; request 00-090. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_060/00-090"
+    ]
+  },
+  {
+    "name": "scene_door_060__00-180",
+    "caption": "Doorway width: 0.60 m; request 00-180. Start [-0.3, 0.025, 0.435] m; requested goal [3, 0.025, 0.435] m. Recorded status: rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "door_060/00-180"
+    ]
+  },
+  {
+    "name": "scene_straight_10_120__forward",
+    "caption": "Stairs: 0.10 m rise, 1.20 m width; request forward. Start [1.5, 0.6, 0.435] m; requested goal [8.1, 0.6, 1.635] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_10_120/forward"
+    ]
+  },
+  {
+    "name": "scene_straight_10_120__reverse",
+    "caption": "Stairs: 0.10 m rise, 1.20 m width; request reverse. Start [8.1, 0.6, 1.635] m; requested goal [1.5, 0.6, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_10_120/reverse"
+    ]
+  },
+  {
+    "name": "scene_straight_20_120__forward",
+    "caption": "Stairs: 0.20 m rise, 1.20 m width; request forward. Start [1.5, 0.6, 0.435] m; requested goal [9.3, 0.6, 2.835] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_20_120/forward"
+    ]
+  },
+  {
+    "name": "scene_straight_20_120__reverse",
+    "caption": "Stairs: 0.20 m rise, 1.20 m width; request reverse. Start [9.3, 0.6, 2.835] m; requested goal [1.5, 0.6, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_20_120/reverse"
+    ]
+  },
+  {
+    "name": "scene_straight_20_200__forward",
+    "caption": "Stairs: 0.20 m rise, 2.00 m width; request forward. Start [1.5, 1.0, 0.435] m; requested goal [9.3, 1.0, 2.835] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_20_200/forward"
+    ]
+  },
+  {
+    "name": "scene_straight_20_200__reverse",
+    "caption": "Stairs: 0.20 m rise, 2.00 m width; request reverse. Start [9.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_20_200/reverse"
+    ]
+  },
+  {
+    "name": "scene_straight_30_200__forward",
+    "caption": "Stairs: 0.30 m rise, 2.00 m width; request forward. Start [1.5, 1.0, 0.435] m; requested goal [9.3, 1.0, 2.835] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_30_200/forward"
+    ]
+  },
+  {
+    "name": "scene_straight_30_200__reverse",
+    "caption": "Stairs: 0.30 m rise, 2.00 m width; request reverse. Start [9.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "straight_30_200/reverse"
+    ]
+  },
+  {
+    "name": "scene_l_120__forward",
+    "caption": "L-shaped stairs (1.20 m wide); request forward. Start [1.5, 0.6, 0.435] m; requested goal [8.4, 7.5, 3.635] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "l_120/forward"
+    ]
+  },
+  {
+    "name": "scene_l_120__reverse",
+    "caption": "L-shaped stairs (1.20 m wide); request reverse. Start [8.4, 7.5, 3.635] m; requested goal [1.5, 0.6, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "l_120/reverse"
+    ]
+  },
+  {
+    "name": "scene_u_120__forward",
+    "caption": "U-shaped stairs (1.20 m wide); request forward. Start [1.5, 0.6, 0.435] m; requested goal [1.5, 2.2, 3.635] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "u_120/forward"
+    ]
+  },
+  {
+    "name": "scene_u_120__reverse",
+    "caption": "U-shaped stairs (1.20 m wide); request reverse. Start [1.5, 2.2, 3.635] m; requested goal [1.5, 0.6, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "u_120/reverse"
+    ]
+  },
+  {
+    "name": "scene_l_200__forward",
+    "caption": "L-shaped stairs (2.00 m wide); request forward. Start [1.5, 1.0, 0.435] m; requested goal [7.2, 6.7, 3.635] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "l_200/forward"
+    ]
+  },
+  {
+    "name": "scene_l_200__reverse",
+    "caption": "L-shaped stairs (2.00 m wide); request reverse. Start [7.2, 6.7, 3.635] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "l_200/reverse"
+    ]
+  },
+  {
+    "name": "scene_u_200__forward",
+    "caption": "U-shaped stairs (2.00 m wide); request forward. Start [1.5, 1.0, 0.435] m; requested goal [1.5, 3.4, 3.635] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "u_200/forward"
+    ]
+  },
+  {
+    "name": "scene_u_200__reverse",
+    "caption": "U-shaped stairs (2.00 m wide); request reverse. Start [1.5, 3.4, 3.635] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "u_200/reverse"
+    ]
+  },
+  {
+    "name": "scene_three_levels__forward",
+    "caption": "Three levels (4.80 m rise); request forward. Start [1.5, 1, 0.435] m; requested goal [1.5, 8.2, 5.235] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "three_levels/forward"
+    ]
+  },
+  {
+    "name": "scene_three_levels__reverse",
+    "caption": "Three levels (4.80 m rise); request reverse. Start [1.5, 8.2, 5.235] m; requested goal [1.5, 1, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "three_levels/reverse"
+    ]
+  },
+  {
+    "name": "scene_overlap_linked__forward",
+    "caption": "Overlapping floors; request forward. Start [2, 4, 0.435] m; requested goal [2, 4, 3.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "overlap_linked/forward"
+    ]
+  },
+  {
+    "name": "scene_overlap_linked__reverse",
+    "caption": "Overlapping floors; request reverse. Start [2, 4, 3.435] m; requested goal [2, 4, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "overlap_linked/reverse"
+    ]
+  },
+  {
+    "name": "scene_dual_stairs__forward",
+    "caption": "Two stair connections; request forward. Start [2, 3, 0.435] m; requested goal [10, 3, 2.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "dual_stairs/forward"
+    ]
+  },
+  {
+    "name": "scene_dual_stairs__reverse",
+    "caption": "Two stair connections; request reverse. Start [10, 3, 2.435] m; requested goal [2, 3, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "dual_stairs/reverse"
+    ]
+  },
+  {
+    "name": "scene_approach_20m__forward",
+    "caption": "20 m approach followed by stairs; request forward. Start [1.5, 1.0, 0.435] m; requested goal [28.3, 1.0, 2.835] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "approach_20m/forward"
+    ]
+  },
+  {
+    "name": "scene_approach_20m__reverse",
+    "caption": "20 m approach followed by stairs; request reverse. Start [28.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "approach_20m/reverse"
+    ]
+  },
+  {
+    "name": "scene_no_connection__forward",
+    "caption": "Disconnected floors; request forward. Start [2, 3, 0.435] m; requested goal [6, 3, 3.435] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "no_connection/forward"
+    ]
+  },
+  {
+    "name": "scene_no_connection__reverse",
+    "caption": "Disconnected floors; request reverse. Start [6, 3, 3.435] m; requested goal [2, 3, 0.435] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "no_connection/reverse"
+    ]
+  },
+  {
+    "name": "scene_missing_treads__forward",
+    "caption": "Missing stair treads; request forward. Start [1.5, 1.0, 0.435] m; requested goal [9.3, 1.0, 2.835] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "missing_treads/forward"
+    ]
+  },
+  {
+    "name": "scene_missing_treads__reverse",
+    "caption": "Missing stair treads; request reverse. Start [9.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "missing_treads/reverse"
+    ]
+  },
+  {
+    "name": "scene_sealed_entry__forward",
+    "caption": "Sealed stair entrance; request forward. Start [1.5, 1.0, 0.435] m; requested goal [9.3, 1.0, 2.835] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "sealed_entry/forward"
+    ]
+  },
+  {
+    "name": "scene_sealed_entry__reverse",
+    "caption": "Sealed stair entrance; request reverse. Start [9.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "sealed_entry/reverse"
+    ]
+  },
+  {
+    "name": "scene_low_headroom__forward",
+    "caption": "Insufficient overhead clearance; request forward. Start [1.5, 1.0, 0.435] m; requested goal [9.3, 1.0, 2.835] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "low_headroom/forward"
+    ]
+  },
+  {
+    "name": "scene_low_headroom__reverse",
+    "caption": "Insufficient overhead clearance; request reverse. Start [9.3, 1.0, 2.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rejected. Map resolution: 0.1 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "low_headroom/reverse"
+    ]
+  },
+  {
+    "name": "scene_step_35__forward",
+    "caption": "Single step: 0.35 m; request forward. Start [1.5, 1.0, 0.435] m; requested goal [5.2, 1.0, 0.785] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_35/forward"
+    ]
+  },
+  {
+    "name": "scene_step_35__reverse",
+    "caption": "Single step: 0.35 m; request reverse. Start [5.2, 1.0, 0.785] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_35/reverse"
+    ]
+  },
+  {
+    "name": "scene_step_40__forward",
+    "caption": "Single step: 0.40 m; request forward. Start [1.5, 1.0, 0.435] m; requested goal [5.3, 1.0, 0.835] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_40/forward"
+    ]
+  },
+  {
+    "name": "scene_step_40__reverse",
+    "caption": "Single step: 0.40 m; request reverse. Start [5.3, 1.0, 0.835] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_40/reverse"
+    ]
+  },
+  {
+    "name": "scene_step_45__forward",
+    "caption": "Single step: 0.45 m; request forward. Start [1.5, 1.0, 0.435] m; requested goal [5.4, 1.0, 0.885] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_45/forward"
+    ]
+  },
+  {
+    "name": "scene_step_45__reverse",
+    "caption": "Single step: 0.45 m; request reverse. Start [5.4, 1.0, 0.885] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_45/reverse"
+    ]
+  },
+  {
+    "name": "scene_step_50__forward",
+    "caption": "Single step: 0.50 m; request forward. Start [1.5, 1.0, 0.435] m; requested goal [5.5, 1.0, 0.935] m. Recorded status: probe_rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_50/forward"
+    ]
+  },
+  {
+    "name": "scene_step_50__reverse",
+    "caption": "Single step: 0.50 m; request reverse. Start [5.5, 1.0, 0.935] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: probe_rejected. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "step_50/reverse"
+    ]
+  },
+  {
+    "name": "scene_ramp_20__forward",
+    "caption": "Nominal ramp angle: 20\u00b0; request forward. Start [1.5, 1.0, 0.435] m; requested goal [10.5, 1.0, 2.635] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_20/forward"
+    ]
+  },
+  {
+    "name": "scene_ramp_20__reverse",
+    "caption": "Nominal ramp angle: 20\u00b0; request reverse. Start [10.5, 1.0, 2.635] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_20/reverse"
+    ]
+  },
+  {
+    "name": "scene_ramp_25__forward",
+    "caption": "Nominal ramp angle: 25\u00b0; request forward. Start [1.5, 1.0, 0.435] m; requested goal [10.5, 1.0, 3.235] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_25/forward"
+    ]
+  },
+  {
+    "name": "scene_ramp_25__reverse",
+    "caption": "Nominal ramp angle: 25\u00b0; request reverse. Start [10.5, 1.0, 3.235] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_25/reverse"
+    ]
+  },
+  {
+    "name": "scene_ramp_30__forward",
+    "caption": "Nominal ramp angle: 30\u00b0; request forward. Start [1.5, 1.0, 0.435] m; requested goal [10.5, 1.0, 3.885] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_30/forward"
+    ]
+  },
+  {
+    "name": "scene_ramp_30__reverse",
+    "caption": "Nominal ramp angle: 30\u00b0; request reverse. Start [10.5, 1.0, 3.885] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_30/reverse"
+    ]
+  },
+  {
+    "name": "scene_ramp_35__forward",
+    "caption": "Nominal ramp angle: 35\u00b0; request forward. Start [1.5, 1.0, 0.435] m; requested goal [10.5, 1.0, 4.635] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_35/forward"
+    ]
+  },
+  {
+    "name": "scene_ramp_35__reverse",
+    "caption": "Nominal ramp angle: 35\u00b0; request reverse. Start [10.5, 1.0, 4.635] m; requested goal [1.5, 1.0, 0.435] m. Recorded status: rust_pass. Map resolution: 0.05 m. All coordinates are original stored values. Static planning and geometry only.",
+    "requests": [
+      "ramp_35/reverse"
+    ]
+  }
+]

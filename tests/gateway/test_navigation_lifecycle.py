@@ -20,6 +20,8 @@ class _Gateway:
         self._navigation_goal_status_by_task: dict[str, dict] = {}
         self._navigation_goal_status_by_request: dict[str, dict] = {}
         self._latest_navigation_goal_status: dict | None = None
+        self._agent_task_bindings = {}
+        self._agent_request_bindings = {}
         self.events: list[dict] = []
 
     def push_event(self, event: dict) -> None:
@@ -71,6 +73,59 @@ def test_gateway_retains_terminal_status_by_request() -> None:
     assert result["status"]["lifecycle_state_name"] == "SUCCESS"
     assert result["status"]["phase"] == "REACHED"
     assert result["status"]["terminal"] is True
+
+
+def test_bound_agent_run_receives_navigation_status_and_terminal_activity() -> None:
+    gateway = _Gateway()
+    gateway._agent_task_bindings["navigation-task-1"] = {
+        "run_id": "agent-run-1",
+        "conversation_id": "conversation-1",
+        "turn_id": "turn-1",
+        "kind": "navigation",
+    }
+
+    handle_navigation_goal_status(gateway, _status(sequence=1))
+    handle_navigation_goal_status(
+        gateway,
+        _status(sequence=2, state=NavigationGoalState.REACHED),
+    )
+
+    activities = [event for event in gateway.events if event.get("type") == "agent_message"]
+    assert [event["metadata"]["activity_state"] for event in activities] == ["running", "completed"]
+    assert all(event["run_id"] == "agent-run-1" for event in activities)
+    assert all(event["conversation_id"] == "conversation-1" and event["turn_id"] == "turn-1" for event in activities)
+    assert activities[-1]["metadata"]["native"]["lifecycle_state_name"] == "SUCCESS"
+
+
+def test_bound_activity_uses_conversation_store_sequence_and_revision() -> None:
+    gateway = _Gateway()
+    stored: list[dict] = []
+
+    class _Store:
+        def append(self, *args, **kwargs):
+            stored.append({"args": args, "kwargs": kwargs})
+            return {
+                "conversation_id": args[0], "id": kwargs["message_id"], "seq": 17,
+                "revision": 1, "role": args[2], "text": args[3], "turn_id": args[1],
+                "run_id": kwargs["run_id"], "kind": kwargs["kind"], "created_at": 42.0,
+                "metadata": kwargs["metadata"],
+            }
+
+    class _Agent:
+        def _conversation_store(self):
+            return _Store()
+
+    gateway._all_modules = {"AgentPlannerModule": _Agent()}
+    gateway._agent_task_bindings["navigation-task-1"] = {
+        "run_id": "agent-run-1", "conversation_id": "conversation-1", "turn_id": "turn-1",
+        "kind": "navigation",
+    }
+
+    handle_navigation_goal_status(gateway, _status(sequence=1))
+
+    event = next(item for item in gateway.events if item["type"] == "agent_message")
+    assert stored and event["seq"] == 17 and event["revision"] == 1
+    assert event["conversation_id"] == "conversation-1" and event["turn_id"] == "turn-1"
 
 
 def test_gateway_retains_terminal_status_by_stable_task_identity() -> None:

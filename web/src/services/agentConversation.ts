@@ -44,21 +44,16 @@ export interface ConversationOptions {
   attachments: { accept: string; max_files: number; max_file_bytes: number }
 }
 export const knownConversationModels: ConversationOptions['models'] = [
-  { id: 'codex:gpt-6-astra', label: 'GPT-6 Astra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
-  { id: 'codex:gpt-6.1-sol', label: 'GPT-6.1 Sol · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
-  { id: 'codex:gpt-6.1-terra', label: 'GPT-6.1 Terra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
-  { id: 'codex:gpt-6-luna', label: 'GPT-6 Luna · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }], image_input: true },
-  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', configured: false, key_env: 'OPENAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'high', label: '高' }], image_input: true },
-  { id: 'qwen-plus', label: 'Qwen Plus', provider: 'qwen', configured: false, key_env: 'DASHSCOPE_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'off', label: '快速' }, { id: 'on', label: '深度思考' }], image_input: false },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'claude', configured: false, key_env: 'ANTHROPIC_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'kimi-k3', label: 'Kimi K3', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'high', label: '高' }], image_input: true },
+  ...([['gpt-6-astra', 'GPT-6 Astra'], ['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-6.1-terra', 'GPT-6.1 Terra'], ['gpt-6-luna', 'GPT-6 Luna']] as const).map(([id, label]) => ({ id: `codex:${id}`, label: `${label} · Codex`, provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }, { id: 'xhigh', label: '更高' }], image_input: true })),
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', configured: false, key_env: 'OPENAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'medium', label: '中' }, { id: 'high', label: '高' }, { id: 'xhigh', label: '更高' }, { id: 'max', label: '最高' }], image_input: true },
+  ...(['qwen-plus', 'qwen-flash', 'qwen3-max'] as const).map(id => ({ id, label: id === 'qwen3-max' ? 'Qwen3 Max' : id === 'qwen-flash' ? 'Qwen Flash' : 'Qwen Plus', provider: 'qwen', configured: false, key_env: 'DASHSCOPE_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'off', label: '快速' }, { id: 'on', label: '深度思考' }], image_input: false })),
+  ...([['claude-sonnet-5-5', 'Claude Sonnet 5.5'], ['claude-opus-5-5', 'Claude Opus 5.5'], ['claude-haiku-5-5', 'Claude Haiku 5.5']] as const).map(([id, label]) => ({ id, label, provider: 'claude', configured: false, key_env: 'ANTHROPIC_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true })),
+  { id: 'kimi-k2.6', label: 'Kimi K2.6', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'off', label: '快速' }, { id: 'on', label: '深度思考' }], image_input: true },
+  ...(['kimi-k3', 'kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'] as const).map(id => ({ id, label: id === 'kimi-k3' ? 'Kimi K3' : id === 'kimi-k3.1-pro' ? 'Kimi K3.1 Pro' : 'Kimi K3.1 Pro Highspeed', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }, { id: 'low', label: '低' }, { id: 'high', label: '高' }, { id: 'max', label: '最高' }], image_input: true })),
   { id: 'grok-4.7', label: 'Grok 4.7 · xAI', provider: 'grok', configured: false, key_env: 'XAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:grok', label: 'Grok Build · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:kilo', label: 'Kilo Code · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:kiro', label: 'Kiro CLI · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:opencode', label: 'OpenCode · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:registry', label: 'ACP Registry Agent', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
+  ...(['acp:grok', 'acp:kilo', 'acp:kiro', 'acp:opencode', 'acp:registry'] as const).map(id => ({ id, label: id === 'acp:grok' ? 'Grok Build · ACP' : id === 'acp:kilo' ? 'Kilo Code · ACP' : id === 'acp:kiro' ? 'Kiro CLI · ACP' : id === 'acp:opencode' ? 'OpenCode · ACP' : 'ACP Registry Agent', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false })),
 ]
+
 
 export interface ConversationPlan {
   title: string
@@ -451,6 +446,7 @@ export const conversationToolNames: Record<string, string> = {
   skills_list: '查找技能',
   read_assistant_memory: '查看偏好记忆',
   context_compaction: '整理对话上下文',
+  navigation_goal_status: '导航状态', inspection_task_event: '巡检状态',
   list_mcp_connections: '查看 MCP 连接',
   list_mcp_resources: '查看 MCP 资源',
   read_mcp_resource: '读取 MCP 资源',
@@ -473,7 +469,7 @@ export const conversationToolNames: Record<string, string> = {
   navigate_to: '前往目标位置', navigate_to_object: '前往目标物体', navigate_to_deg: '转向目标方向',
   find_object: '查找物体', detect_object: '识别物体', query_memory: '查询记忆', ask_user: '补充信息', done: '提交结果',
   list_saved_maps: '查询地图库', inspect_saved_map: '检查地图状态', view_saved_map: '查看三维地图',
-  find_inspection_points: '查找巡检点', preview_map_edits: '预览点云编辑',
+  find_inspection_points: '查找巡检点', get_inspection_status: '巡检状态', preview_map_edits: '预览点云编辑',
   save_map_copy: '另存地图', set_navigation_region: '保存导航区域',
   save_inspection_point: '保存巡检点', get_agent_status: '查询任务状态',
   follow_person: '跟随人员', cancel_agent_task: '取消当前任务',

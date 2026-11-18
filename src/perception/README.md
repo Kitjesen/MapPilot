@@ -83,6 +83,9 @@ not be duplicated in Product YAML.
 - `observation` publishes one Host-local `SemanticObservation`: Product session,
   publication sequence, camera generation, source times, fixed map identity,
   image/depth/intrinsics references, robot pose, detections and scene graph.
+  Its `depth_scale_m` and `depth_range_m` carry the same resolved unit conversion
+  and measurement range used by projection, so downstream candidate review does
+  not guess the camera's depth units. Unavailable evidence leaves both unset.
   Follow consumes this bundle directly. The separate `observation_image`,
   `robot_pose`, `detections_3d` and `scene_graph` ports remain for other consumers;
   they are projections of the same computation, not another perception pipeline.

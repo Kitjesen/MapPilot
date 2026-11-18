@@ -193,6 +193,11 @@ class PersonTracker:
     IDENTITY_OTHER_RETRY_MAX = 1.2
     IDENTITY_SCORE_IMPROVEMENT = 0.08
     REFERENCE_CROP_DUPLICATE_SIMILARITY = 0.98
+    # A selected target already has an operator-confirmed appearance anchor.
+    # Strong local evidence can resume it without waiting for a remote VLM;
+    # ambiguous candidates still use the existing identity-verification gate.
+    LOCAL_REACQUIRE_MIN_SIMILARITY = 0.65
+    LOCAL_REACQUIRE_MARGIN = 0.03
 
     def __init__(
         self, follow_distance: float = 1.5, lost_timeout: float = 5.0,
@@ -1244,6 +1249,18 @@ class PersonTracker:
         if not self._confirm_reacquire(best, force=True, crop=crop, feature=feature):
             self._dino_event = "confirming"
             return None
+        second_score = candidates[1][0] if len(candidates) > 1 else -1.0
+        local_match = (
+            not text_ranked
+            and score >= self.LOCAL_REACQUIRE_MIN_SIMILARITY
+            and (len(candidates) == 1 or score - second_score >= max(self._dino_margin, self.LOCAL_REACQUIRE_MARGIN))
+        )
+        if local_match:
+            self._reset_reacquire()
+            self._dino_similarity = score
+            self._dino_event = "matched_local"
+            self._reid_stats["dino_match"] += 1
+            return best
         crops = [value.copy() for value in self._reacquire_crops[-self.IDENTITY_EVIDENCE_FRAMES:]]
         crop_timestamps = list(self._reacquire_crop_timestamps[-self.IDENTITY_EVIDENCE_FRAMES:])
         self._pending_identity = {

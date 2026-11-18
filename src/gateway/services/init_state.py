@@ -52,6 +52,10 @@ def init_core_state(
     gw._navigation_goal_status_by_request = OrderedDict()
     gw._navigation_goal_status_sequences = {}
     gw._latest_navigation_goal_status = None
+    # Process-local link from native task facts back to the conversation run
+    # that admitted the task.  Native execution remains authoritative.
+    gw._agent_task_bindings = {}
+    gw._agent_request_bindings = {}
     gw._inspection_task_timeline = create_inspection_task_timeline()
     gw._mode = "manual"
     gw._last_path = []

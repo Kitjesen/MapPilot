@@ -1,0 +1,23 @@
+﻿issue_type,scene,title,request,status,expected,surface_angle_deg,max_voxel_rise_m,route_points,length_m,detour_ratio,backtrack_segments,max_turn_deg,z_span_m,public_failure_kind,public_failure,evidence
+route_shape,wave_40_400,波浪：振幅 0.4 m / 波长 4 m,along_forward,rust_pass,probe,32.09547843481783,0.050000000000000044,48,7.546676252210818,1.1533747115496438,6,180.0,0.8,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+route_shape,wave_40_400,波浪：振幅 0.4 m / 波长 4 m,along_reverse,rust_pass,probe,32.09547843481783,0.050000000000000044,48,7.546887018320807,1.1534069233861117,6,180.0,0.75,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+no_route,wave_gap,波浪途中 0.5 m 全宽断口,along_forward,no_route,blocked,21.40483342103871,0.05000000000000002,0,0,,,,,query,Rust surface route exhausted,全宽断口
+no_route,wave_gap,波浪途中 0.5 m 全宽断口,along_reverse,no_route,blocked,21.40483342103871,0.05000000000000002,0,0,,,,,query,Rust surface route exhausted,全宽断口
+no_route,wave_ceiling,波浪局部低顶棚,along_forward,no_route,blocked,8.911262389335949,0.05,0,0,,,,,query,Rust surface route exhausted,低顶棚净空
+no_route,wave_ceiling,波浪局部低顶棚,along_reverse,no_route,blocked,8.911262389335949,0.05,0,0,,,,,query,Rust surface route exhausted,低顶棚净空
+route_shape,crest_30,尖坡顶过渡 30°,along_forward,rust_pass,probe,30.00000000000015,0.050000000000000266,90,9.255855878611591,1.4239356998267445,19,180.0,1.75,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+route_shape,crest_30,尖坡顶过渡 30°,along_reverse,rust_pass,probe,30.00000000000015,0.050000000000000266,90,9.245816288757107,1.4223911932362245,19,180.0,1.75,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+route_shape,valley_30,V 形坡脚过渡 30°,along_forward,rust_pass,probe,30.000000000000245,0.050000000000000266,84,9.008642283111621,1.3859039641632307,17,180.0,1.65,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+route_shape,valley_30,V 形坡脚过渡 30°,along_reverse,rust_pass,probe,30.000000000000245,0.050000000000000266,84,8.998602693257144,1.3843594575727118,17,180.0,1.65,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+no_route,wave_upper,波浪下层与无连接上层,upper_forward,no_route,blocked,8.911262389335949,0.05,0,0,,,,,query,Rust surface route exhausted,无连接上层
+no_route,wave_upper,波浪下层与无连接上层,upper_reverse,no_route,blocked,8.911262389335949,0.05,0,0,,,,,query,Rust surface route exhausted,无连接上层
+no_route,cross_55,横坡 55°：沿等高线行走,along_forward,no_route,probe,55.00000000000003,0.10000000000000009,0,0,,,,,query,Rust surface route exhausted,名义站姿无路线；提高站姿 5/10 cm 通过
+no_route,cross_55,横坡 55°：沿等高线行走,along_reverse,no_route,probe,55.00000000000003,0.10000000000000009,0,0,,,,,query,Rust surface route exhausted,名义站姿无路线；提高站姿 5/10 cm 通过
+no_route,cross_65,横坡 65°：沿等高线行走,along_forward,no_route,probe,65.00000000000006,0.15000000000000013,0,0,,,,,query,Rust surface route exhausted,65°横坡名义站姿无路线
+no_route,cross_65,横坡 65°：沿等高线行走,along_reverse,no_route,probe,65.00000000000006,0.15000000000000013,0,0,,,,,query,Rust surface route exhausted,65°横坡名义站姿无路线
+no_route,wave_35_120,短波深起伏：振幅 0.35 m / 波长 1.2 m,along_forward,no_route,probe,60.89441962176243,0.10000000000000003,0,0,,,,,query,Rust surface route exhausted,沿程最大坡度约 60.9°，高于当前 30°路线坡度上限
+no_route,wave_35_120,短波深起伏：振幅 0.35 m / 波长 1.2 m,along_reverse,no_route,probe,60.89441962176243,0.10000000000000003,0,0,,,,,query,Rust surface route exhausted,沿程最大坡度约 60.9°，高于当前 30°路线坡度上限
+no_route,wave_50_200,大起伏：振幅 0.50 m / 波长 2.0 m,along_forward,no_route,probe,57.33111423120968,0.1,0,0,,,,,query,Rust surface route exhausted,沿程最大坡度约 57.3°，高于当前 30°路线坡度上限
+no_route,wave_50_200,大起伏：振幅 0.50 m / 波长 2.0 m,along_reverse,no_route,probe,57.33111423120968,0.1,0,0,,,,,query,Rust surface route exhausted,沿程最大坡度约 57.3°，高于当前 30°路线坡度上限
+route_shape,chicane_ramp,20° 坡面连续 S 弯,along_forward,rust_pass,probe,20.000000000000213,0.050000000000000266,54,9.22533023466886,1.3347285088521856,0,78.69006752597983,2.3500000000000005,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核
+route_shape,chicane_ramp,20° 坡面连续 S 弯,along_reverse,rust_pass,probe,20.000000000000213,0.050000000000000266,63,9.550548008796412,1.3817812889339465,0,78.69006752597983,2.3500000000000005,,,当前几何通过；表面图离散抖动或绕障绕行质量需复核

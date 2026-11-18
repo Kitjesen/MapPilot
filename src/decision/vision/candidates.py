@@ -8,12 +8,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from runtime.msgs.semantic import Detection3D, SemanticObservation
+from runtime.tf.frames import map_frame_id
 
 
 def candidate_geometry(observation: SemanticObservation | None, box: list[float], position: list[float]) -> dict:
     """Summarize the supplied observation; never fetch a different depth frame."""
     point = np.asarray(position, dtype=float)
-    geometry = {"frame_id": "map", "position_m": None, "camera_position_m": None, "distance_m": None,
+    geometry = {"frame_id": map_frame_id(), "position_m": None, "camera_position_m": None, "distance_m": None,
                 "depth": {"available": False, "reason": "missing_depth"}}
     if observation is None:
         return geometry

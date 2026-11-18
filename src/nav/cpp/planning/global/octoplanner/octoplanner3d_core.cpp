@@ -471,6 +471,11 @@ PlanResult runPreparedPlanner(
   result.rust_fallback = search_info.rust_fallback;
   result.rust_failure_kind = search_info.rust_failure_kind;
   result.rust_failure = search_info.rust_failure;
+  result.rust_failure_stage = search_info.rust_failure_stage;
+  result.rust_failure_segment = search_info.rust_failure_segment;
+  result.rust_failure_cell_x = search_info.rust_failure_cell_x;
+  result.rust_failure_cell_y = search_info.rust_failure_cell_y;
+  result.rust_failure_cell_z = search_info.rust_failure_cell_z;
   result.rust_query_failures = search_info.rust_query_failures;
   result.rust_geometry_rejections = search_info.rust_geometry_rejections;
   result.rust_other_failures = search_info.rust_other_failures;

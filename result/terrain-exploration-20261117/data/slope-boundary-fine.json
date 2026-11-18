@@ -1,0 +1,162 @@
+[
+  {
+    "angle_deg": 53,
+    "request": "nominal_forward",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5129434999998921
+  },
+  {
+    "angle_deg": 53,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.9294100999998136
+  },
+  {
+    "angle_deg": 53,
+    "request": "nominal_reverse",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5498991999997997
+  },
+  {
+    "angle_deg": 53,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.895592699999952
+  },
+  {
+    "angle_deg": 54,
+    "request": "nominal_forward",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.4708215000000564
+  },
+  {
+    "angle_deg": 54,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 0.8692429000000175
+  },
+  {
+    "angle_deg": 54,
+    "request": "nominal_reverse",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.4825619999999162
+  },
+  {
+    "angle_deg": 54,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 1.005543100000068
+  },
+  {
+    "angle_deg": 55,
+    "request": "nominal_forward",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5496746999999687
+  },
+  {
+    "angle_deg": 55,
+    "request": "raised05_forward",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 1.0361953999999969
+  },
+  {
+    "angle_deg": 55,
+    "request": "nominal_reverse",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5598633000001882
+  },
+  {
+    "angle_deg": 55,
+    "request": "raised05_reverse",
+    "status": "rust_pass",
+    "ok": true,
+    "rust_failure_kind": "none",
+    "rust_failure": "",
+    "path_points": 2,
+    "elapsed_s": 1.141534399999955
+  },
+  {
+    "angle_deg": 56,
+    "request": "nominal_forward",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.7355716000001848
+  },
+  {
+    "angle_deg": 56,
+    "request": "raised05_forward",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5053711000000476
+  },
+  {
+    "angle_deg": 56,
+    "request": "nominal_reverse",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5232533999999305
+  },
+  {
+    "angle_deg": 56,
+    "request": "raised05_reverse",
+    "status": "no_route",
+    "ok": false,
+    "rust_failure_kind": "query",
+    "rust_failure": "Rust surface route exhausted",
+    "path_points": 0,
+    "elapsed_s": 0.5860067999999501
+  }
+]

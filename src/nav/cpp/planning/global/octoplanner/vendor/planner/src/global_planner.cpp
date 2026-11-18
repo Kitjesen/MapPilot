@@ -22,6 +22,19 @@ namespace global_planner
         constexpr double kMetricToleranceEpsilonM = 1e-6;
         constexpr double kPi = 3.14159265358979323846;
 
+        const char *queryStageName(std::uint32_t stage) {
+            switch (stage) {
+                case LT_MLS_QUERY_GOAL_ATTACH: return "goal_attach";
+                case LT_MLS_QUERY_START_ATTACH: return "start_attach";
+                case LT_MLS_QUERY_ENDPOINT_ATTACH: return "endpoint_attach";
+                case LT_MLS_QUERY_EDGE_SEARCH: return "edge_search";
+                case LT_MLS_QUERY_ROUTE_GEOMETRY: return "route_geometry";
+                case LT_MLS_QUERY_BUDGET: return "budget";
+                case LT_MLS_QUERY_CANCELLED: return "cancelled";
+                default: return "none";
+            }
+        }
+
         double heading(const PointPose &from, const PointPose &to) {
             return std::hypot(to.x-from.x, to.y-from.y)>1e-9
                 ? std::atan2(to.y-from.y, to.x-from.x) : from.yaw.value_or(to.yaw.value_or(0.0));
@@ -583,32 +596,39 @@ namespace global_planner
                 auto query = artifact_->rust_graph->metricQuery(
                     start_point_,goal_point_,snap_search_radius_cells_,max_iterations_,geometry);
                 using QueryStatus = mls::PreparedArtifactHandle::QueryStatus;
+                search_info_.rust_failure_stage = queryStageName(query.failure_stage);
+                search_info_.rust_failure_segment = query.failure_segment;
+                search_info_.rust_failure_cell_x = query.failure_cell.x;
+                search_info_.rust_failure_cell_y = query.failure_cell.y;
+                search_info_.rust_failure_cell_z = query.failure_cell.z;
                 if (query.status == QueryStatus::Cancelled) {
                     search_info_.outcome = SearchInfo::Outcome::Cancelled;
                     return false;
                 }
                 if (query.status == QueryStatus::Budget) {
                     search_info_.outcome = SearchInfo::Outcome::IterationLimit;
-                    return false;
-                }
-                if (query.status == QueryStatus::GoalUnreachable) {
-                    search_info_.outcome = SearchInfo::Outcome::Exhausted;
                     search_info_.rust_failure_kind = "query";
-                    search_info_.rust_failure = "Rust goal has no admissible surface";
-                    ++search_info_.rust_query_failures;
-                    endpoint_resolution_.failure = EndpointResolutionInfo::Failure::GoalSnapExhausted;
+                    search_info_.rust_failure = "Rust surface route budget exhausted";
                     return false;
                 }
-                if (query.status == QueryStatus::Exhausted ||
+                if (query.status == QueryStatus::GoalUnreachable ||
+                    query.status == QueryStatus::Exhausted ||
                     query.status == QueryStatus::StartUnreachable) {
                     const bool no_start = query.status == QueryStatus::StartUnreachable;
+                    const bool no_goal = query.status == QueryStatus::GoalUnreachable;
                     search_info_.outcome = SearchInfo::Outcome::Exhausted;
                     search_info_.rust_failure_kind = "query";
-                    search_info_.rust_failure = no_start
-                        ? "Rust start has no admissible surface" : "Rust surface route exhausted";
+                    search_info_.rust_failure = no_goal
+                        ? "Rust goal has no admissible surface"
+                        : no_start ? "Rust start has no admissible surface"
+                                   : std::string("Rust surface route exhausted at ") +
+                                         search_info_.rust_failure_stage;
                     ++search_info_.rust_query_failures;
                     if (no_start) {
                         endpoint_resolution_.failure = EndpointResolutionInfo::Failure::StartSnapExhausted;
+                    }
+                    if (no_goal) {
+                        endpoint_resolution_.failure = EndpointResolutionInfo::Failure::GoalSnapExhausted;
                     }
                     // Keep the public blocked-start diagnosis without launching another planner.
                     metric.actual_start = 0;
@@ -2219,17 +2239,39 @@ namespace global_planner
                 from.z() + t * (to.z() - from.z()));
             const auto failure = queryWorld(point, robot_radius_, ground_support_ && require_support, sampled_body, yaw);
             if (failure == TraversabilityFailure::None) continue;
+            bool departure = false;
+            if (failure == TraversabilityFailure::GroundSupport && has_start_ &&
+                from == octomap::point3d(start_point_.x,start_point_.y,start_point_.z) &&
+                artifact_ && artifact_->rust_graph) {
+                const auto cell = worldToGrid(point.x(),point.y(),point.z());
+                if (!artifact_->rust_graph->below(cell.x,cell.y,cell.z)) {
+                    const double initial_yaw = start_point_.yaw.value_or(yaw);
+                    for (double sign : {-1.0,1.0}) {
+                        const octomap::point3d center = from + octomap::point3d(
+                            sign*body_offset_m_*std::cos(initial_yaw),
+                            sign*body_offset_m_*std::sin(initial_yaw),0);
+                        departure = departure || std::hypot(point.x()-center.x(),point.y()-center.y()) <= robot_radius_;
+                    }
+                }
+            }
             // A step connects two supported stances. Its body moves continuously,
             // while the observed tread height changes discontinuously. Keep the
             // actual body sweep, but do not require its interpolated height to
             // remain the nominal standing height above either tread.
             if (failure != TraversabilityFailure::GroundSupport ||
-                std::abs(to.z() - from.z()) < 1e-7 || i == 0 || i == count ||
-                queryWorld(point, robot_radius_, false, sampled_body, yaw) != TraversabilityFailure::None) {
+                i == 0 || i == count) {
                 if (failure_out) *failure_out = failure;
                 if (failed_point) *failed_point = point;
                 return false;
             }
+            const auto clearance = queryWorld(point, robot_radius_, false, sampled_body, yaw);
+            if (clearance != TraversabilityFailure::None ||
+                (!departure && std::abs(to.z()-from.z()) < 1e-7)) {
+                if (failure_out) *failure_out = clearance != TraversabilityFailure::None ? clearance : failure;
+                if (failed_point) *failed_point = point;
+                return false;
+            }
+            if (departure) continue;
             bool supported = false;
             const double lower_z = std::min(from.z(), to.z());
             const double upper_z = std::max(from.z(), to.z());

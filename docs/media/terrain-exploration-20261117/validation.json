@@ -1,0 +1,15 @@
+{
+  "scenes": 36,
+  "requests": 86,
+  "rust_geometry_pass": 72,
+  "no_route": 14,
+  "figures": 39,
+  "formats": [
+    "PNG 600 dpi",
+    "PDF",
+    "SVG"
+  ],
+  "original_82_paths_unchanged": true,
+  "prior_32_stair_paths_unchanged": true,
+  "physical_motion_tested": false
+}

@@ -1,0 +1,9 @@
+{
+  "python": "3.10.12",
+  "matplotlib": "3.10.9",
+  "numpy": "1.26.4",
+  "font": "DejaVu Sans",
+  "png_dpi": 600,
+  "pdf_fonttype": 42,
+  "svg_fonttype": "none"
+}

@@ -14,6 +14,16 @@ pub(crate) enum QueryError {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum QueryStage {
+    #[default]
+    None,
+    StartAttach,
+    GoalAttach,
+    EndpointAttach,
+    EdgeSearch,
+}
+
 pub(crate) struct Budget {
     pub(crate) remaining: usize,
 }
@@ -594,6 +604,29 @@ pub(crate) fn plan_budgeted(
     max_snap_cells: i32,
     budget: &mut Budget,
     geometry_checked: bool,
+    check: impl FnMut(SurfaceCell, SurfaceCell, u32) -> i32,
+) -> Result<Vec<SurfaceCell>, QueryError> {
+    let mut stage = QueryStage::None;
+    plan_budgeted_with_stage(
+        state,
+        start,
+        goal,
+        max_snap_cells,
+        budget,
+        geometry_checked,
+        &mut stage,
+        check,
+    )
+}
+
+pub(crate) fn plan_budgeted_with_stage(
+    state: &PlannerState,
+    start: SurfaceCell,
+    goal: SurfaceCell,
+    max_snap_cells: i32,
+    budget: &mut Budget,
+    geometry_checked: bool,
+    stage: &mut QueryStage,
     mut check: impl FnMut(SurfaceCell, SurfaceCell, u32) -> i32,
 ) -> Result<Vec<SurfaceCell>, QueryError> {
     checked(&mut check, start, goal, 3)?;
@@ -604,17 +637,29 @@ pub(crate) fn plan_budgeted(
     // Anchor the lead at the nearest executable surface. Other entries are
     // needed only when that surface cannot reach the goal.
     for all in [false, true] {
+        *stage = QueryStage::EndpointAttach;
         let start_added = starts.extend(surface, all, budget, &mut check)?;
         let goal_added = goals.extend(surface, all, budget, &mut check)?;
         if starts.seeds.is_empty() {
+            *stage = QueryStage::StartAttach;
             return Err(QueryError::StartUnreachable);
         }
         if goals.seeds.is_empty() {
+            *stage = QueryStage::GoalAttach;
             return Err(QueryError::GoalUnreachable);
         }
         if all && !start_added && !goal_added {
             return Err(QueryError::Exhausted);
         }
+        if goals.seeds.is_empty() {
+            *stage = QueryStage::GoalAttach;
+            return Err(QueryError::Exhausted);
+        }
+        if all && !start_added && !goal_added {
+            *stage = QueryStage::EndpointAttach;
+            return Err(QueryError::Exhausted);
+        }
+        *stage = QueryStage::EdgeSearch;
         let goal_costs = goals.seeds.iter().copied().collect::<HashMap<_, _>>();
         let radius = f64::from(max_snap_cells);
         if !all && squared_distance(start, goal) as f64 <= 4.0 * radius * radius {

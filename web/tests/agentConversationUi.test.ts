@@ -117,6 +117,14 @@ test('an empty history stays compact through background refresh', () => {
   assert.match(html({ loading: true, snapshot: null }), /读取中/)
 })
 
+test('conversation title editing is separate from history and Bot naming', () => {
+  const markup = html({ snapshot: { conversation_id: 'follow', metadata: { title: '人员跟随' },
+    messages: [{ id: 'one', seq: 1, role: 'user', turn_id: 'turn', text: '跟随' }], turns: [] } })
+  assert.match(markup, /aria-label="修改会话标题"[^>]*>[\s\S]*?人员跟随/)
+  assert.match(markup, /aria-label="会话历史"/)
+  assert.match(markup, /Bot 名称与外观/)
+})
+
 test('a quote is rendered beside a clean question draft and linked from sent history', () => {
   const answer = { id: 'answer', seq: 1, role: 'assistant', turn_id: 'one', text: '**地图查看完成。**\n\n[查看使用指南](https://example.com/guide)' }
   const markup = html({ draft: '补面具体怎么做？', replyTo: 'answer', snapshot: { messages: [answer], turns: [] } })

@@ -17,6 +17,8 @@ export function FollowSelectionCard({ task }: { task: FollowTaskRef }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
+  const [comparison, setComparison] = useState<'original' | 'filtered'>('filtered')
+  const [inspected, setInspected] = useState('')
   const latest = useRef<FollowSelection | null>(null)
   const root = useRef<HTMLElement>(null)
   const { follow_task_id, product_session_id } = task
@@ -52,7 +54,10 @@ export function FollowSelectionCard({ task }: { task: FollowTaskRef }) {
   useEffect(() => {
     if (pending && reviewed && view?.image) root.current?.scrollIntoView({ block: 'nearest' })
   }, [pending, reviewed, view?.image])
-  const candidates = reviewed ? (view.candidates ?? []).filter(item => item.kind !== 'non_person') : []
+  const candidates = (view?.candidates ?? []).map((item, index) => ({ ...item, number: index + 1 }))
+  const excluded = reviewed ? candidates.filter(item => item.kind === 'non_person') : []
+  const retained = reviewed ? candidates.filter(item => item.kind !== 'non_person') : []
+  const visible = comparison === 'original' ? candidates : retained
   const chosen = view?.confirmed_target_id || selected
   const act = async (cancel: boolean) => {
     if (busy || !pending) return
@@ -68,31 +73,50 @@ export function FollowSelectionCard({ task }: { task: FollowTaskRef }) {
   const title = view?.terminal ? '选人已结束' : view?.state === 'cancelling' ? '正在取消'
     : view?.confirmation_required === false ? '已确认跟踪人员'
     : view?.review_state === 'reviewing' ? '正在核验候选' : '确认跟踪对象'
-  return <section ref={root} className={styles.card} aria-label="选人确认卡片">
-    <header><strong>{title}</strong><span>确认画面</span></header>
+  return <section ref={root} className={styles.card} data-follow-review aria-label="选人确认卡片">
+    <header><strong>{title}</strong><span>{chosen ? `人员 ${candidates.find(item => item.target_id === chosen)?.number ?? '—'}` : '选中后确认'}</span></header>
+    {view?.image && <div className={styles.comparison} role="group" aria-label="筛选前后对比">
+      <button type="button" aria-pressed={comparison === 'original'} onClick={() => { setComparison('original'); setInspected('') }}>
+        原始候选 <span>{candidates.length}</span></button>
+      <button type="button" aria-pressed={comparison === 'filtered'} disabled={!reviewed}
+        onClick={() => { setComparison('filtered'); setInspected('') }}>过滤结果 <span>{reviewed ? retained.length : '…'}</span></button>
+      <span className={styles.reviewCount}>{reviewed ? `已排除 ${excluded.length}` : '正在核验'}</span>
+    </div>}
     {view?.image && view.width && view.height ? <div className={styles.frame} style={{ aspectRatio: `${view.width} / ${view.height}` }}>
       <img src={view.image} alt="机器人相机中的候选人员" width={view.width} height={view.height} />
-      {candidates.map((candidate, index) => <button key={candidate.target_id} type="button"
-        className={styles.box} data-selected={chosen === candidate.target_id} data-uncertain={candidate.kind !== 'person'}
+      {visible.map(candidate => <button key={candidate.target_id} type="button"
+        className={styles.box} data-selected={comparison === 'filtered' && chosen === candidate.target_id}
+        data-uncertain={comparison === 'filtered' && candidate.kind !== 'person'} data-inspected={inspected === candidate.target_id}
         data-edge={candidate.bbox[2] / view.width! > .95 ? 'right' : undefined}
-        disabled={!pending || busy || candidate.kind !== 'person'} aria-pressed={chosen === candidate.target_id}
-        aria-label={`选择人员 ${index + 1}`} onClick={() => { setSelected(candidate.target_id); setError('') }}
+        disabled={comparison === 'original' || !pending || busy || candidate.kind !== 'person'} aria-pressed={comparison === 'filtered' && chosen === candidate.target_id}
+        aria-label={comparison === 'original' ? `原始候选 ${candidate.number}` : `选择人员 ${candidate.number}`}
+        onClick={() => { setSelected(candidate.target_id); setError('') }}
         style={{ left: `${candidate.bbox[0] / view.width! * 100}%`, top: `${candidate.bbox[1] / view.height! * 100}%`,
           width: `${(candidate.bbox[2] - candidate.bbox[0]) / view.width! * 100}%`,
           height: `${(candidate.bbox[3] - candidate.bbox[1]) / view.height! * 100}%` }}>
-        <span>{chosen === candidate.target_id && <Check size={12} />}{candidate.kind === 'person' ? `人员 ${index + 1}` : '待核实'}</span>
+        <span>{comparison === 'filtered' && chosen === candidate.target_id && <Check size={12} />}
+          {comparison === 'original' ? `候选 ${candidate.number}` : candidate.kind === 'person' ? `人员 ${candidate.number}` : `待核实 ${candidate.number}`}</span>
       </button>)}
     </div> : view?.terminal || view?.confirmation_required === false ? null
       : <div className={styles.waiting}>{reasons[view?.reason ?? ''] ?? (view?.found === false ? '无法读取这次跟随' : '等待候选画面')}</div>}
+    {excluded.length > 0 && <details className={styles.exclusions}>
+      <summary>查看排除原因 <span>{excluded.length}</span></summary>
+      <ul>{excluded.map(candidate => <li key={candidate.target_id}>
+        <button type="button" aria-pressed={inspected === candidate.target_id} onClick={() => {
+          setComparison('original'); setInspected(candidate.target_id)
+        }}>候选 {candidate.number}<span>已排除</span></button>
+        <span>{candidate.reason || '核验结果：非行人'}</span>
+      </li>)}</ul>
+    </details>}
     {pending && <footer>
-      <button type="button" className={styles.confirm} disabled={busy || !candidates.some(item => item.target_id === selected && item.kind === 'person')}
+      <button type="button" className={styles.confirm} disabled={comparison === 'original' || busy || !reviewed || !retained.some(item => item.target_id === selected && item.kind === 'person')}
         onClick={() => { void act(false) }}>{busy ? '正在提交…' : '确认跟踪'}</button>
       <button type="button" disabled={busy} onClick={() => { void act(true) }}>取消</button>
       <button type="button" className={styles.refresh} disabled={busy} onClick={() => {
-        setSelected(''); setView(null); setError(''); setRevision(value => value + 1)
+        setSelected(''); setView(null); setError(''); setComparison('filtered'); setInspected(''); setRevision(value => value + 1)
       }}><RotateCw size={13} />刷新画面</button>
     </footer>}
-    {(error || view?.review_state === 'unavailable' || reviewed && !candidates.some(item => item.kind === 'person')) &&
+    {(error || view?.review_state === 'unavailable' || reviewed && !retained.some(item => item.kind === 'person')) &&
       <p role="status">{error || (view?.review_state === 'unavailable' ? '候选核验不可用，请稍后刷新' : '暂未确认可跟随的人员')}</p>}
   </section>
 }

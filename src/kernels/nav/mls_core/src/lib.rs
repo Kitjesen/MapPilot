@@ -713,9 +713,21 @@ pub struct LtMlsPoseBuffer {
     pub ptr: *mut LtMlsPose,
     pub len: u64,
     pub cap: u64,
+    pub failure_stage: u32,
+    pub failure_segment: i32,
+    pub failure_cell: LtMlsCell,
 }
 
-pub const LT_MLS_ABI_VERSION: u32 = 10;
+pub const LT_MLS_QUERY_NONE: u32 = 0;
+pub const LT_MLS_QUERY_GOAL_ATTACH: u32 = 1;
+pub const LT_MLS_QUERY_START_ATTACH: u32 = 2;
+pub const LT_MLS_QUERY_ENDPOINT_ATTACH: u32 = 3;
+pub const LT_MLS_QUERY_EDGE_SEARCH: u32 = 4;
+pub const LT_MLS_QUERY_ROUTE_GEOMETRY: u32 = 5;
+pub const LT_MLS_QUERY_BUDGET: u32 = 6;
+pub const LT_MLS_QUERY_CANCELLED: u32 = 7;
+
+pub const LT_MLS_ABI_VERSION: u32 = 11;
 
 #[no_mangle]
 pub extern "C" fn lt_mls_abi_version() -> u32 {
@@ -2099,13 +2111,32 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     let config = geometry.config;
     let output = &mut *route;
     lt_mls_free_pose_buffer(output);
+    let mut set_failure = |stage: u32, segment: i32, cell: SurfaceCell| {
+        output.failure_stage = stage;
+        output.failure_segment = segment;
+        output.failure_cell = LtMlsCell {
+            x: cell.x,
+            y: cell.y,
+            z: cell.z,
+        };
+    };
     let mut budget = query::Budget {
         remaining: max_iterations as usize,
     };
     let goal = match checker.resolve_goal(start, goal, max_snap_cells, &mut budget) {
         Ok(goal) => goal,
-        Err(query::QueryError::Budget) => return 2,
-        Err(query::QueryError::Cancelled) => return 3,
+        Err(query::QueryError::Exhausted) => {
+            set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, SurfaceCell::new(0, 0, 0));
+            return 1;
+        }
+        Err(query::QueryError::Budget) => {
+            set_failure(LT_MLS_QUERY_BUDGET, -1, SurfaceCell::new(0, 0, 0));
+            return 2;
+        }
+        Err(query::QueryError::Cancelled) => {
+            set_failure(LT_MLS_QUERY_CANCELLED, -1, SurfaceCell::new(0, 0, 0));
+            return 3;
+        }
         Err(_) => return 5,
     };
     let cell = |pose: LtMlsPose| {
@@ -2119,11 +2150,21 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
     let goal_attachment = checker.attachment(goal.point.native());
     let start_cell = start_attachment.unwrap_or_else(|| cell(start));
     let goal_cell = goal_attachment.unwrap_or_else(|| cell(goal));
+    // A supported measured stance must not be lowered to the nominal height during search.
+    let measured_height = checker
+        .observed_floor(start.point.native())
+        .map(|z| start.point.z - (z as f64 + 1.0) * config.resolution)
+        .unwrap_or(config.support_height);
+    let height = if (measured_height - config.support_height).abs() < 1e-6 {
+        config.support_height
+    } else {
+        measured_height
+    };
     let pose = |cell: SurfaceCell| LtMlsPose {
         point: LtMlsPoint {
             x: (cell.x as f64 + 0.5) * config.resolution,
             y: (cell.y as f64 + 0.5) * config.resolution,
-            z: (cell.z as f64 + 1.0) * config.resolution + config.support_height,
+            z: (cell.z as f64 + 1.0) * config.resolution + height,
         },
         ..LtMlsPose::default()
     };
@@ -2139,13 +2180,15 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
         |cell: SurfaceCell| goal_attachment == Some(cell) && same_xy(goal.point, pose(cell).point);
     let mut rejected = HashSet::<(SurfaceCell, SurfaceCell, u32)>::new();
     loop {
-        let path = match query::plan_budgeted(
+        let mut query_stage = query::QueryStage::None;
+        let path = match query::plan_budgeted_with_stage(
             &(*handle).state,
             start_cell,
             goal_cell,
             max_snap_cells,
             &mut budget,
             true,
+            &mut query_stage,
             |a, b, kind| {
                 if geometry
                     .cancel
@@ -2180,11 +2223,32 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
             },
         ) {
             Ok(path) => path,
-            Err(query::QueryError::Exhausted) => return 1,
-            Err(query::QueryError::Budget) => return 2,
-            Err(query::QueryError::Cancelled) => return 3,
-            Err(query::QueryError::StartUnreachable) => return 4,
-            Err(query::QueryError::GoalUnreachable) => return 5,
+            Err(query::QueryError::Exhausted) => {
+                let stage = match query_stage {
+                    query::QueryStage::StartAttach => LT_MLS_QUERY_START_ATTACH,
+                    query::QueryStage::GoalAttach => LT_MLS_QUERY_GOAL_ATTACH,
+                    query::QueryStage::EndpointAttach => LT_MLS_QUERY_ENDPOINT_ATTACH,
+                    _ => LT_MLS_QUERY_EDGE_SEARCH,
+                };
+                set_failure(stage, -1, start_cell);
+                return 1;
+            }
+            Err(query::QueryError::StartUnreachable) => {
+                set_failure(LT_MLS_QUERY_START_ATTACH, -1, start_cell);
+                return 4;
+            }
+            Err(query::QueryError::GoalUnreachable) => {
+                set_failure(LT_MLS_QUERY_GOAL_ATTACH, -1, goal_cell);
+                return 5;
+            }
+            Err(query::QueryError::Budget) => {
+                set_failure(LT_MLS_QUERY_BUDGET, -1, start_cell);
+                return 2;
+            }
+            Err(query::QueryError::Cancelled) => {
+                set_failure(LT_MLS_QUERY_CANCELLED, -1, start_cell);
+                return 3;
+            }
         };
         let mut poses = Vec::with_capacity(path.len() + 2);
         poses.push(start);
@@ -2211,8 +2275,26 @@ pub unsafe extern "C" fn lt_mls_artifact_query_metric(
                 .map_or(-3, |_| 0);
         }
         if checked.failure_kind == route_check::CANCELLED {
+            set_failure(
+                LT_MLS_QUERY_CANCELLED,
+                checked.failed_segment,
+                SurfaceCell::new(
+                    checked.failed_cell.x,
+                    checked.failed_cell.y,
+                    checked.failed_cell.z,
+                ),
+            );
             return 3;
         }
+        set_failure(
+            LT_MLS_QUERY_ROUTE_GEOMETRY,
+            checked.failed_segment,
+            SurfaceCell::new(
+                checked.failed_cell.x,
+                checked.failed_cell.y,
+                checked.failed_cell.z,
+            ),
+        );
         let index = checked.failed_segment.max(0) as usize;
         let edge = keys[index];
         if !rejected.insert(edge) {
@@ -2564,6 +2646,7 @@ mod tests {
                     clearance_cells: 11,
                     closing_passes: 4,
                     closing_radius_cells: 4.0,
+                    ..SurfaceConfig::default()
                 },
                 GraphConfig {
                     node_spacing_cells: 2,
@@ -2737,6 +2820,103 @@ mod tests {
                 || p[0].point.z == p[1].point.z));
             let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
             assert_eq!(checker.check_poses(poses).valid, 1);
+            unsafe { lt_mls_free_pose_buffer(&mut route) };
+        }
+    }
+
+    #[test]
+    fn standing_height() {
+        let mut occupied = Vec::new();
+        for x in 0..24 {
+            for y in -12..12 {
+                let top = ((y as f64 + 0.5) * 55_f64.to_radians().tan()).round() as i32;
+                for z in -20..top {
+                    occupied.push(SurfaceCell::new(x, y, z));
+                }
+            }
+        }
+        let state = PlannerState::new(
+            occupied,
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 16,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig {
+                max_link_cells: 9,
+                max_step_cells: 9,
+                horizontal_hop_cells: 2,
+                max_slope: 0.57735026,
+                ..GraphConfig::default()
+            },
+        );
+        let handle = LtMlsArtifactHandle { state, revision: 1 };
+        for height in [0.535, 0.585] {
+            let start = LtMlsPose {
+                point: LtMlsPoint {
+                    x: 0.225,
+                    y: 0.025,
+                    z: height,
+                },
+                yaw: 0.0,
+                has_yaw: 1,
+            };
+            let goal = LtMlsPose {
+                point: LtMlsPoint {
+                    x: 0.975,
+                    ..start.point
+                },
+                ..start
+            };
+            let geometry = LtMlsGeometry {
+                config: LtMlsMetricConfig {
+                    resolution: 0.05,
+                    robot_radius: 0.32,
+                    body_offset: 0.23,
+                    below: 0.05,
+                    above: 0.35,
+                    support_height: 0.435,
+                    support_tolerance: 0.1,
+                    ground_support: 1,
+                    actual_start: 1,
+                    start,
+                    max_step: 0.45,
+                    max_slope: 0.577350269,
+                    min: LtMlsPoint {
+                        x: -1.0,
+                        y: -1.0,
+                        z: -2.0,
+                    },
+                    max: LtMlsPoint {
+                        x: 3.0,
+                        y: 1.0,
+                        z: 2.0,
+                    },
+                    ..LtMlsMetricConfig::default()
+                },
+                regions: std::ptr::null(),
+                regions_len: 0,
+                preblocked: std::ptr::null(),
+                preblocked_len: 0,
+                cancel: None,
+                context: std::ptr::null_mut(),
+            };
+            let checker = unsafe { metric_checker(&handle.state, &geometry) }.unwrap();
+            assert_eq!(checker.check_poses(&[start, goal]).valid, 1);
+            let mut route = LtMlsPoseBuffer::default();
+            assert_eq!(
+                unsafe {
+                    lt_mls_artifact_query_metric(
+                        &handle, start, goal, 24, 10000, &geometry, &mut route,
+                    )
+                },
+                0
+            );
+            let poses = unsafe { std::slice::from_raw_parts(route.ptr, route.len as usize) };
+            assert_eq!(checker.check_poses(poses).valid, 1);
+            assert!(poses
+                .iter()
+                .all(|pose| (pose.point.z - height).abs() < 1e-6));
             unsafe { lt_mls_free_pose_buffer(&mut route) };
         }
     }

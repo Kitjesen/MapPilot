@@ -1,0 +1,5155 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="243.486422pt" height="236.193906pt" viewBox="0 0 243.486422 236.193906" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-17T04:10:34.602890</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.9, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 236.193906 
+L 243.486422 236.193906 
+L 243.486422 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="patch_2">
+   <path d="M 22.942469 205.997906 
+L 202.654469 205.997906 
+L 202.654469 26.285906 
+L 22.942469 26.285906 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="pane3d_1">
+   <g id="patch_3">
+    <path d="M 35.511806 129.331586 
+L 51.65734 117.201259 
+L 51.65734 56.061326 
+L 35.511806 68.191652 
+" style="fill: none; opacity: 0"/>
+   </g>
+  </g>
+  <g id="pane3d_2">
+   <g id="patch_4">
+    <path d="M 51.65734 117.201259 
+L 194.942213 159.235079 
+L 194.942213 98.095146 
+L 51.65734 56.061326 
+" style="fill: none; opacity: 0"/>
+   </g>
+  </g>
+  <g id="pane3d_3">
+   <g id="patch_5">
+    <path d="M 35.511806 129.331586 
+L 178.796679 171.365405 
+L 194.942213 159.235079 
+L 51.65734 117.201259 
+" style="fill: none; opacity: 0"/>
+   </g>
+  </g>
+  <g id="axis3d_1">
+   <g id="line2d_1">
+    <path d="M 35.511806 129.331586 
+L 178.796679 171.365405 
+" style="fill: none; stroke: #000000; stroke-width: 0.6; stroke-linecap: square"/>
+   </g>
+   <g id="xtick_1">
+    <g id="line2d_2">
+     <path d="M 40.171054 130.563481 
+L 39.783561 130.854609 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_1">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="38.661929" y="142.241845" transform="rotate(-0 38.661929 142.241845)">0</text>
+    </g>
+   </g>
+   <g id="xtick_2">
+    <g id="line2d_3">
+     <path d="M 96.098014 146.970124 
+L 95.710522 147.261252 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_2">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="94.58889" y="158.648488" transform="rotate(-0 94.58889 158.648488)">5</text>
+    </g>
+   </g>
+   <g id="xtick_3">
+    <g id="line2d_4">
+     <path d="M 152.024975 163.376767 
+L 151.637482 163.667895 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_3">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="150.515851" y="175.055132" transform="rotate(-0 150.515851 175.055132)">10</text>
+    </g>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="102.73795" y="169.688372" transform="rotate(-343.650507 102.73795 169.688372)">x (m)</text>
+   </g>
+  </g>
+  <g id="axis3d_2">
+   <g id="line2d_5">
+    <path d="M 194.942213 159.235079 
+L 178.796679 171.365405 
+" style="fill: none; stroke: #000000; stroke-width: 0.6; stroke-linecap: square"/>
+   </g>
+   <g id="xtick_4">
+    <g id="line2d_6">
+     <path d="M 178.034817 170.740318 
+L 181.473654 171.749129 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_5">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="191.427667" y="185.213764" transform="rotate(-0 191.427667 185.213764)">−0.1</text>
+    </g>
+   </g>
+   <g id="xtick_5">
+    <g id="line2d_7">
+     <path d="M 193.411516 159.187626 
+L 196.850353 160.196438 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_6">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="206.804366" y="173.661072" transform="rotate(-0 206.804366 173.661072)">2.1</text>
+    </g>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="221.873495" y="191.315372" transform="rotate(-36.917961 221.873495 191.315372)">y (m)</text>
+   </g>
+  </g>
+  <g id="axis3d_3">
+   <g id="line2d_8">
+    <path d="M 194.942213 159.235079 
+L 194.942213 98.095146 
+" style="fill: none; stroke: #000000; stroke-width: 0.6; stroke-linecap: square"/>
+   </g>
+   <g id="xtick_6">
+    <g id="line2d_9">
+     <path d="M 193.795934 156.860811 
+L 197.234771 157.869622 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_8">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="208.568743" y="165.071842" transform="rotate(-0 208.568743 165.071842)">0</text>
+    </g>
+   </g>
+   <g id="xtick_7">
+    <g id="line2d_10">
+     <path d="M 193.795934 133.569408 
+L 197.234771 134.578219 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_9">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="208.568743" y="141.780439" transform="rotate(-0 208.568743 141.780439)">2</text>
+    </g>
+   </g>
+   <g id="xtick_8">
+    <g id="line2d_11">
+     <path d="M 193.795934 110.278004 
+L 197.234771 111.286816 
+" style="fill: none; stroke: #000000; stroke-width: 0.8; stroke-linecap: square"/>
+    </g>
+    <g id="text_10">
+     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle" x="208.568743" y="118.489035" transform="rotate(-0 208.568743 118.489035)">4</text>
+    </g>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle" x="234.622672" y="135.693711" transform="rotate(-90 234.622672 135.693711)">z (m)</text>
+   </g>
+  </g>
+  <g id="axes_1">
+   <g id="Poly3DCollection_1">
+    <path d="M 88.660242 127.73241 
+L 55.104065 117.888424 
+L 55.104065 117.306139 
+L 88.660242 127.150125 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 55.104065 117.888424 
+L 41.125248 128.390871 
+L 41.125248 127.808586 
+L 55.104065 117.306139 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 41.125248 128.390871 
+L 74.681424 138.234857 
+L 88.660242 127.73241 
+L 55.104065 117.888424 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 41.125248 127.808586 
+L 74.681424 137.652572 
+L 88.660242 127.150125 
+L 55.104065 117.306139 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 74.681424 138.234857 
+L 88.660242 127.73241 
+L 88.660242 127.150125 
+L 74.681424 137.652572 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 41.125248 128.390871 
+L 74.681424 138.234857 
+L 74.681424 137.652572 
+L 41.125248 127.808586 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_2">
+    <path d="M 189.328771 117.086698 
+L 155.772594 107.242712 
+L 155.772594 106.660427 
+L 189.328771 116.504412 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 155.772594 107.242712 
+L 141.793777 117.745159 
+L 141.793777 117.162874 
+L 155.772594 106.660427 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.793777 117.745159 
+L 175.349953 127.589145 
+L 189.328771 117.086698 
+L 155.772594 107.242712 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.793777 117.162874 
+L 175.349953 127.006859 
+L 189.328771 116.504412 
+L 155.772594 106.660427 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 175.349953 127.589145 
+L 189.328771 117.086698 
+L 189.328771 116.504412 
+L 175.349953 127.006859 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.793777 117.745159 
+L 175.349953 127.589145 
+L 175.349953 127.006859 
+L 141.793777 117.162874 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_3">
+    <path d="M 40.006709 127.480453 
+L 39.307768 128.005576 
+L 39.307768 70.359353 
+L 40.006709 69.834231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 39.307768 128.005576 
+L 175.769552 168.037785 
+L 176.468493 167.512663 
+L 40.006709 127.480453 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 176.468493 167.512663 
+L 40.006709 127.480453 
+L 40.006709 69.834231 
+L 176.468493 109.86644 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 39.307768 128.005576 
+L 175.769552 168.037785 
+L 175.769552 110.391562 
+L 39.307768 70.359353 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 39.307768 70.359353 
+L 175.769552 110.391562 
+L 176.468493 109.86644 
+L 40.006709 69.834231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 175.769552 168.037785 
+L 176.468493 167.512663 
+L 176.468493 109.86644 
+L 175.769552 110.391562 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+   </g>
+   <g id="Poly3DCollection_4">
+    <path d="M 54.684467 116.452884 
+L 53.985526 116.978006 
+L 53.985526 59.331784 
+L 54.684467 58.806661 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 53.985526 116.978006 
+L 190.44731 157.010216 
+L 191.146251 156.485093 
+L 54.684467 116.452884 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 191.146251 156.485093 
+L 54.684467 116.452884 
+L 54.684467 58.806661 
+L 191.146251 98.838871 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 53.985526 116.978006 
+L 190.44731 157.010216 
+L 190.44731 99.363993 
+L 53.985526 59.331784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 53.985526 59.331784 
+L 190.44731 99.363993 
+L 191.146251 98.838871 
+L 54.684467 58.806661 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 190.44731 157.010216 
+L 191.146251 156.485093 
+L 191.146251 98.838871 
+L 190.44731 99.363993 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+   </g>
+   <g id="Poly3DCollection_5">
+    <path d="M 40.006709 127.480453 
+L 41.125248 127.808586 
+L 55.104065 117.306139 
+L 53.985526 116.978006 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 55.104065 117.306139 
+L 53.985526 116.978006 
+L 53.985526 59.331784 
+L 55.104065 59.659916 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 53.985526 116.978006 
+L 40.006709 127.480453 
+L 40.006709 69.834231 
+L 53.985526 59.331784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 41.125248 127.808586 
+L 55.104065 117.306139 
+L 55.104065 59.659916 
+L 41.125248 70.162363 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 40.006709 127.480453 
+L 41.125248 127.808586 
+L 41.125248 70.162363 
+L 40.006709 69.834231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 40.006709 69.834231 
+L 41.125248 70.162363 
+L 55.104065 59.659916 
+L 53.985526 59.331784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+   </g>
+   <g id="Poly3DCollection_6">
+    <path d="M 175.349953 167.18453 
+L 176.468493 167.512663 
+L 190.44731 157.010216 
+L 189.328771 156.682083 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 190.44731 157.010216 
+L 189.328771 156.682083 
+L 189.328771 99.03586 
+L 190.44731 99.363993 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 189.328771 156.682083 
+L 175.349953 167.18453 
+L 175.349953 109.538307 
+L 189.328771 99.03586 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 176.468493 167.512663 
+L 190.44731 157.010216 
+L 190.44731 99.363993 
+L 176.468493 109.86644 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 175.349953 167.18453 
+L 176.468493 167.512663 
+L 176.468493 109.86644 
+L 175.349953 109.538307 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+    <path d="M 175.349953 109.538307 
+L 176.468493 109.86644 
+L 190.44731 99.363993 
+L 189.328771 99.03586 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.07"/>
+   </g>
+   <g id="Poly3DCollection_7">
+    <path d="M 89.219511 127.896477 
+L 88.660242 127.73241 
+L 88.660242 126.56784 
+L 89.219511 126.731906 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 74.681424 138.234857 
+L 75.240694 138.398924 
+L 89.219511 127.896477 
+L 88.660242 127.73241 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.660242 127.73241 
+L 74.681424 138.234857 
+L 74.681424 137.070287 
+L 88.660242 126.56784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.240694 138.398924 
+L 89.219511 127.896477 
+L 89.219511 126.731906 
+L 75.240694 137.234354 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 74.681424 137.070287 
+L 75.240694 137.234354 
+L 89.219511 126.731906 
+L 88.660242 126.56784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 74.681424 138.234857 
+L 75.240694 138.398924 
+L 75.240694 137.234354 
+L 74.681424 137.070287 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_8">
+    <path d="M 89.778781 128.060543 
+L 89.219511 127.896477 
+L 89.219511 126.731906 
+L 89.778781 126.895973 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.240694 138.398924 
+L 75.799963 138.56299 
+L 89.778781 128.060543 
+L 89.219511 127.896477 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.219511 127.896477 
+L 75.240694 138.398924 
+L 75.240694 137.234354 
+L 89.219511 126.731906 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.799963 138.56299 
+L 89.778781 128.060543 
+L 89.778781 126.895973 
+L 75.799963 137.39842 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.240694 137.234354 
+L 75.799963 137.39842 
+L 89.778781 126.895973 
+L 89.219511 126.731906 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.240694 138.398924 
+L 75.799963 138.56299 
+L 75.799963 137.39842 
+L 75.240694 137.234354 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_9">
+    <path d="M 90.33805 128.22461 
+L 89.778781 128.060543 
+L 89.778781 126.313688 
+L 90.33805 126.477754 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.799963 138.56299 
+L 76.359233 138.727057 
+L 90.33805 128.22461 
+L 89.778781 128.060543 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.778781 128.060543 
+L 75.799963 138.56299 
+L 75.799963 136.816135 
+L 89.778781 126.313688 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.359233 138.727057 
+L 90.33805 128.22461 
+L 90.33805 126.477754 
+L 76.359233 136.980201 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.799963 136.816135 
+L 76.359233 136.980201 
+L 90.33805 126.477754 
+L 89.778781 126.313688 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 75.799963 138.56299 
+L 76.359233 138.727057 
+L 76.359233 136.980201 
+L 75.799963 136.816135 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_10">
+    <path d="M 90.89732 128.388676 
+L 90.33805 128.22461 
+L 90.33805 126.477754 
+L 90.89732 126.641821 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.359233 138.727057 
+L 76.918503 138.891123 
+L 90.89732 128.388676 
+L 90.33805 128.22461 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.33805 128.22461 
+L 76.359233 138.727057 
+L 76.359233 136.980201 
+L 90.33805 126.477754 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.918503 138.891123 
+L 90.89732 128.388676 
+L 90.89732 126.641821 
+L 76.918503 137.144268 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.359233 136.980201 
+L 76.918503 137.144268 
+L 90.89732 126.641821 
+L 90.33805 126.477754 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.359233 138.727057 
+L 76.918503 138.891123 
+L 76.918503 137.144268 
+L 76.359233 136.980201 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_11">
+    <path d="M 91.45659 128.552742 
+L 90.89732 128.388676 
+L 90.89732 126.059536 
+L 91.45659 126.223602 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.918503 138.891123 
+L 77.477772 139.055189 
+L 91.45659 128.552742 
+L 90.89732 128.388676 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.89732 128.388676 
+L 76.918503 138.891123 
+L 76.918503 136.561983 
+L 90.89732 126.059536 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 77.477772 139.055189 
+L 91.45659 128.552742 
+L 91.45659 126.223602 
+L 77.477772 136.726049 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.918503 136.561983 
+L 77.477772 136.726049 
+L 91.45659 126.223602 
+L 90.89732 126.059536 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 76.918503 138.891123 
+L 77.477772 139.055189 
+L 77.477772 136.726049 
+L 76.918503 136.561983 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_12">
+    <path d="M 92.015859 128.716809 
+L 91.45659 128.552742 
+L 91.45659 126.223602 
+L 92.015859 126.387668 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 77.477772 139.055189 
+L 78.037042 139.219256 
+L 92.015859 128.716809 
+L 91.45659 128.552742 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 91.45659 128.552742 
+L 77.477772 139.055189 
+L 77.477772 136.726049 
+L 91.45659 126.223602 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.037042 139.219256 
+L 92.015859 128.716809 
+L 92.015859 126.387668 
+L 78.037042 136.890116 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 77.477772 136.726049 
+L 78.037042 136.890116 
+L 92.015859 126.387668 
+L 91.45659 126.223602 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 77.477772 139.055189 
+L 78.037042 139.219256 
+L 78.037042 136.890116 
+L 77.477772 136.726049 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_13">
+    <path d="M 92.575129 128.880875 
+L 92.015859 128.716809 
+L 92.015859 125.805383 
+L 92.575129 125.96945 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.037042 139.219256 
+L 78.596311 139.383322 
+L 92.575129 128.880875 
+L 92.015859 128.716809 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.015859 128.716809 
+L 78.037042 139.219256 
+L 78.037042 136.30783 
+L 92.015859 125.805383 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.596311 139.383322 
+L 92.575129 128.880875 
+L 92.575129 125.96945 
+L 78.596311 136.471897 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.037042 136.30783 
+L 78.596311 136.471897 
+L 92.575129 125.96945 
+L 92.015859 125.805383 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.037042 139.219256 
+L 78.596311 139.383322 
+L 78.596311 136.471897 
+L 78.037042 136.30783 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_14">
+    <path d="M 93.134399 129.044942 
+L 92.575129 128.880875 
+L 92.575129 125.387165 
+L 93.134399 125.551231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.596311 139.383322 
+L 79.155581 139.547389 
+L 93.134399 129.044942 
+L 92.575129 128.880875 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.575129 128.880875 
+L 78.596311 139.383322 
+L 78.596311 135.889612 
+L 92.575129 125.387165 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.155581 139.547389 
+L 93.134399 129.044942 
+L 93.134399 125.551231 
+L 79.155581 136.053678 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.596311 135.889612 
+L 79.155581 136.053678 
+L 93.134399 125.551231 
+L 92.575129 125.387165 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 78.596311 139.383322 
+L 79.155581 139.547389 
+L 79.155581 136.053678 
+L 78.596311 135.889612 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_15">
+    <path d="M 93.693668 129.209008 
+L 93.134399 129.044942 
+L 93.134399 125.551231 
+L 93.693668 125.715298 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.155581 139.547389 
+L 79.714851 139.711455 
+L 93.693668 129.209008 
+L 93.134399 129.044942 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.134399 129.044942 
+L 79.155581 139.547389 
+L 79.155581 136.053678 
+L 93.134399 125.551231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.714851 139.711455 
+L 93.693668 129.209008 
+L 93.693668 125.715298 
+L 79.714851 136.217745 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.155581 136.053678 
+L 79.714851 136.217745 
+L 93.693668 125.715298 
+L 93.134399 125.551231 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.155581 139.547389 
+L 79.714851 139.711455 
+L 79.714851 136.217745 
+L 79.155581 136.053678 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_16">
+    <path d="M 94.252938 129.373075 
+L 93.693668 129.209008 
+L 93.693668 125.133013 
+L 94.252938 125.297079 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.714851 139.711455 
+L 80.27412 139.875522 
+L 94.252938 129.373075 
+L 93.693668 129.209008 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.693668 129.209008 
+L 79.714851 139.711455 
+L 79.714851 135.63546 
+L 93.693668 125.133013 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.27412 139.875522 
+L 94.252938 129.373075 
+L 94.252938 125.297079 
+L 80.27412 135.799526 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.714851 135.63546 
+L 80.27412 135.799526 
+L 94.252938 125.297079 
+L 93.693668 125.133013 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 79.714851 139.711455 
+L 80.27412 139.875522 
+L 80.27412 135.799526 
+L 79.714851 135.63546 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_17">
+    <path d="M 94.812207 129.537141 
+L 94.252938 129.373075 
+L 94.252938 125.297079 
+L 94.812207 125.461145 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.27412 139.875522 
+L 80.83339 140.039588 
+L 94.812207 129.537141 
+L 94.252938 129.373075 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.252938 129.373075 
+L 80.27412 139.875522 
+L 80.27412 135.799526 
+L 94.252938 125.297079 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.83339 140.039588 
+L 94.812207 129.537141 
+L 94.812207 125.461145 
+L 80.83339 135.963592 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.27412 135.799526 
+L 80.83339 135.963592 
+L 94.812207 125.461145 
+L 94.252938 125.297079 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.27412 139.875522 
+L 80.83339 140.039588 
+L 80.83339 135.963592 
+L 80.27412 135.799526 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_18">
+    <path d="M 95.371477 129.701207 
+L 94.812207 129.537141 
+L 94.812207 124.87886 
+L 95.371477 125.042927 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.83339 140.039588 
+L 81.392659 140.203654 
+L 95.371477 129.701207 
+L 94.812207 129.537141 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.812207 129.537141 
+L 80.83339 140.039588 
+L 80.83339 135.381307 
+L 94.812207 124.87886 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.392659 140.203654 
+L 95.371477 129.701207 
+L 95.371477 125.042927 
+L 81.392659 135.545374 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.83339 135.381307 
+L 81.392659 135.545374 
+L 95.371477 125.042927 
+L 94.812207 124.87886 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 80.83339 140.039588 
+L 81.392659 140.203654 
+L 81.392659 135.545374 
+L 80.83339 135.381307 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_19">
+    <path d="M 95.930747 129.865274 
+L 95.371477 129.701207 
+L 95.371477 124.460642 
+L 95.930747 124.624708 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.392659 140.203654 
+L 81.951929 140.367721 
+L 95.930747 129.865274 
+L 95.371477 129.701207 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.371477 129.701207 
+L 81.392659 140.203654 
+L 81.392659 134.963089 
+L 95.371477 124.460642 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.951929 140.367721 
+L 95.930747 129.865274 
+L 95.930747 124.624708 
+L 81.951929 135.127155 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.392659 134.963089 
+L 81.951929 135.127155 
+L 95.930747 124.624708 
+L 95.371477 124.460642 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.392659 140.203654 
+L 81.951929 140.367721 
+L 81.951929 135.127155 
+L 81.392659 134.963089 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_20">
+    <path d="M 96.490016 130.02934 
+L 95.930747 129.865274 
+L 95.930747 124.624708 
+L 96.490016 124.788775 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.951929 140.367721 
+L 82.511199 140.531787 
+L 96.490016 130.02934 
+L 95.930747 129.865274 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.930747 129.865274 
+L 81.951929 140.367721 
+L 81.951929 135.127155 
+L 95.930747 124.624708 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 82.511199 140.531787 
+L 96.490016 130.02934 
+L 96.490016 124.788775 
+L 82.511199 135.291222 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.951929 135.127155 
+L 82.511199 135.291222 
+L 96.490016 124.788775 
+L 95.930747 124.624708 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 81.951929 140.367721 
+L 82.511199 140.531787 
+L 82.511199 135.291222 
+L 81.951929 135.127155 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_21">
+    <path d="M 97.049286 130.193407 
+L 96.490016 130.02934 
+L 96.490016 124.206489 
+L 97.049286 124.370556 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 82.511199 140.531787 
+L 83.070468 140.695854 
+L 97.049286 130.193407 
+L 96.490016 130.02934 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 96.490016 130.02934 
+L 82.511199 140.531787 
+L 82.511199 134.708937 
+L 96.490016 124.206489 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.070468 140.695854 
+L 97.049286 130.193407 
+L 97.049286 124.370556 
+L 83.070468 134.873003 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 82.511199 134.708937 
+L 83.070468 134.873003 
+L 97.049286 124.370556 
+L 96.490016 124.206489 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 82.511199 140.531787 
+L 83.070468 140.695854 
+L 83.070468 134.873003 
+L 82.511199 134.708937 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_22">
+    <path d="M 97.608555 130.357473 
+L 97.049286 130.193407 
+L 97.049286 124.370556 
+L 97.608555 124.534622 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.070468 140.695854 
+L 83.629738 140.85992 
+L 97.608555 130.357473 
+L 97.049286 130.193407 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.049286 130.193407 
+L 83.070468 140.695854 
+L 83.070468 134.873003 
+L 97.049286 124.370556 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.629738 140.85992 
+L 97.608555 130.357473 
+L 97.608555 124.534622 
+L 83.629738 135.037069 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.070468 134.873003 
+L 83.629738 135.037069 
+L 97.608555 124.534622 
+L 97.049286 124.370556 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.070468 140.695854 
+L 83.629738 140.85992 
+L 83.629738 135.037069 
+L 83.070468 134.873003 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_23">
+    <path d="M 98.167825 130.52154 
+L 97.608555 130.357473 
+L 97.608555 123.952337 
+L 98.167825 124.116404 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.629738 140.85992 
+L 84.189008 141.023987 
+L 98.167825 130.52154 
+L 97.608555 130.357473 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.608555 130.357473 
+L 83.629738 140.85992 
+L 83.629738 134.454784 
+L 97.608555 123.952337 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.189008 141.023987 
+L 98.167825 130.52154 
+L 98.167825 124.116404 
+L 84.189008 134.618851 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.629738 134.454784 
+L 84.189008 134.618851 
+L 98.167825 124.116404 
+L 97.608555 123.952337 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 83.629738 140.85992 
+L 84.189008 141.023987 
+L 84.189008 134.618851 
+L 83.629738 134.454784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_24">
+    <path d="M 98.727095 130.685606 
+L 98.167825 130.52154 
+L 98.167825 124.116404 
+L 98.727095 124.28047 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.189008 141.023987 
+L 84.748277 141.188053 
+L 98.727095 130.685606 
+L 98.167825 130.52154 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.167825 130.52154 
+L 84.189008 141.023987 
+L 84.189008 134.618851 
+L 98.167825 124.116404 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.748277 141.188053 
+L 98.727095 130.685606 
+L 98.727095 124.28047 
+L 84.748277 134.782917 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.189008 134.618851 
+L 84.748277 134.782917 
+L 98.727095 124.28047 
+L 98.167825 124.116404 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.189008 141.023987 
+L 84.748277 141.188053 
+L 84.748277 134.782917 
+L 84.189008 134.618851 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_25">
+    <path d="M 99.286364 130.849672 
+L 98.727095 130.685606 
+L 98.727095 123.698185 
+L 99.286364 123.862251 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.748277 141.188053 
+L 85.307547 141.352119 
+L 99.286364 130.849672 
+L 98.727095 130.685606 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.727095 130.685606 
+L 84.748277 141.188053 
+L 84.748277 134.200632 
+L 98.727095 123.698185 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.307547 141.352119 
+L 99.286364 130.849672 
+L 99.286364 123.862251 
+L 85.307547 134.364699 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.748277 134.200632 
+L 85.307547 134.364699 
+L 99.286364 123.862251 
+L 98.727095 123.698185 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 84.748277 141.188053 
+L 85.307547 141.352119 
+L 85.307547 134.364699 
+L 84.748277 134.200632 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_26">
+    <path d="M 99.845634 131.013739 
+L 99.286364 130.849672 
+L 99.286364 123.279966 
+L 99.845634 123.444033 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.307547 141.352119 
+L 85.866816 141.516186 
+L 99.845634 131.013739 
+L 99.286364 130.849672 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.286364 130.849672 
+L 85.307547 141.352119 
+L 85.307547 133.782413 
+L 99.286364 123.279966 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.866816 141.516186 
+L 99.845634 131.013739 
+L 99.845634 123.444033 
+L 85.866816 133.94648 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.307547 133.782413 
+L 85.866816 133.94648 
+L 99.845634 123.444033 
+L 99.286364 123.279966 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.307547 141.352119 
+L 85.866816 141.516186 
+L 85.866816 133.94648 
+L 85.307547 133.782413 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_27">
+    <path d="M 100.404903 131.177805 
+L 99.845634 131.013739 
+L 99.845634 123.444033 
+L 100.404903 123.608099 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.866816 141.516186 
+L 86.426086 141.680252 
+L 100.404903 131.177805 
+L 99.845634 131.013739 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.845634 131.013739 
+L 85.866816 141.516186 
+L 85.866816 133.94648 
+L 99.845634 123.444033 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.426086 141.680252 
+L 100.404903 131.177805 
+L 100.404903 123.608099 
+L 86.426086 134.110546 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.866816 133.94648 
+L 86.426086 134.110546 
+L 100.404903 123.608099 
+L 99.845634 123.444033 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 85.866816 141.516186 
+L 86.426086 141.680252 
+L 86.426086 134.110546 
+L 85.866816 133.94648 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_28">
+    <path d="M 100.964173 131.341872 
+L 100.404903 131.177805 
+L 100.404903 123.025814 
+L 100.964173 123.189881 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.426086 141.680252 
+L 86.985356 141.844319 
+L 100.964173 131.341872 
+L 100.404903 131.177805 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.404903 131.177805 
+L 86.426086 141.680252 
+L 86.426086 133.528261 
+L 100.404903 123.025814 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.985356 141.844319 
+L 100.964173 131.341872 
+L 100.964173 123.189881 
+L 86.985356 133.692328 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.426086 133.528261 
+L 86.985356 133.692328 
+L 100.964173 123.189881 
+L 100.404903 123.025814 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.426086 141.680252 
+L 86.985356 141.844319 
+L 86.985356 133.692328 
+L 86.426086 133.528261 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_29">
+    <path d="M 101.523443 131.505938 
+L 100.964173 131.341872 
+L 100.964173 123.189881 
+L 101.523443 123.353947 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.985356 141.844319 
+L 87.544625 142.008385 
+L 101.523443 131.505938 
+L 100.964173 131.341872 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.964173 131.341872 
+L 86.985356 141.844319 
+L 86.985356 133.692328 
+L 100.964173 123.189881 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 87.544625 142.008385 
+L 101.523443 131.505938 
+L 101.523443 123.353947 
+L 87.544625 133.856394 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.985356 133.692328 
+L 87.544625 133.856394 
+L 101.523443 123.353947 
+L 100.964173 123.189881 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 86.985356 141.844319 
+L 87.544625 142.008385 
+L 87.544625 133.856394 
+L 86.985356 133.692328 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_30">
+    <path d="M 102.082712 131.670005 
+L 101.523443 131.505938 
+L 101.523443 122.771662 
+L 102.082712 122.935728 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 87.544625 142.008385 
+L 88.103895 142.172452 
+L 102.082712 131.670005 
+L 101.523443 131.505938 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 101.523443 131.505938 
+L 87.544625 142.008385 
+L 87.544625 133.274109 
+L 101.523443 122.771662 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.103895 142.172452 
+L 102.082712 131.670005 
+L 102.082712 122.935728 
+L 88.103895 133.438175 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 87.544625 133.274109 
+L 88.103895 133.438175 
+L 102.082712 122.935728 
+L 101.523443 122.771662 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 87.544625 142.008385 
+L 88.103895 142.172452 
+L 88.103895 133.438175 
+L 87.544625 133.274109 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_31">
+    <path d="M 102.641982 131.834071 
+L 102.082712 131.670005 
+L 102.082712 122.935728 
+L 102.641982 123.099795 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.103895 142.172452 
+L 88.663164 142.336518 
+L 102.641982 131.834071 
+L 102.082712 131.670005 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.082712 131.670005 
+L 88.103895 142.172452 
+L 88.103895 133.438175 
+L 102.082712 122.935728 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.663164 142.336518 
+L 102.641982 131.834071 
+L 102.641982 123.099795 
+L 88.663164 133.602242 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.103895 133.438175 
+L 88.663164 133.602242 
+L 102.641982 123.099795 
+L 102.082712 122.935728 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.103895 142.172452 
+L 88.663164 142.336518 
+L 88.663164 133.602242 
+L 88.103895 133.438175 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_32">
+    <path d="M 103.201251 131.998137 
+L 102.641982 131.834071 
+L 102.641982 122.51751 
+L 103.201251 122.681576 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.663164 142.336518 
+L 89.222434 142.500584 
+L 103.201251 131.998137 
+L 102.641982 131.834071 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.641982 131.834071 
+L 88.663164 142.336518 
+L 88.663164 133.019957 
+L 102.641982 122.51751 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.222434 142.500584 
+L 103.201251 131.998137 
+L 103.201251 122.681576 
+L 89.222434 133.184023 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.663164 133.019957 
+L 89.222434 133.184023 
+L 103.201251 122.681576 
+L 102.641982 122.51751 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 88.663164 142.336518 
+L 89.222434 142.500584 
+L 89.222434 133.184023 
+L 88.663164 133.019957 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_33">
+    <path d="M 103.760521 132.162204 
+L 103.201251 131.998137 
+L 103.201251 122.099291 
+L 103.760521 122.263358 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.222434 142.500584 
+L 89.781704 142.664651 
+L 103.760521 132.162204 
+L 103.201251 131.998137 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.201251 131.998137 
+L 89.222434 142.500584 
+L 89.222434 132.601738 
+L 103.201251 122.099291 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.781704 142.664651 
+L 103.760521 132.162204 
+L 103.760521 122.263358 
+L 89.781704 132.765805 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.222434 132.601738 
+L 89.781704 132.765805 
+L 103.760521 122.263358 
+L 103.201251 122.099291 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.222434 142.500584 
+L 89.781704 142.664651 
+L 89.781704 132.765805 
+L 89.222434 132.601738 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_34">
+    <path d="M 104.319791 132.32627 
+L 103.760521 132.162204 
+L 103.760521 122.263358 
+L 104.319791 122.427424 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.781704 142.664651 
+L 90.340973 142.828717 
+L 104.319791 132.32627 
+L 103.760521 132.162204 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.760521 132.162204 
+L 89.781704 142.664651 
+L 89.781704 132.765805 
+L 103.760521 122.263358 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.340973 142.828717 
+L 104.319791 132.32627 
+L 104.319791 122.427424 
+L 90.340973 132.929871 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.781704 132.765805 
+L 90.340973 132.929871 
+L 104.319791 122.427424 
+L 103.760521 122.263358 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 89.781704 142.664651 
+L 90.340973 142.828717 
+L 90.340973 132.929871 
+L 89.781704 132.765805 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_35">
+    <path d="M 104.87906 132.490337 
+L 104.319791 132.32627 
+L 104.319791 121.845139 
+L 104.87906 122.009205 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.340973 142.828717 
+L 90.900243 142.992784 
+L 104.87906 132.490337 
+L 104.319791 132.32627 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.319791 132.32627 
+L 90.340973 142.828717 
+L 90.340973 132.347586 
+L 104.319791 121.845139 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.900243 142.992784 
+L 104.87906 132.490337 
+L 104.87906 122.009205 
+L 90.900243 132.511652 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.340973 132.347586 
+L 90.900243 132.511652 
+L 104.87906 122.009205 
+L 104.319791 121.845139 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.340973 142.828717 
+L 90.900243 142.992784 
+L 90.900243 132.511652 
+L 90.340973 132.347586 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_36">
+    <path d="M 105.43833 132.654403 
+L 104.87906 132.490337 
+L 104.87906 122.009205 
+L 105.43833 122.173272 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.900243 142.992784 
+L 91.459512 143.15685 
+L 105.43833 132.654403 
+L 104.87906 132.490337 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.87906 132.490337 
+L 90.900243 142.992784 
+L 90.900243 132.511652 
+L 104.87906 122.009205 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 91.459512 143.15685 
+L 105.43833 132.654403 
+L 105.43833 122.173272 
+L 91.459512 132.675719 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.900243 132.511652 
+L 91.459512 132.675719 
+L 105.43833 122.173272 
+L 104.87906 122.009205 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 90.900243 142.992784 
+L 91.459512 143.15685 
+L 91.459512 132.675719 
+L 90.900243 132.511652 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_37">
+    <path d="M 105.997599 132.81847 
+L 105.43833 132.654403 
+L 105.43833 121.590987 
+L 105.997599 121.755053 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 91.459512 143.15685 
+L 92.018782 143.320917 
+L 105.997599 132.81847 
+L 105.43833 132.654403 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.43833 132.654403 
+L 91.459512 143.15685 
+L 91.459512 132.093434 
+L 105.43833 121.590987 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.018782 143.320917 
+L 105.997599 132.81847 
+L 105.997599 121.755053 
+L 92.018782 132.2575 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 91.459512 132.093434 
+L 92.018782 132.2575 
+L 105.997599 121.755053 
+L 105.43833 121.590987 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 91.459512 143.15685 
+L 92.018782 143.320917 
+L 92.018782 132.2575 
+L 91.459512 132.093434 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_38">
+    <path d="M 106.556869 132.982536 
+L 105.997599 132.81847 
+L 105.997599 121.755053 
+L 106.556869 121.91912 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.018782 143.320917 
+L 92.578052 143.484983 
+L 106.556869 132.982536 
+L 105.997599 132.81847 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.997599 132.81847 
+L 92.018782 143.320917 
+L 92.018782 132.2575 
+L 105.997599 121.755053 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.578052 143.484983 
+L 106.556869 132.982536 
+L 106.556869 121.91912 
+L 92.578052 132.421567 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.018782 132.2575 
+L 92.578052 132.421567 
+L 106.556869 121.91912 
+L 105.997599 121.755053 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.018782 143.320917 
+L 92.578052 143.484983 
+L 92.578052 132.421567 
+L 92.018782 132.2575 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_39">
+    <path d="M 107.116139 133.146602 
+L 106.556869 132.982536 
+L 106.556869 121.336834 
+L 107.116139 121.500901 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.578052 143.484983 
+L 93.137321 143.64905 
+L 107.116139 133.146602 
+L 106.556869 132.982536 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.556869 132.982536 
+L 92.578052 143.484983 
+L 92.578052 131.839281 
+L 106.556869 121.336834 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.137321 143.64905 
+L 107.116139 133.146602 
+L 107.116139 121.500901 
+L 93.137321 132.003348 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.578052 131.839281 
+L 93.137321 132.003348 
+L 107.116139 121.500901 
+L 106.556869 121.336834 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 92.578052 143.484983 
+L 93.137321 143.64905 
+L 93.137321 132.003348 
+L 92.578052 131.839281 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_40">
+    <path d="M 107.675408 133.310669 
+L 107.116139 133.146602 
+L 107.116139 120.918616 
+L 107.675408 121.082682 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.137321 143.64905 
+L 93.696591 143.813116 
+L 107.675408 133.310669 
+L 107.116139 133.146602 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.116139 133.146602 
+L 93.137321 143.64905 
+L 93.137321 131.421063 
+L 107.116139 120.918616 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.696591 143.813116 
+L 107.675408 133.310669 
+L 107.675408 121.082682 
+L 93.696591 131.585129 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.137321 131.421063 
+L 93.696591 131.585129 
+L 107.675408 121.082682 
+L 107.116139 120.918616 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.137321 143.64905 
+L 93.696591 143.813116 
+L 93.696591 131.585129 
+L 93.137321 131.421063 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_41">
+    <path d="M 108.234678 133.474735 
+L 107.675408 133.310669 
+L 107.675408 121.082682 
+L 108.234678 121.246749 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.696591 143.813116 
+L 94.25586 143.977182 
+L 108.234678 133.474735 
+L 107.675408 133.310669 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.675408 133.310669 
+L 93.696591 143.813116 
+L 93.696591 131.585129 
+L 107.675408 121.082682 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.25586 143.977182 
+L 108.234678 133.474735 
+L 108.234678 121.246749 
+L 94.25586 131.749196 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.696591 131.585129 
+L 94.25586 131.749196 
+L 108.234678 121.246749 
+L 107.675408 121.082682 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 93.696591 143.813116 
+L 94.25586 143.977182 
+L 94.25586 131.749196 
+L 93.696591 131.585129 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_42">
+    <path d="M 108.793947 133.638802 
+L 108.234678 133.474735 
+L 108.234678 120.664464 
+L 108.793947 120.82853 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.25586 143.977182 
+L 94.81513 144.141249 
+L 108.793947 133.638802 
+L 108.234678 133.474735 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.234678 133.474735 
+L 94.25586 143.977182 
+L 94.25586 131.166911 
+L 108.234678 120.664464 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.81513 144.141249 
+L 108.793947 133.638802 
+L 108.793947 120.82853 
+L 94.81513 131.330977 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.25586 131.166911 
+L 94.81513 131.330977 
+L 108.793947 120.82853 
+L 108.234678 120.664464 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.25586 143.977182 
+L 94.81513 144.141249 
+L 94.81513 131.330977 
+L 94.25586 131.166911 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_43">
+    <path d="M 109.353217 133.802868 
+L 108.793947 133.638802 
+L 108.793947 120.82853 
+L 109.353217 120.992596 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.81513 144.141249 
+L 95.3744 144.305315 
+L 109.353217 133.802868 
+L 108.793947 133.638802 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.793947 133.638802 
+L 94.81513 144.141249 
+L 94.81513 131.330977 
+L 108.793947 120.82853 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.3744 144.305315 
+L 109.353217 133.802868 
+L 109.353217 120.992596 
+L 95.3744 131.495044 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.81513 131.330977 
+L 95.3744 131.495044 
+L 109.353217 120.992596 
+L 108.793947 120.82853 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 94.81513 144.141249 
+L 95.3744 144.305315 
+L 95.3744 131.495044 
+L 94.81513 131.330977 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_44">
+    <path d="M 109.912487 133.966935 
+L 109.353217 133.802868 
+L 109.353217 120.410311 
+L 109.912487 120.574378 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.3744 144.305315 
+L 95.933669 144.469382 
+L 109.912487 133.966935 
+L 109.353217 133.802868 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.353217 133.802868 
+L 95.3744 144.305315 
+L 95.3744 130.912758 
+L 109.353217 120.410311 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.933669 144.469382 
+L 109.912487 133.966935 
+L 109.912487 120.574378 
+L 95.933669 131.076825 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.3744 130.912758 
+L 95.933669 131.076825 
+L 109.912487 120.574378 
+L 109.353217 120.410311 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.3744 144.305315 
+L 95.933669 144.469382 
+L 95.933669 131.076825 
+L 95.3744 130.912758 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_45">
+    <path d="M 110.471756 134.131001 
+L 109.912487 133.966935 
+L 109.912487 119.992093 
+L 110.471756 120.156159 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.933669 144.469382 
+L 96.492939 144.633448 
+L 110.471756 134.131001 
+L 109.912487 133.966935 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.912487 133.966935 
+L 95.933669 144.469382 
+L 95.933669 130.49454 
+L 109.912487 119.992093 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 96.492939 144.633448 
+L 110.471756 134.131001 
+L 110.471756 120.156159 
+L 96.492939 130.658606 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.933669 130.49454 
+L 96.492939 130.658606 
+L 110.471756 120.156159 
+L 109.912487 119.992093 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 95.933669 144.469382 
+L 96.492939 144.633448 
+L 96.492939 130.658606 
+L 95.933669 130.49454 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_46">
+    <path d="M 111.031026 134.295067 
+L 110.471756 134.131001 
+L 110.471756 120.156159 
+L 111.031026 120.320226 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 96.492939 144.633448 
+L 97.052208 144.797515 
+L 111.031026 134.295067 
+L 110.471756 134.131001 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 110.471756 134.131001 
+L 96.492939 144.633448 
+L 96.492939 130.658606 
+L 110.471756 120.156159 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.052208 144.797515 
+L 111.031026 134.295067 
+L 111.031026 120.320226 
+L 97.052208 130.822673 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 96.492939 130.658606 
+L 97.052208 130.822673 
+L 111.031026 120.320226 
+L 110.471756 120.156159 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 96.492939 144.633448 
+L 97.052208 144.797515 
+L 97.052208 130.822673 
+L 96.492939 130.658606 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_47">
+    <path d="M 111.590296 134.459134 
+L 111.031026 134.295067 
+L 111.031026 119.737941 
+L 111.590296 119.902007 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.052208 144.797515 
+L 97.611478 144.961581 
+L 111.590296 134.459134 
+L 111.031026 134.295067 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.031026 134.295067 
+L 97.052208 144.797515 
+L 97.052208 130.240388 
+L 111.031026 119.737941 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.611478 144.961581 
+L 111.590296 134.459134 
+L 111.590296 119.902007 
+L 97.611478 130.404454 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.052208 130.240388 
+L 97.611478 130.404454 
+L 111.590296 119.902007 
+L 111.031026 119.737941 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.052208 144.797515 
+L 97.611478 144.961581 
+L 97.611478 130.404454 
+L 97.052208 130.240388 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_48">
+    <path d="M 112.149565 134.6232 
+L 111.590296 134.459134 
+L 111.590296 119.902007 
+L 112.149565 120.066073 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.611478 144.961581 
+L 98.170748 145.125647 
+L 112.149565 134.6232 
+L 111.590296 134.459134 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.590296 134.459134 
+L 97.611478 144.961581 
+L 97.611478 130.404454 
+L 111.590296 119.902007 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.170748 145.125647 
+L 112.149565 134.6232 
+L 112.149565 120.066073 
+L 98.170748 130.56852 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.611478 130.404454 
+L 98.170748 130.56852 
+L 112.149565 120.066073 
+L 111.590296 119.902007 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 97.611478 144.961581 
+L 98.170748 145.125647 
+L 98.170748 130.56852 
+L 97.611478 130.404454 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_49">
+    <path d="M 112.708835 134.787267 
+L 112.149565 134.6232 
+L 112.149565 119.483788 
+L 112.708835 119.647855 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.170748 145.125647 
+L 98.730017 145.289714 
+L 112.708835 134.787267 
+L 112.149565 134.6232 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.149565 134.6232 
+L 98.170748 145.125647 
+L 98.170748 129.986235 
+L 112.149565 119.483788 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.730017 145.289714 
+L 112.708835 134.787267 
+L 112.708835 119.647855 
+L 98.730017 130.150302 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.170748 129.986235 
+L 98.730017 130.150302 
+L 112.708835 119.647855 
+L 112.149565 119.483788 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.170748 145.125647 
+L 98.730017 145.289714 
+L 98.730017 130.150302 
+L 98.170748 129.986235 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_50">
+    <path d="M 113.268104 134.951333 
+L 112.708835 134.787267 
+L 112.708835 119.647855 
+L 113.268104 119.811921 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.730017 145.289714 
+L 99.289287 145.45378 
+L 113.268104 134.951333 
+L 112.708835 134.787267 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.708835 134.787267 
+L 98.730017 145.289714 
+L 98.730017 130.150302 
+L 112.708835 119.647855 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.289287 145.45378 
+L 113.268104 134.951333 
+L 113.268104 119.811921 
+L 99.289287 130.314368 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.730017 130.150302 
+L 99.289287 130.314368 
+L 113.268104 119.811921 
+L 112.708835 119.647855 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 98.730017 145.289714 
+L 99.289287 145.45378 
+L 99.289287 130.314368 
+L 98.730017 130.150302 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_51">
+    <path d="M 113.827374 135.1154 
+L 113.268104 134.951333 
+L 113.268104 119.229636 
+L 113.827374 119.393703 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.289287 145.45378 
+L 99.848556 145.617847 
+L 113.827374 135.1154 
+L 113.268104 134.951333 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.268104 134.951333 
+L 99.289287 145.45378 
+L 99.289287 129.732083 
+L 113.268104 119.229636 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.848556 145.617847 
+L 113.827374 135.1154 
+L 113.827374 119.393703 
+L 99.848556 129.89615 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.289287 129.732083 
+L 99.848556 129.89615 
+L 113.827374 119.393703 
+L 113.268104 119.229636 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.289287 145.45378 
+L 99.848556 145.617847 
+L 99.848556 129.89615 
+L 99.289287 129.732083 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_52">
+    <path d="M 114.386644 135.279466 
+L 113.827374 135.1154 
+L 113.827374 118.811417 
+L 114.386644 118.975484 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.848556 145.617847 
+L 100.407826 145.781913 
+L 114.386644 135.279466 
+L 113.827374 135.1154 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.827374 135.1154 
+L 99.848556 145.617847 
+L 99.848556 129.313864 
+L 113.827374 118.811417 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.407826 145.781913 
+L 114.386644 135.279466 
+L 114.386644 118.975484 
+L 100.407826 129.477931 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.848556 129.313864 
+L 100.407826 129.477931 
+L 114.386644 118.975484 
+L 113.827374 118.811417 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 99.848556 145.617847 
+L 100.407826 145.781913 
+L 100.407826 129.477931 
+L 99.848556 129.313864 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_53">
+    <path d="M 114.945913 135.443533 
+L 114.386644 135.279466 
+L 114.386644 118.975484 
+L 114.945913 119.13955 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.407826 145.781913 
+L 100.967096 145.94598 
+L 114.945913 135.443533 
+L 114.386644 135.279466 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.386644 135.279466 
+L 100.407826 145.781913 
+L 100.407826 129.477931 
+L 114.386644 118.975484 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.967096 145.94598 
+L 114.945913 135.443533 
+L 114.945913 119.13955 
+L 100.967096 129.641997 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.407826 129.477931 
+L 100.967096 129.641997 
+L 114.945913 119.13955 
+L 114.386644 118.975484 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.407826 145.781913 
+L 100.967096 145.94598 
+L 100.967096 129.641997 
+L 100.407826 129.477931 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_54">
+    <path d="M 115.505183 135.607599 
+L 114.945913 135.443533 
+L 114.945913 118.557265 
+L 115.505183 118.721332 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.967096 145.94598 
+L 101.526365 146.110046 
+L 115.505183 135.607599 
+L 114.945913 135.443533 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.945913 135.443533 
+L 100.967096 145.94598 
+L 100.967096 129.059712 
+L 114.945913 118.557265 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 101.526365 146.110046 
+L 115.505183 135.607599 
+L 115.505183 118.721332 
+L 101.526365 129.223779 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.967096 129.059712 
+L 101.526365 129.223779 
+L 115.505183 118.721332 
+L 114.945913 118.557265 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 100.967096 145.94598 
+L 101.526365 146.110046 
+L 101.526365 129.223779 
+L 100.967096 129.059712 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_55">
+    <path d="M 116.064452 135.771665 
+L 115.505183 135.607599 
+L 115.505183 118.721332 
+L 116.064452 118.885398 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 101.526365 146.110046 
+L 102.085635 146.274112 
+L 116.064452 135.771665 
+L 115.505183 135.607599 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 115.505183 135.607599 
+L 101.526365 146.110046 
+L 101.526365 129.223779 
+L 115.505183 118.721332 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.085635 146.274112 
+L 116.064452 135.771665 
+L 116.064452 118.885398 
+L 102.085635 129.387845 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 101.526365 129.223779 
+L 102.085635 129.387845 
+L 116.064452 118.885398 
+L 115.505183 118.721332 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 101.526365 146.110046 
+L 102.085635 146.274112 
+L 102.085635 129.387845 
+L 101.526365 129.223779 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_56">
+    <path d="M 116.623722 135.935732 
+L 116.064452 135.771665 
+L 116.064452 118.303113 
+L 116.623722 118.467179 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.085635 146.274112 
+L 102.644905 146.438179 
+L 116.623722 135.935732 
+L 116.064452 135.771665 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.064452 135.771665 
+L 102.085635 146.274112 
+L 102.085635 128.80556 
+L 116.064452 118.303113 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.644905 146.438179 
+L 116.623722 135.935732 
+L 116.623722 118.467179 
+L 102.644905 128.969626 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.085635 128.80556 
+L 102.644905 128.969626 
+L 116.623722 118.467179 
+L 116.064452 118.303113 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.085635 146.274112 
+L 102.644905 146.438179 
+L 102.644905 128.969626 
+L 102.085635 128.80556 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_57">
+    <path d="M 117.182992 136.099798 
+L 116.623722 135.935732 
+L 116.623722 118.467179 
+L 117.182992 118.631246 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.644905 146.438179 
+L 103.204174 146.602245 
+L 117.182992 136.099798 
+L 116.623722 135.935732 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.623722 135.935732 
+L 102.644905 146.438179 
+L 102.644905 128.969626 
+L 116.623722 118.467179 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.204174 146.602245 
+L 117.182992 136.099798 
+L 117.182992 118.631246 
+L 103.204174 129.133693 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.644905 128.969626 
+L 103.204174 129.133693 
+L 117.182992 118.631246 
+L 116.623722 118.467179 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 102.644905 146.438179 
+L 103.204174 146.602245 
+L 103.204174 129.133693 
+L 102.644905 128.969626 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_58">
+    <path d="M 117.742261 136.263865 
+L 117.182992 136.099798 
+L 117.182992 118.048961 
+L 117.742261 118.213027 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.204174 146.602245 
+L 103.763444 146.766312 
+L 117.742261 136.263865 
+L 117.182992 136.099798 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.182992 136.099798 
+L 103.204174 146.602245 
+L 103.204174 128.551408 
+L 117.182992 118.048961 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.763444 146.766312 
+L 117.742261 136.263865 
+L 117.742261 118.213027 
+L 103.763444 128.715474 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.204174 128.551408 
+L 103.763444 128.715474 
+L 117.742261 118.213027 
+L 117.182992 118.048961 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.204174 146.602245 
+L 103.763444 146.766312 
+L 103.763444 128.715474 
+L 103.204174 128.551408 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_59">
+    <path d="M 118.301531 136.427931 
+L 117.742261 136.263865 
+L 117.742261 117.630742 
+L 118.301531 117.794809 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.763444 146.766312 
+L 104.322713 146.930378 
+L 118.301531 136.427931 
+L 117.742261 136.263865 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.742261 136.263865 
+L 103.763444 146.766312 
+L 103.763444 128.133189 
+L 117.742261 117.630742 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.322713 146.930378 
+L 118.301531 136.427931 
+L 118.301531 117.794809 
+L 104.322713 128.297256 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.763444 128.133189 
+L 104.322713 128.297256 
+L 118.301531 117.794809 
+L 117.742261 117.630742 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 103.763444 146.766312 
+L 104.322713 146.930378 
+L 104.322713 128.297256 
+L 103.763444 128.133189 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_60">
+    <path d="M 118.8608 136.591998 
+L 118.301531 136.427931 
+L 118.301531 117.794809 
+L 118.8608 117.958875 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.322713 146.930378 
+L 104.881983 147.094445 
+L 118.8608 136.591998 
+L 118.301531 136.427931 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.301531 136.427931 
+L 104.322713 146.930378 
+L 104.322713 128.297256 
+L 118.301531 117.794809 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.881983 147.094445 
+L 118.8608 136.591998 
+L 118.8608 117.958875 
+L 104.881983 128.461322 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.322713 128.297256 
+L 104.881983 128.461322 
+L 118.8608 117.958875 
+L 118.301531 117.794809 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.322713 146.930378 
+L 104.881983 147.094445 
+L 104.881983 128.461322 
+L 104.322713 128.297256 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_61">
+    <path d="M 119.42007 136.756064 
+L 118.8608 136.591998 
+L 118.8608 117.37659 
+L 119.42007 117.540656 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.881983 147.094445 
+L 105.441253 147.258511 
+L 119.42007 136.756064 
+L 118.8608 136.591998 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.8608 136.591998 
+L 104.881983 147.094445 
+L 104.881983 127.879037 
+L 118.8608 117.37659 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.441253 147.258511 
+L 119.42007 136.756064 
+L 119.42007 117.540656 
+L 105.441253 128.043103 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.881983 127.879037 
+L 105.441253 128.043103 
+L 119.42007 117.540656 
+L 118.8608 117.37659 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 104.881983 147.094445 
+L 105.441253 147.258511 
+L 105.441253 128.043103 
+L 104.881983 127.879037 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_62">
+    <path d="M 119.97934 136.92013 
+L 119.42007 136.756064 
+L 119.42007 117.540656 
+L 119.97934 117.704723 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.441253 147.258511 
+L 106.000522 147.422577 
+L 119.97934 136.92013 
+L 119.42007 136.756064 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.42007 136.756064 
+L 105.441253 147.258511 
+L 105.441253 128.043103 
+L 119.42007 117.540656 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.000522 147.422577 
+L 119.97934 136.92013 
+L 119.97934 117.704723 
+L 106.000522 128.20717 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.441253 128.043103 
+L 106.000522 128.20717 
+L 119.97934 117.704723 
+L 119.42007 117.540656 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 105.441253 147.258511 
+L 106.000522 147.422577 
+L 106.000522 128.20717 
+L 105.441253 128.043103 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_63">
+    <path d="M 120.538609 137.084197 
+L 119.97934 136.92013 
+L 119.97934 117.122438 
+L 120.538609 117.286504 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.000522 147.422577 
+L 106.559792 147.586644 
+L 120.538609 137.084197 
+L 119.97934 136.92013 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.97934 136.92013 
+L 106.000522 147.422577 
+L 106.000522 127.624885 
+L 119.97934 117.122438 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.559792 147.586644 
+L 120.538609 137.084197 
+L 120.538609 117.286504 
+L 106.559792 127.788951 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.000522 127.624885 
+L 106.559792 127.788951 
+L 120.538609 117.286504 
+L 119.97934 117.122438 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.000522 147.422577 
+L 106.559792 147.586644 
+L 106.559792 127.788951 
+L 106.000522 127.624885 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_64">
+    <path d="M 121.097879 137.248263 
+L 120.538609 137.084197 
+L 120.538609 117.286504 
+L 121.097879 117.450571 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.559792 147.586644 
+L 107.119061 147.75071 
+L 121.097879 137.248263 
+L 120.538609 137.084197 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 120.538609 137.084197 
+L 106.559792 147.586644 
+L 106.559792 127.788951 
+L 120.538609 117.286504 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.119061 147.75071 
+L 121.097879 137.248263 
+L 121.097879 117.450571 
+L 107.119061 127.953018 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.559792 127.788951 
+L 107.119061 127.953018 
+L 121.097879 117.450571 
+L 120.538609 117.286504 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 106.559792 147.586644 
+L 107.119061 147.75071 
+L 107.119061 127.953018 
+L 106.559792 127.788951 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_65">
+    <path d="M 121.657148 137.41233 
+L 121.097879 137.248263 
+L 121.097879 116.868286 
+L 121.657148 117.032352 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.119061 147.75071 
+L 107.678331 147.914777 
+L 121.657148 137.41233 
+L 121.097879 137.248263 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.097879 137.248263 
+L 107.119061 147.75071 
+L 107.119061 127.370733 
+L 121.097879 116.868286 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.678331 147.914777 
+L 121.657148 137.41233 
+L 121.657148 117.032352 
+L 107.678331 127.534799 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.119061 127.370733 
+L 107.678331 127.534799 
+L 121.657148 117.032352 
+L 121.097879 116.868286 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.119061 147.75071 
+L 107.678331 147.914777 
+L 107.678331 127.534799 
+L 107.119061 127.370733 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_66">
+    <path d="M 122.216418 137.576396 
+L 121.657148 137.41233 
+L 121.657148 116.450067 
+L 122.216418 116.614133 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.678331 147.914777 
+L 108.237601 148.078843 
+L 122.216418 137.576396 
+L 121.657148 137.41233 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.657148 137.41233 
+L 107.678331 147.914777 
+L 107.678331 126.952514 
+L 121.657148 116.450067 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.237601 148.078843 
+L 122.216418 137.576396 
+L 122.216418 116.614133 
+L 108.237601 127.11658 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.678331 126.952514 
+L 108.237601 127.11658 
+L 122.216418 116.614133 
+L 121.657148 116.450067 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 107.678331 147.914777 
+L 108.237601 148.078843 
+L 108.237601 127.11658 
+L 107.678331 126.952514 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_67">
+    <path d="M 122.775688 137.740463 
+L 122.216418 137.576396 
+L 122.216418 116.614133 
+L 122.775688 116.7782 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.237601 148.078843 
+L 108.79687 148.24291 
+L 122.775688 137.740463 
+L 122.216418 137.576396 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.216418 137.576396 
+L 108.237601 148.078843 
+L 108.237601 127.11658 
+L 122.216418 116.614133 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.79687 148.24291 
+L 122.775688 137.740463 
+L 122.775688 116.7782 
+L 108.79687 127.280647 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.237601 127.11658 
+L 108.79687 127.280647 
+L 122.775688 116.7782 
+L 122.216418 116.614133 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.237601 148.078843 
+L 108.79687 148.24291 
+L 108.79687 127.280647 
+L 108.237601 127.11658 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_68">
+    <path d="M 123.334957 137.904529 
+L 122.775688 137.740463 
+L 122.775688 116.195915 
+L 123.334957 116.359981 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.79687 148.24291 
+L 109.35614 148.406976 
+L 123.334957 137.904529 
+L 122.775688 137.740463 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.775688 137.740463 
+L 108.79687 148.24291 
+L 108.79687 126.698362 
+L 122.775688 116.195915 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.35614 148.406976 
+L 123.334957 137.904529 
+L 123.334957 116.359981 
+L 109.35614 126.862428 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.79687 126.698362 
+L 109.35614 126.862428 
+L 123.334957 116.359981 
+L 122.775688 116.195915 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 108.79687 148.24291 
+L 109.35614 148.406976 
+L 109.35614 126.862428 
+L 108.79687 126.698362 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_69">
+    <path d="M 123.894227 138.068595 
+L 123.334957 137.904529 
+L 123.334957 116.359981 
+L 123.894227 116.524048 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.35614 148.406976 
+L 109.915409 148.571042 
+L 123.894227 138.068595 
+L 123.334957 137.904529 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.334957 137.904529 
+L 109.35614 148.406976 
+L 109.35614 126.862428 
+L 123.334957 116.359981 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.915409 148.571042 
+L 123.894227 138.068595 
+L 123.894227 116.524048 
+L 109.915409 127.026495 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.35614 126.862428 
+L 109.915409 127.026495 
+L 123.894227 116.524048 
+L 123.334957 116.359981 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.35614 148.406976 
+L 109.915409 148.571042 
+L 109.915409 127.026495 
+L 109.35614 126.862428 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_70">
+    <path d="M 124.453496 138.232662 
+L 123.894227 138.068595 
+L 123.894227 115.941762 
+L 124.453496 116.105829 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.915409 148.571042 
+L 110.474679 148.735109 
+L 124.453496 138.232662 
+L 123.894227 138.068595 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.894227 138.068595 
+L 109.915409 148.571042 
+L 109.915409 126.444209 
+L 123.894227 115.941762 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 110.474679 148.735109 
+L 124.453496 138.232662 
+L 124.453496 116.105829 
+L 110.474679 126.608276 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.915409 126.444209 
+L 110.474679 126.608276 
+L 124.453496 116.105829 
+L 123.894227 115.941762 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 109.915409 148.571042 
+L 110.474679 148.735109 
+L 110.474679 126.608276 
+L 109.915409 126.444209 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_71">
+    <path d="M 125.012766 138.396728 
+L 124.453496 138.232662 
+L 124.453496 115.523544 
+L 125.012766 115.68761 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 110.474679 148.735109 
+L 111.033949 148.899175 
+L 125.012766 138.396728 
+L 124.453496 138.232662 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 124.453496 138.232662 
+L 110.474679 148.735109 
+L 110.474679 126.025991 
+L 124.453496 115.523544 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.033949 148.899175 
+L 125.012766 138.396728 
+L 125.012766 115.68761 
+L 111.033949 126.190057 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 110.474679 126.025991 
+L 111.033949 126.190057 
+L 125.012766 115.68761 
+L 124.453496 115.523544 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 110.474679 148.735109 
+L 111.033949 148.899175 
+L 111.033949 126.190057 
+L 110.474679 126.025991 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_72">
+    <path d="M 125.572036 138.560795 
+L 125.012766 138.396728 
+L 125.012766 115.68761 
+L 125.572036 115.851677 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.033949 148.899175 
+L 111.593218 149.063242 
+L 125.572036 138.560795 
+L 125.012766 138.396728 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.012766 138.396728 
+L 111.033949 148.899175 
+L 111.033949 126.190057 
+L 125.012766 115.68761 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.593218 149.063242 
+L 125.572036 138.560795 
+L 125.572036 115.851677 
+L 111.593218 126.354124 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.033949 126.190057 
+L 111.593218 126.354124 
+L 125.572036 115.851677 
+L 125.012766 115.68761 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.033949 148.899175 
+L 111.593218 149.063242 
+L 111.593218 126.354124 
+L 111.033949 126.190057 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_73">
+    <path d="M 126.131305 138.724861 
+L 125.572036 138.560795 
+L 125.572036 115.269392 
+L 126.131305 115.433458 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.593218 149.063242 
+L 112.152488 149.227308 
+L 126.131305 138.724861 
+L 125.572036 138.560795 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.572036 138.560795 
+L 111.593218 149.063242 
+L 111.593218 125.771839 
+L 125.572036 115.269392 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.152488 149.227308 
+L 126.131305 138.724861 
+L 126.131305 115.433458 
+L 112.152488 125.935905 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.593218 125.771839 
+L 112.152488 125.935905 
+L 126.131305 115.433458 
+L 125.572036 115.269392 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 111.593218 149.063242 
+L 112.152488 149.227308 
+L 112.152488 125.935905 
+L 111.593218 125.771839 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_74">
+    <path d="M 126.690575 138.888928 
+L 126.131305 138.724861 
+L 126.131305 115.433458 
+L 126.690575 115.597524 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.152488 149.227308 
+L 112.711757 149.391375 
+L 126.690575 138.888928 
+L 126.131305 138.724861 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.131305 138.724861 
+L 112.152488 149.227308 
+L 112.152488 125.935905 
+L 126.131305 115.433458 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.711757 149.391375 
+L 126.690575 138.888928 
+L 126.690575 115.597524 
+L 112.711757 126.099971 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.152488 125.935905 
+L 112.711757 126.099971 
+L 126.690575 115.597524 
+L 126.131305 115.433458 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.152488 149.227308 
+L 112.711757 149.391375 
+L 112.711757 126.099971 
+L 112.152488 125.935905 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_75">
+    <path d="M 127.249844 139.052994 
+L 126.690575 138.888928 
+L 126.690575 115.015239 
+L 127.249844 115.179306 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.711757 149.391375 
+L 113.271027 149.555441 
+L 127.249844 139.052994 
+L 126.690575 138.888928 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.690575 138.888928 
+L 112.711757 149.391375 
+L 112.711757 125.517686 
+L 126.690575 115.015239 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.271027 149.555441 
+L 127.249844 139.052994 
+L 127.249844 115.179306 
+L 113.271027 125.681753 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.711757 125.517686 
+L 113.271027 125.681753 
+L 127.249844 115.179306 
+L 126.690575 115.015239 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 112.711757 149.391375 
+L 113.271027 149.555441 
+L 113.271027 125.681753 
+L 112.711757 125.517686 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_76">
+    <path d="M 127.809114 139.21706 
+L 127.249844 139.052994 
+L 127.249844 115.179306 
+L 127.809114 115.343372 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.271027 149.555441 
+L 113.830297 149.719507 
+L 127.809114 139.21706 
+L 127.249844 139.052994 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.249844 139.052994 
+L 113.271027 149.555441 
+L 113.271027 125.681753 
+L 127.249844 115.179306 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.830297 149.719507 
+L 127.809114 139.21706 
+L 127.809114 115.343372 
+L 113.830297 125.845819 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.271027 125.681753 
+L 113.830297 125.845819 
+L 127.809114 115.343372 
+L 127.249844 115.179306 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.271027 149.555441 
+L 113.830297 149.719507 
+L 113.830297 125.845819 
+L 113.271027 125.681753 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_77">
+    <path d="M 128.368384 139.381127 
+L 127.809114 139.21706 
+L 127.809114 114.761087 
+L 128.368384 114.925154 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.830297 149.719507 
+L 114.389566 149.883574 
+L 128.368384 139.381127 
+L 127.809114 139.21706 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.809114 139.21706 
+L 113.830297 149.719507 
+L 113.830297 125.263534 
+L 127.809114 114.761087 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.389566 149.883574 
+L 128.368384 139.381127 
+L 128.368384 114.925154 
+L 114.389566 125.427601 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.830297 125.263534 
+L 114.389566 125.427601 
+L 128.368384 114.925154 
+L 127.809114 114.761087 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 113.830297 149.719507 
+L 114.389566 149.883574 
+L 114.389566 125.427601 
+L 113.830297 125.263534 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_78">
+    <path d="M 128.927653 139.545193 
+L 128.368384 139.381127 
+L 128.368384 114.342868 
+L 128.927653 114.506935 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.389566 149.883574 
+L 114.948836 150.04764 
+L 128.927653 139.545193 
+L 128.368384 139.381127 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.368384 139.381127 
+L 114.389566 149.883574 
+L 114.389566 124.845316 
+L 128.368384 114.342868 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.948836 150.04764 
+L 128.927653 139.545193 
+L 128.927653 114.506935 
+L 114.948836 125.009382 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.389566 124.845316 
+L 114.948836 125.009382 
+L 128.927653 114.506935 
+L 128.368384 114.342868 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.389566 149.883574 
+L 114.948836 150.04764 
+L 114.948836 125.009382 
+L 114.389566 124.845316 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_79">
+    <path d="M 129.486923 139.70926 
+L 128.927653 139.545193 
+L 128.927653 114.506935 
+L 129.486923 114.671001 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.948836 150.04764 
+L 115.508105 150.211707 
+L 129.486923 139.70926 
+L 128.927653 139.545193 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.927653 139.545193 
+L 114.948836 150.04764 
+L 114.948836 125.009382 
+L 128.927653 114.506935 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 115.508105 150.211707 
+L 129.486923 139.70926 
+L 129.486923 114.671001 
+L 115.508105 125.173448 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.948836 125.009382 
+L 115.508105 125.173448 
+L 129.486923 114.671001 
+L 128.927653 114.506935 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 114.948836 150.04764 
+L 115.508105 150.211707 
+L 115.508105 125.173448 
+L 114.948836 125.009382 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_80">
+    <path d="M 130.046193 139.873326 
+L 129.486923 139.70926 
+L 129.486923 114.088716 
+L 130.046193 114.252783 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 115.508105 150.211707 
+L 116.067375 150.375773 
+L 130.046193 139.873326 
+L 129.486923 139.70926 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 129.486923 139.70926 
+L 115.508105 150.211707 
+L 115.508105 124.591163 
+L 129.486923 114.088716 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.067375 150.375773 
+L 130.046193 139.873326 
+L 130.046193 114.252783 
+L 116.067375 124.75523 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 115.508105 124.591163 
+L 116.067375 124.75523 
+L 130.046193 114.252783 
+L 129.486923 114.088716 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 115.508105 150.211707 
+L 116.067375 150.375773 
+L 116.067375 124.75523 
+L 115.508105 124.591163 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_81">
+    <path d="M 130.605462 140.037393 
+L 130.046193 139.873326 
+L 130.046193 114.252783 
+L 130.605462 114.416849 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.067375 150.375773 
+L 116.626645 150.53984 
+L 130.605462 140.037393 
+L 130.046193 139.873326 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.046193 139.873326 
+L 116.067375 150.375773 
+L 116.067375 124.75523 
+L 130.046193 114.252783 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.626645 150.53984 
+L 130.605462 140.037393 
+L 130.605462 114.416849 
+L 116.626645 124.919296 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.067375 124.75523 
+L 116.626645 124.919296 
+L 130.605462 114.416849 
+L 130.046193 114.252783 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.067375 150.375773 
+L 116.626645 150.53984 
+L 116.626645 124.919296 
+L 116.067375 124.75523 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_82">
+    <path d="M 131.164732 140.201459 
+L 130.605462 140.037393 
+L 130.605462 113.834564 
+L 131.164732 113.99863 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.626645 150.53984 
+L 117.185914 150.703906 
+L 131.164732 140.201459 
+L 130.605462 140.037393 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.605462 140.037393 
+L 116.626645 150.53984 
+L 116.626645 124.337011 
+L 130.605462 113.834564 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.185914 150.703906 
+L 131.164732 140.201459 
+L 131.164732 113.99863 
+L 117.185914 124.501078 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.626645 124.337011 
+L 117.185914 124.501078 
+L 131.164732 113.99863 
+L 130.605462 113.834564 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 116.626645 150.53984 
+L 117.185914 150.703906 
+L 117.185914 124.501078 
+L 116.626645 124.337011 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_83">
+    <path d="M 131.724001 140.365525 
+L 131.164732 140.201459 
+L 131.164732 113.99863 
+L 131.724001 114.162697 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.185914 150.703906 
+L 117.745184 150.867973 
+L 131.724001 140.365525 
+L 131.164732 140.201459 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.164732 140.201459 
+L 117.185914 150.703906 
+L 117.185914 124.501078 
+L 131.164732 113.99863 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.745184 150.867973 
+L 131.724001 140.365525 
+L 131.724001 114.162697 
+L 117.745184 124.665144 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.185914 124.501078 
+L 117.745184 124.665144 
+L 131.724001 114.162697 
+L 131.164732 113.99863 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.185914 150.703906 
+L 117.745184 150.867973 
+L 117.745184 124.665144 
+L 117.185914 124.501078 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_84">
+    <path d="M 132.283271 140.529592 
+L 131.724001 140.365525 
+L 131.724001 113.580412 
+L 132.283271 113.744478 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.745184 150.867973 
+L 118.304453 151.032039 
+L 132.283271 140.529592 
+L 131.724001 140.365525 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.724001 140.365525 
+L 117.745184 150.867973 
+L 117.745184 124.082859 
+L 131.724001 113.580412 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.304453 151.032039 
+L 132.283271 140.529592 
+L 132.283271 113.744478 
+L 118.304453 124.246925 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.745184 124.082859 
+L 118.304453 124.246925 
+L 132.283271 113.744478 
+L 131.724001 113.580412 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 117.745184 150.867973 
+L 118.304453 151.032039 
+L 118.304453 124.246925 
+L 117.745184 124.082859 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_85">
+    <path d="M 132.842541 140.693658 
+L 132.283271 140.529592 
+L 132.283271 113.162193 
+L 132.842541 113.32626 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.304453 151.032039 
+L 118.863723 151.196105 
+L 132.842541 140.693658 
+L 132.283271 140.529592 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.283271 140.529592 
+L 118.304453 151.032039 
+L 118.304453 123.66464 
+L 132.283271 113.162193 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.863723 151.196105 
+L 132.842541 140.693658 
+L 132.842541 113.32626 
+L 118.863723 123.828707 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.304453 123.66464 
+L 118.863723 123.828707 
+L 132.842541 113.32626 
+L 132.283271 113.162193 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.304453 151.032039 
+L 118.863723 151.196105 
+L 118.863723 123.828707 
+L 118.304453 123.66464 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_86">
+    <path d="M 133.40181 140.857725 
+L 132.842541 140.693658 
+L 132.842541 113.32626 
+L 133.40181 113.490326 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.863723 151.196105 
+L 119.422993 151.360172 
+L 133.40181 140.857725 
+L 132.842541 140.693658 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.842541 140.693658 
+L 118.863723 151.196105 
+L 118.863723 123.828707 
+L 132.842541 113.32626 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.422993 151.360172 
+L 133.40181 140.857725 
+L 133.40181 113.490326 
+L 119.422993 123.992773 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.863723 123.828707 
+L 119.422993 123.992773 
+L 133.40181 113.490326 
+L 132.842541 113.32626 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 118.863723 151.196105 
+L 119.422993 151.360172 
+L 119.422993 123.992773 
+L 118.863723 123.828707 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_87">
+    <path d="M 133.96108 141.021791 
+L 133.40181 140.857725 
+L 133.40181 112.908041 
+L 133.96108 113.072107 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.422993 151.360172 
+L 119.982262 151.524238 
+L 133.96108 141.021791 
+L 133.40181 140.857725 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.40181 140.857725 
+L 119.422993 151.360172 
+L 119.422993 123.410488 
+L 133.40181 112.908041 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.982262 151.524238 
+L 133.96108 141.021791 
+L 133.96108 113.072107 
+L 119.982262 123.574554 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.422993 123.410488 
+L 119.982262 123.574554 
+L 133.96108 113.072107 
+L 133.40181 112.908041 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.422993 151.360172 
+L 119.982262 151.524238 
+L 119.982262 123.574554 
+L 119.422993 123.410488 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_88">
+    <path d="M 134.520349 141.185858 
+L 133.96108 141.021791 
+L 133.96108 113.072107 
+L 134.520349 113.236174 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.982262 151.524238 
+L 120.541532 151.688305 
+L 134.520349 141.185858 
+L 133.96108 141.021791 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.96108 141.021791 
+L 119.982262 151.524238 
+L 119.982262 123.574554 
+L 133.96108 113.072107 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 120.541532 151.688305 
+L 134.520349 141.185858 
+L 134.520349 113.236174 
+L 120.541532 123.738621 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.982262 123.574554 
+L 120.541532 123.738621 
+L 134.520349 113.236174 
+L 133.96108 113.072107 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 119.982262 151.524238 
+L 120.541532 151.688305 
+L 120.541532 123.738621 
+L 119.982262 123.574554 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_89">
+    <path d="M 135.079619 141.349924 
+L 134.520349 141.185858 
+L 134.520349 112.653889 
+L 135.079619 112.817955 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 120.541532 151.688305 
+L 121.100802 151.852371 
+L 135.079619 141.349924 
+L 134.520349 141.185858 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 134.520349 141.185858 
+L 120.541532 151.688305 
+L 120.541532 123.156336 
+L 134.520349 112.653889 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.100802 151.852371 
+L 135.079619 141.349924 
+L 135.079619 112.817955 
+L 121.100802 123.320402 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 120.541532 123.156336 
+L 121.100802 123.320402 
+L 135.079619 112.817955 
+L 134.520349 112.653889 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 120.541532 151.688305 
+L 121.100802 151.852371 
+L 121.100802 123.320402 
+L 120.541532 123.156336 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_90">
+    <path d="M 135.638889 141.51399 
+L 135.079619 141.349924 
+L 135.079619 112.817955 
+L 135.638889 112.982022 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.100802 151.852371 
+L 121.660071 152.016438 
+L 135.638889 141.51399 
+L 135.079619 141.349924 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.079619 141.349924 
+L 121.100802 151.852371 
+L 121.100802 123.320402 
+L 135.079619 112.817955 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.660071 152.016438 
+L 135.638889 141.51399 
+L 135.638889 112.982022 
+L 121.660071 123.484469 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.100802 123.320402 
+L 121.660071 123.484469 
+L 135.638889 112.982022 
+L 135.079619 112.817955 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.100802 151.852371 
+L 121.660071 152.016438 
+L 121.660071 123.484469 
+L 121.100802 123.320402 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_91">
+    <path d="M 136.198158 141.678057 
+L 135.638889 141.51399 
+L 135.638889 112.399737 
+L 136.198158 112.563803 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.660071 152.016438 
+L 122.219341 152.180504 
+L 136.198158 141.678057 
+L 135.638889 141.51399 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.638889 141.51399 
+L 121.660071 152.016438 
+L 121.660071 122.902184 
+L 135.638889 112.399737 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.219341 152.180504 
+L 136.198158 141.678057 
+L 136.198158 112.563803 
+L 122.219341 123.06625 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.660071 122.902184 
+L 122.219341 123.06625 
+L 136.198158 112.563803 
+L 135.638889 112.399737 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 121.660071 152.016438 
+L 122.219341 152.180504 
+L 122.219341 123.06625 
+L 121.660071 122.902184 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_92">
+    <path d="M 136.757428 141.842123 
+L 136.198158 141.678057 
+L 136.198158 111.981518 
+L 136.757428 112.145584 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.219341 152.180504 
+L 122.77861 152.34457 
+L 136.757428 141.842123 
+L 136.198158 141.678057 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.198158 141.678057 
+L 122.219341 152.180504 
+L 122.219341 122.483965 
+L 136.198158 111.981518 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.77861 152.34457 
+L 136.757428 141.842123 
+L 136.757428 112.145584 
+L 122.77861 122.648031 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.219341 122.483965 
+L 122.77861 122.648031 
+L 136.757428 112.145584 
+L 136.198158 111.981518 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.219341 152.180504 
+L 122.77861 152.34457 
+L 122.77861 122.648031 
+L 122.219341 122.483965 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_93">
+    <path d="M 137.316697 142.00619 
+L 136.757428 141.842123 
+L 136.757428 112.145584 
+L 137.316697 112.309651 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.77861 152.34457 
+L 123.33788 152.508637 
+L 137.316697 142.00619 
+L 136.757428 141.842123 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.757428 141.842123 
+L 122.77861 152.34457 
+L 122.77861 122.648031 
+L 136.757428 112.145584 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.33788 152.508637 
+L 137.316697 142.00619 
+L 137.316697 112.309651 
+L 123.33788 122.812098 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.77861 122.648031 
+L 123.33788 122.812098 
+L 137.316697 112.309651 
+L 136.757428 112.145584 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 122.77861 152.34457 
+L 123.33788 152.508637 
+L 123.33788 122.812098 
+L 122.77861 122.648031 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_94">
+    <path d="M 137.875967 142.170256 
+L 137.316697 142.00619 
+L 137.316697 111.727366 
+L 137.875967 111.891432 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.33788 152.508637 
+L 123.89715 152.672703 
+L 137.875967 142.170256 
+L 137.316697 142.00619 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.316697 142.00619 
+L 123.33788 152.508637 
+L 123.33788 122.229813 
+L 137.316697 111.727366 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.89715 152.672703 
+L 137.875967 142.170256 
+L 137.875967 111.891432 
+L 123.89715 122.393879 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.33788 122.229813 
+L 123.89715 122.393879 
+L 137.875967 111.891432 
+L 137.316697 111.727366 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.33788 152.508637 
+L 123.89715 152.672703 
+L 123.89715 122.393879 
+L 123.33788 122.229813 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_95">
+    <path d="M 138.435237 142.334323 
+L 137.875967 142.170256 
+L 137.875967 111.891432 
+L 138.435237 112.055499 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.89715 152.672703 
+L 124.456419 152.83677 
+L 138.435237 142.334323 
+L 137.875967 142.170256 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.875967 142.170256 
+L 123.89715 152.672703 
+L 123.89715 122.393879 
+L 137.875967 111.891432 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 124.456419 152.83677 
+L 138.435237 142.334323 
+L 138.435237 112.055499 
+L 124.456419 122.557946 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.89715 122.393879 
+L 124.456419 122.557946 
+L 138.435237 112.055499 
+L 137.875967 111.891432 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 123.89715 152.672703 
+L 124.456419 152.83677 
+L 124.456419 122.557946 
+L 123.89715 122.393879 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_96">
+    <path d="M 138.994506 142.498389 
+L 138.435237 142.334323 
+L 138.435237 111.473213 
+L 138.994506 111.63728 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 124.456419 152.83677 
+L 125.015689 153.000836 
+L 138.994506 142.498389 
+L 138.435237 142.334323 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.435237 142.334323 
+L 124.456419 152.83677 
+L 124.456419 121.975661 
+L 138.435237 111.473213 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.015689 153.000836 
+L 138.994506 142.498389 
+L 138.994506 111.63728 
+L 125.015689 122.139727 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 124.456419 121.975661 
+L 125.015689 122.139727 
+L 138.994506 111.63728 
+L 138.435237 111.473213 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 124.456419 152.83677 
+L 125.015689 153.000836 
+L 125.015689 122.139727 
+L 124.456419 121.975661 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_97">
+    <path d="M 139.553776 142.662456 
+L 138.994506 142.498389 
+L 138.994506 111.054995 
+L 139.553776 111.219061 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.015689 153.000836 
+L 125.574958 153.164903 
+L 139.553776 142.662456 
+L 138.994506 142.498389 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.994506 142.498389 
+L 125.015689 153.000836 
+L 125.015689 121.557442 
+L 138.994506 111.054995 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.574958 153.164903 
+L 139.553776 142.662456 
+L 139.553776 111.219061 
+L 125.574958 121.721508 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.015689 121.557442 
+L 125.574958 121.721508 
+L 139.553776 111.219061 
+L 138.994506 111.054995 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.015689 153.000836 
+L 125.574958 153.164903 
+L 125.574958 121.721508 
+L 125.015689 121.557442 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_98">
+    <path d="M 140.113045 142.826522 
+L 139.553776 142.662456 
+L 139.553776 111.219061 
+L 140.113045 111.383128 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.574958 153.164903 
+L 126.134228 153.328969 
+L 140.113045 142.826522 
+L 139.553776 142.662456 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 139.553776 142.662456 
+L 125.574958 153.164903 
+L 125.574958 121.721508 
+L 139.553776 111.219061 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.134228 153.328969 
+L 140.113045 142.826522 
+L 140.113045 111.383128 
+L 126.134228 121.885575 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.574958 121.721508 
+L 126.134228 121.885575 
+L 140.113045 111.383128 
+L 139.553776 111.219061 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 125.574958 153.164903 
+L 126.134228 153.328969 
+L 126.134228 121.885575 
+L 125.574958 121.721508 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_99">
+    <path d="M 140.672315 142.990588 
+L 140.113045 142.826522 
+L 140.113045 110.800843 
+L 140.672315 110.964909 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.134228 153.328969 
+L 126.693498 153.493035 
+L 140.672315 142.990588 
+L 140.113045 142.826522 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.113045 142.826522 
+L 126.134228 153.328969 
+L 126.134228 121.30329 
+L 140.113045 110.800843 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.693498 153.493035 
+L 140.672315 142.990588 
+L 140.672315 110.964909 
+L 126.693498 121.467356 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.134228 121.30329 
+L 126.693498 121.467356 
+L 140.672315 110.964909 
+L 140.113045 110.800843 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.134228 153.328969 
+L 126.693498 153.493035 
+L 126.693498 121.467356 
+L 126.134228 121.30329 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_100">
+    <path d="M 141.231585 143.154655 
+L 140.672315 142.990588 
+L 140.672315 110.964909 
+L 141.231585 111.128975 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.693498 153.493035 
+L 127.252767 153.657102 
+L 141.231585 143.154655 
+L 140.672315 142.990588 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.672315 142.990588 
+L 126.693498 153.493035 
+L 126.693498 121.467356 
+L 140.672315 110.964909 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.252767 153.657102 
+L 141.231585 143.154655 
+L 141.231585 111.128975 
+L 127.252767 121.631423 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.693498 121.467356 
+L 127.252767 121.631423 
+L 141.231585 111.128975 
+L 140.672315 110.964909 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 126.693498 153.493035 
+L 127.252767 153.657102 
+L 127.252767 121.631423 
+L 126.693498 121.467356 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_101">
+    <path d="M 141.790854 143.318721 
+L 141.231585 143.154655 
+L 141.231585 110.54669 
+L 141.790854 110.710757 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.252767 153.657102 
+L 127.812037 153.821168 
+L 141.790854 143.318721 
+L 141.231585 143.154655 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.231585 143.154655 
+L 127.252767 153.657102 
+L 127.252767 121.049137 
+L 141.231585 110.54669 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.812037 153.821168 
+L 141.790854 143.318721 
+L 141.790854 110.710757 
+L 127.812037 121.213204 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.252767 121.049137 
+L 127.812037 121.213204 
+L 141.790854 110.710757 
+L 141.231585 110.54669 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.252767 153.657102 
+L 127.812037 153.821168 
+L 127.812037 121.213204 
+L 127.252767 121.049137 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_102">
+    <path d="M 142.350124 143.482788 
+L 141.790854 143.318721 
+L 141.790854 110.710757 
+L 142.350124 110.874823 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.812037 153.821168 
+L 128.371306 153.985235 
+L 142.350124 143.482788 
+L 141.790854 143.318721 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.790854 143.318721 
+L 127.812037 153.821168 
+L 127.812037 121.213204 
+L 141.790854 110.710757 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.371306 153.985235 
+L 142.350124 143.482788 
+L 142.350124 110.874823 
+L 128.371306 121.37727 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.812037 121.213204 
+L 128.371306 121.37727 
+L 142.350124 110.874823 
+L 141.790854 110.710757 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 127.812037 153.821168 
+L 128.371306 153.985235 
+L 128.371306 121.37727 
+L 127.812037 121.213204 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_103">
+    <path d="M 142.909393 143.646854 
+L 142.350124 143.482788 
+L 142.350124 110.292538 
+L 142.909393 110.456605 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.371306 153.985235 
+L 128.930576 154.149301 
+L 142.909393 143.646854 
+L 142.350124 143.482788 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 142.350124 143.482788 
+L 128.371306 153.985235 
+L 128.371306 120.794985 
+L 142.350124 110.292538 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.930576 154.149301 
+L 142.909393 143.646854 
+L 142.909393 110.456605 
+L 128.930576 120.959052 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.371306 120.794985 
+L 128.930576 120.959052 
+L 142.909393 110.456605 
+L 142.350124 110.292538 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.371306 153.985235 
+L 128.930576 154.149301 
+L 128.930576 120.959052 
+L 128.371306 120.794985 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_104">
+    <path d="M 143.468663 143.810921 
+L 142.909393 143.646854 
+L 142.909393 109.87432 
+L 143.468663 110.038386 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.930576 154.149301 
+L 129.489846 154.313368 
+L 143.468663 143.810921 
+L 142.909393 143.646854 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 142.909393 143.646854 
+L 128.930576 154.149301 
+L 128.930576 120.376767 
+L 142.909393 109.87432 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 129.489846 154.313368 
+L 143.468663 143.810921 
+L 143.468663 110.038386 
+L 129.489846 120.540833 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.930576 120.376767 
+L 129.489846 120.540833 
+L 143.468663 110.038386 
+L 142.909393 109.87432 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 128.930576 154.149301 
+L 129.489846 154.313368 
+L 129.489846 120.540833 
+L 128.930576 120.376767 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_105">
+    <path d="M 144.027933 143.974987 
+L 143.468663 143.810921 
+L 143.468663 110.038386 
+L 144.027933 110.202452 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 129.489846 154.313368 
+L 130.049115 154.477434 
+L 144.027933 143.974987 
+L 143.468663 143.810921 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 143.468663 143.810921 
+L 129.489846 154.313368 
+L 129.489846 120.540833 
+L 143.468663 110.038386 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.049115 154.477434 
+L 144.027933 143.974987 
+L 144.027933 110.202452 
+L 130.049115 120.704899 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 129.489846 120.540833 
+L 130.049115 120.704899 
+L 144.027933 110.202452 
+L 143.468663 110.038386 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 129.489846 154.313368 
+L 130.049115 154.477434 
+L 130.049115 120.704899 
+L 129.489846 120.540833 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_106">
+    <path d="M 144.587202 144.139053 
+L 144.027933 143.974987 
+L 144.027933 109.620167 
+L 144.587202 109.784234 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.049115 154.477434 
+L 130.608385 154.6415 
+L 144.587202 144.139053 
+L 144.027933 143.974987 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 144.027933 143.974987 
+L 130.049115 154.477434 
+L 130.049115 120.122614 
+L 144.027933 109.620167 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.608385 154.6415 
+L 144.587202 144.139053 
+L 144.587202 109.784234 
+L 130.608385 120.286681 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.049115 120.122614 
+L 130.608385 120.286681 
+L 144.587202 109.784234 
+L 144.027933 109.620167 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.049115 154.477434 
+L 130.608385 154.6415 
+L 130.608385 120.286681 
+L 130.049115 120.122614 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_107">
+    <path d="M 145.146472 144.30312 
+L 144.587202 144.139053 
+L 144.587202 109.784234 
+L 145.146472 109.9483 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.608385 154.6415 
+L 131.167654 154.805567 
+L 145.146472 144.30312 
+L 144.587202 144.139053 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 144.587202 144.139053 
+L 130.608385 154.6415 
+L 130.608385 120.286681 
+L 144.587202 109.784234 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.167654 154.805567 
+L 145.146472 144.30312 
+L 145.146472 109.9483 
+L 131.167654 120.450747 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.608385 120.286681 
+L 131.167654 120.450747 
+L 145.146472 109.9483 
+L 144.587202 109.784234 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 130.608385 154.6415 
+L 131.167654 154.805567 
+L 131.167654 120.450747 
+L 130.608385 120.286681 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_108">
+    <path d="M 145.705741 144.467186 
+L 145.146472 144.30312 
+L 145.146472 109.366015 
+L 145.705741 109.530082 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.167654 154.805567 
+L 131.726924 154.969633 
+L 145.705741 144.467186 
+L 145.146472 144.30312 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 145.146472 144.30312 
+L 131.167654 154.805567 
+L 131.167654 119.868462 
+L 145.146472 109.366015 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.726924 154.969633 
+L 145.705741 144.467186 
+L 145.705741 109.530082 
+L 131.726924 120.032529 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.167654 119.868462 
+L 131.726924 120.032529 
+L 145.705741 109.530082 
+L 145.146472 109.366015 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.167654 154.805567 
+L 131.726924 154.969633 
+L 131.726924 120.032529 
+L 131.167654 119.868462 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_109">
+    <path d="M 146.265011 144.631253 
+L 145.705741 144.467186 
+L 145.705741 109.530082 
+L 146.265011 109.694148 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.726924 154.969633 
+L 132.286194 155.1337 
+L 146.265011 144.631253 
+L 145.705741 144.467186 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 145.705741 144.467186 
+L 131.726924 154.969633 
+L 131.726924 120.032529 
+L 145.705741 109.530082 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.286194 155.1337 
+L 146.265011 144.631253 
+L 146.265011 109.694148 
+L 132.286194 120.196595 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.726924 120.032529 
+L 132.286194 120.196595 
+L 146.265011 109.694148 
+L 145.705741 109.530082 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 131.726924 154.969633 
+L 132.286194 155.1337 
+L 132.286194 120.196595 
+L 131.726924 120.032529 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_110">
+    <path d="M 146.824281 144.795319 
+L 146.265011 144.631253 
+L 146.265011 109.111863 
+L 146.824281 109.275929 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.286194 155.1337 
+L 132.845463 155.297766 
+L 146.824281 144.795319 
+L 146.265011 144.631253 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 146.265011 144.631253 
+L 132.286194 155.1337 
+L 132.286194 119.61431 
+L 146.265011 109.111863 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.845463 155.297766 
+L 146.824281 144.795319 
+L 146.824281 109.275929 
+L 132.845463 119.778376 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.286194 119.61431 
+L 132.845463 119.778376 
+L 146.824281 109.275929 
+L 146.265011 109.111863 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.286194 155.1337 
+L 132.845463 155.297766 
+L 132.845463 119.778376 
+L 132.286194 119.61431 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_111">
+    <path d="M 147.38355 144.959386 
+L 146.824281 144.795319 
+L 146.824281 108.693644 
+L 147.38355 108.857711 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.845463 155.297766 
+L 133.404733 155.461833 
+L 147.38355 144.959386 
+L 146.824281 144.795319 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 146.824281 144.795319 
+L 132.845463 155.297766 
+L 132.845463 119.196091 
+L 146.824281 108.693644 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.404733 155.461833 
+L 147.38355 144.959386 
+L 147.38355 108.857711 
+L 133.404733 119.360158 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.845463 119.196091 
+L 133.404733 119.360158 
+L 147.38355 108.857711 
+L 146.824281 108.693644 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 132.845463 155.297766 
+L 133.404733 155.461833 
+L 133.404733 119.360158 
+L 132.845463 119.196091 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_112">
+    <path d="M 147.94282 145.123452 
+L 147.38355 144.959386 
+L 147.38355 108.857711 
+L 147.94282 109.021777 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.404733 155.461833 
+L 133.964002 155.625899 
+L 147.94282 145.123452 
+L 147.38355 144.959386 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 147.38355 144.959386 
+L 133.404733 155.461833 
+L 133.404733 119.360158 
+L 147.38355 108.857711 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.964002 155.625899 
+L 147.94282 145.123452 
+L 147.94282 109.021777 
+L 133.964002 119.524224 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.404733 119.360158 
+L 133.964002 119.524224 
+L 147.94282 109.021777 
+L 147.38355 108.857711 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.404733 155.461833 
+L 133.964002 155.625899 
+L 133.964002 119.524224 
+L 133.404733 119.360158 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_113">
+    <path d="M 148.50209 145.287518 
+L 147.94282 145.123452 
+L 147.94282 108.439492 
+L 148.50209 108.603558 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.964002 155.625899 
+L 134.523272 155.789965 
+L 148.50209 145.287518 
+L 147.94282 145.123452 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 147.94282 145.123452 
+L 133.964002 155.625899 
+L 133.964002 118.941939 
+L 147.94282 108.439492 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 134.523272 155.789965 
+L 148.50209 145.287518 
+L 148.50209 108.603558 
+L 134.523272 119.106006 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.964002 118.941939 
+L 134.523272 119.106006 
+L 148.50209 108.603558 
+L 147.94282 108.439492 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 133.964002 155.625899 
+L 134.523272 155.789965 
+L 134.523272 119.106006 
+L 133.964002 118.941939 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_114">
+    <path d="M 149.061359 145.451585 
+L 148.50209 145.287518 
+L 148.50209 108.603558 
+L 149.061359 108.767625 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 134.523272 155.789965 
+L 135.082542 155.954032 
+L 149.061359 145.451585 
+L 148.50209 145.287518 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 148.50209 145.287518 
+L 134.523272 155.789965 
+L 134.523272 119.106006 
+L 148.50209 108.603558 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.082542 155.954032 
+L 149.061359 145.451585 
+L 149.061359 108.767625 
+L 135.082542 119.270072 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 134.523272 119.106006 
+L 135.082542 119.270072 
+L 149.061359 108.767625 
+L 148.50209 108.603558 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 134.523272 155.789965 
+L 135.082542 155.954032 
+L 135.082542 119.270072 
+L 134.523272 119.106006 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_115">
+    <path d="M 135.082542 155.954032 
+L 135.641811 156.118098 
+L 149.620629 145.615651 
+L 149.061359 145.451585 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 149.620629 145.615651 
+L 149.061359 145.451585 
+L 149.061359 108.18534 
+L 149.620629 108.349406 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 149.061359 145.451585 
+L 135.082542 155.954032 
+L 135.082542 118.687787 
+L 149.061359 108.18534 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.641811 156.118098 
+L 149.620629 145.615651 
+L 149.620629 108.349406 
+L 135.641811 118.851853 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.082542 155.954032 
+L 135.641811 156.118098 
+L 135.641811 118.851853 
+L 135.082542 118.687787 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.082542 118.687787 
+L 135.641811 118.851853 
+L 149.620629 108.349406 
+L 149.061359 108.18534 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_116">
+    <path d="M 135.641811 156.118098 
+L 136.201081 156.282165 
+L 150.179898 145.779718 
+L 149.620629 145.615651 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 150.179898 145.779718 
+L 149.620629 145.615651 
+L 149.620629 107.767121 
+L 150.179898 107.931188 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 149.620629 145.615651 
+L 135.641811 156.118098 
+L 135.641811 118.269568 
+L 149.620629 107.767121 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.201081 156.282165 
+L 150.179898 145.779718 
+L 150.179898 107.931188 
+L 136.201081 118.433635 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.641811 156.118098 
+L 136.201081 156.282165 
+L 136.201081 118.433635 
+L 135.641811 118.269568 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 135.641811 118.269568 
+L 136.201081 118.433635 
+L 150.179898 107.931188 
+L 149.620629 107.767121 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_117">
+    <path d="M 136.201081 156.282165 
+L 136.76035 156.446231 
+L 150.739168 145.943784 
+L 150.179898 145.779718 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 150.739168 145.943784 
+L 150.179898 145.779718 
+L 150.179898 107.931188 
+L 150.739168 108.095254 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 150.179898 145.779718 
+L 136.201081 156.282165 
+L 136.201081 118.433635 
+L 150.179898 107.931188 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.76035 156.446231 
+L 150.739168 145.943784 
+L 150.739168 108.095254 
+L 136.76035 118.597701 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.201081 156.282165 
+L 136.76035 156.446231 
+L 136.76035 118.597701 
+L 136.201081 118.433635 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.201081 118.433635 
+L 136.76035 118.597701 
+L 150.739168 108.095254 
+L 150.179898 107.931188 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_118">
+    <path d="M 136.76035 156.446231 
+L 137.31962 156.610298 
+L 151.298438 146.107851 
+L 150.739168 145.943784 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 151.298438 146.107851 
+L 150.739168 145.943784 
+L 150.739168 107.512969 
+L 151.298438 107.677035 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 150.739168 145.943784 
+L 136.76035 156.446231 
+L 136.76035 118.015416 
+L 150.739168 107.512969 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.31962 156.610298 
+L 151.298438 146.107851 
+L 151.298438 107.677035 
+L 137.31962 118.179482 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.76035 156.446231 
+L 137.31962 156.610298 
+L 137.31962 118.179482 
+L 136.76035 118.015416 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 136.76035 118.015416 
+L 137.31962 118.179482 
+L 151.298438 107.677035 
+L 150.739168 107.512969 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_119">
+    <path d="M 137.31962 156.610298 
+L 137.87889 156.774364 
+L 151.857707 146.271917 
+L 151.298438 146.107851 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 151.857707 146.271917 
+L 151.298438 146.107851 
+L 151.298438 107.677035 
+L 151.857707 107.841102 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 151.298438 146.107851 
+L 137.31962 156.610298 
+L 137.31962 118.179482 
+L 151.298438 107.677035 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.87889 156.774364 
+L 151.857707 146.271917 
+L 151.857707 107.841102 
+L 137.87889 118.343549 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.31962 156.610298 
+L 137.87889 156.774364 
+L 137.87889 118.343549 
+L 137.31962 118.179482 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.31962 118.179482 
+L 137.87889 118.343549 
+L 151.857707 107.841102 
+L 151.298438 107.677035 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_120">
+    <path d="M 137.87889 156.774364 
+L 138.438159 156.93843 
+L 152.416977 146.435983 
+L 151.857707 146.271917 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 152.416977 146.435983 
+L 151.857707 146.271917 
+L 151.857707 107.258817 
+L 152.416977 107.422883 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 151.857707 146.271917 
+L 137.87889 156.774364 
+L 137.87889 117.761264 
+L 151.857707 107.258817 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.438159 156.93843 
+L 152.416977 146.435983 
+L 152.416977 107.422883 
+L 138.438159 117.92533 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.87889 156.774364 
+L 138.438159 156.93843 
+L 138.438159 117.92533 
+L 137.87889 117.761264 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 137.87889 117.761264 
+L 138.438159 117.92533 
+L 152.416977 107.422883 
+L 151.857707 107.258817 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_121">
+    <path d="M 138.438159 156.93843 
+L 138.997429 157.102497 
+L 152.976246 146.60005 
+L 152.416977 146.435983 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 152.976246 146.60005 
+L 152.416977 146.435983 
+L 152.416977 107.422883 
+L 152.976246 107.58695 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 152.416977 146.435983 
+L 138.438159 156.93843 
+L 138.438159 117.92533 
+L 152.416977 107.422883 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.997429 157.102497 
+L 152.976246 146.60005 
+L 152.976246 107.58695 
+L 138.997429 118.089397 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.438159 156.93843 
+L 138.997429 157.102497 
+L 138.997429 118.089397 
+L 138.438159 117.92533 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.438159 117.92533 
+L 138.997429 118.089397 
+L 152.976246 107.58695 
+L 152.416977 107.422883 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_122">
+    <path d="M 138.997429 157.102497 
+L 139.556699 157.266563 
+L 153.535516 146.764116 
+L 152.976246 146.60005 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 153.535516 146.764116 
+L 152.976246 146.60005 
+L 152.976246 107.004665 
+L 153.535516 107.168731 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 152.976246 146.60005 
+L 138.997429 157.102497 
+L 138.997429 117.507112 
+L 152.976246 107.004665 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 139.556699 157.266563 
+L 153.535516 146.764116 
+L 153.535516 107.168731 
+L 139.556699 117.671178 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.997429 157.102497 
+L 139.556699 157.266563 
+L 139.556699 117.671178 
+L 138.997429 117.507112 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 138.997429 117.507112 
+L 139.556699 117.671178 
+L 153.535516 107.168731 
+L 152.976246 107.004665 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_123">
+    <path d="M 139.556699 157.266563 
+L 140.115968 157.43063 
+L 154.094786 146.928183 
+L 153.535516 146.764116 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 154.094786 146.928183 
+L 153.535516 146.764116 
+L 153.535516 106.586446 
+L 154.094786 106.750512 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 153.535516 146.764116 
+L 139.556699 157.266563 
+L 139.556699 117.088893 
+L 153.535516 106.586446 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.115968 157.43063 
+L 154.094786 146.928183 
+L 154.094786 106.750512 
+L 140.115968 117.252959 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 139.556699 157.266563 
+L 140.115968 157.43063 
+L 140.115968 117.252959 
+L 139.556699 117.088893 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 139.556699 117.088893 
+L 140.115968 117.252959 
+L 154.094786 106.750512 
+L 153.535516 106.586446 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_124">
+    <path d="M 140.115968 157.43063 
+L 140.675238 157.594696 
+L 154.654055 147.092249 
+L 154.094786 146.928183 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 154.654055 147.092249 
+L 154.094786 146.928183 
+L 154.094786 106.750512 
+L 154.654055 106.914579 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 154.094786 146.928183 
+L 140.115968 157.43063 
+L 140.115968 117.252959 
+L 154.094786 106.750512 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.675238 157.594696 
+L 154.654055 147.092249 
+L 154.654055 106.914579 
+L 140.675238 117.417026 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.115968 157.43063 
+L 140.675238 157.594696 
+L 140.675238 117.417026 
+L 140.115968 117.252959 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.115968 117.252959 
+L 140.675238 117.417026 
+L 154.654055 106.914579 
+L 154.094786 106.750512 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_125">
+    <path d="M 140.675238 157.594696 
+L 141.234507 157.758763 
+L 155.213325 147.256316 
+L 154.654055 147.092249 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 155.213325 147.256316 
+L 154.654055 147.092249 
+L 154.654055 106.332294 
+L 155.213325 106.49636 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 154.654055 147.092249 
+L 140.675238 157.594696 
+L 140.675238 116.834741 
+L 154.654055 106.332294 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.234507 157.758763 
+L 155.213325 147.256316 
+L 155.213325 106.49636 
+L 141.234507 116.998807 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.675238 157.594696 
+L 141.234507 157.758763 
+L 141.234507 116.998807 
+L 140.675238 116.834741 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 140.675238 116.834741 
+L 141.234507 116.998807 
+L 155.213325 106.49636 
+L 154.654055 106.332294 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="Poly3DCollection_126">
+    <path d="M 141.234507 157.758763 
+L 141.793777 157.922829 
+L 155.772594 147.420382 
+L 155.213325 147.256316 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 155.772594 147.420382 
+L 155.213325 147.256316 
+L 155.213325 106.49636 
+L 155.772594 106.660427 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 155.213325 147.256316 
+L 141.234507 157.758763 
+L 141.234507 116.998807 
+L 155.213325 106.49636 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.793777 157.922829 
+L 155.772594 147.420382 
+L 155.772594 106.660427 
+L 141.793777 117.162874 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.234507 157.758763 
+L 141.793777 157.922829 
+L 141.793777 117.162874 
+L 141.234507 116.998807 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+    <path d="M 141.234507 116.998807 
+L 141.793777 117.162874 
+L 155.772594 106.660427 
+L 155.213325 106.49636 
+z
+" clip-path="url(#pdf9221fcd1)" style="fill: #aab7c4; fill-opacity: 0.28; stroke: #6f8396; stroke-width: 0.22"/>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(56.069641 14.038594)">Nominal ramp angle: 30°</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'" transform="translate(63.778 24.163875)">forward | Route found</text>
+   </g>
+   <g id="line2d_12">
+    <path d="M 64.892745 122.413476 
+L 82.474673 126.441375 
+L 83.593213 126.187223 
+L 84.711752 125.93307 
+L 85.830291 125.678918 
+L 86.110218 126.056792 
+L 87.228757 125.80264 
+L 88.347297 125.548488 
+L 89.465836 125.294335 
+L 90.584375 125.040183 
+L 90.025105 124.876117 
+L 91.143645 124.621965 
+L 92.262184 124.367812 
+L 91.702914 124.203746 
+L 92.821453 123.949594 
+L 93.939993 123.695441 
+L 95.058532 123.441289 
+L 96.177071 123.187137 
+L 97.29561 122.932985 
+L 98.414149 122.678833 
+L 97.85488 122.514766 
+L 98.973419 122.260614 
+L 100.091958 122.006462 
+L 99.532689 121.842395 
+L 100.651228 121.588243 
+L 101.769767 121.334091 
+L 102.888306 121.079939 
+L 104.006845 120.825786 
+L 105.125385 120.571634 
+L 104.566115 120.407568 
+L 105.684654 120.153416 
+L 106.803194 119.899263 
+L 106.243924 119.735197 
+L 107.362463 119.481045 
+L 108.481002 119.226893 
+L 109.599542 118.97274 
+L 110.718081 118.718588 
+L 111.83662 118.464436 
+L 112.955159 118.210284 
+L 112.39589 118.046217 
+L 113.514429 117.792065 
+L 114.632968 117.537913 
+L 114.073698 117.373846 
+L 115.192238 117.119694 
+L 116.310777 116.865542 
+L 117.429316 116.61139 
+L 118.547855 116.357237 
+L 119.666394 116.103085 
+L 119.107125 115.939019 
+L 120.225664 115.684867 
+L 121.344203 115.430714 
+L 120.784934 115.266648 
+L 121.903473 115.012496 
+L 123.022012 114.758344 
+L 124.140551 114.504191 
+L 125.259091 114.250039 
+L 126.37763 113.995887 
+L 127.496169 113.741735 
+L 126.936899 113.577668 
+L 128.055439 113.323516 
+L 129.173978 113.069364 
+L 128.614708 112.905297 
+L 129.733247 112.651145 
+L 130.851787 112.396993 
+L 131.970326 112.142841 
+L 133.088865 111.888689 
+L 134.207404 111.634536 
+L 133.648135 111.47047 
+L 134.766674 111.216318 
+L 135.885213 110.962165 
+L 135.325943 110.798099 
+L 136.444483 110.543947 
+L 137.563022 110.289795 
+L 138.681561 110.035642 
+L 139.8001 109.78149 
+L 140.918639 109.527338 
+L 140.35937 109.363272 
+L 141.477909 109.109119 
+L 142.596448 108.854967 
+L 142.037179 108.690901 
+L 143.155718 108.436748 
+L 144.274257 108.182596 
+L 145.392796 107.928444 
+L 146.511336 107.674292 
+L 165.561274 111.767763 
+" clip-path="url(#pdf9221fcd1)" style="fill: none; stroke: #0072b2; stroke-width: 1.25; stroke-linecap: square"/>
+   </g>
+   <g id="Path3DCollection_1">
+    <defs>
+     <path id="m9b9a72d7b2" d="M 0 1.802776 
+C 0.478102 1.802776 0.936686 1.612824 1.274755 1.274755 
+C 1.612824 0.936686 1.802776 0.478102 1.802776 0 
+C 1.802776 -0.478102 1.612824 -0.936686 1.274755 -1.274755 
+C 0.936686 -1.612824 0.478102 -1.802776 0 -1.802776 
+C -0.478102 -1.802776 -0.936686 -1.612824 -1.274755 -1.274755 
+C -1.612824 -0.936686 -1.802776 -0.478102 -1.802776 0 
+C -1.802776 0.478102 -1.612824 0.936686 -1.274755 1.274755 
+C -0.936686 1.612824 -0.478102 1.802776 0 1.802776 
+z
+" style="stroke: #009e73"/>
+    </defs>
+    <g clip-path="url(#pdf9221fcd1)">
+     <use xlink:href="#m9b9a72d7b2" x="64.892745" y="122.413476" style="fill: #009e73; stroke: #009e73"/>
+    </g>
+   </g>
+   <g id="Path3DCollection_2">
+    <defs>
+     <path id="m78d36eca4a" d="M 0 -2.5 
+L -0.561285 -0.772542 
+L -2.377641 -0.772542 
+L -0.908178 0.295085 
+L -1.469463 2.022542 
+L -0 0.954915 
+L 1.469463 2.022542 
+L 0.908178 0.295085 
+L 2.377641 -0.772542 
+L 0.561285 -0.772542 
+z
+" style="stroke: #d55e00"/>
+    </defs>
+    <g clip-path="url(#pdf9221fcd1)">
+     <use xlink:href="#m78d36eca4a" x="165.561274" y="111.767763" style="fill: #d55e00; stroke: #d55e00"/>
+    </g>
+   </g>
+  </g>
+  <g id="legend_1">
+   <g id="line2d_13">
+    <path d="M 10 222.288125 
+L 15.25 222.288125 
+L 20.5 222.288125 
+" style="fill: none; stroke: #0072b2; stroke-width: 1.25; stroke-linecap: square"/>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start" x="26.1" y="224.738125" transform="rotate(-0 26.1 224.738125)">Body-reference route</text>
+   </g>
+   <g id="line2d_14">
+    <defs>
+     <path id="m649bfc18b8" d="M 0 2 
+C 0.530406 2 1.03916 1.789267 1.414214 1.414214 
+C 1.789267 1.03916 2 0.530406 2 0 
+C 2 -0.530406 1.789267 -1.03916 1.414214 -1.414214 
+C 1.03916 -1.789267 0.530406 -2 0 -2 
+C -0.530406 -2 -1.03916 -1.789267 -1.414214 -1.414214 
+C -1.789267 -1.03916 -2 -0.530406 -2 0 
+C -2 0.530406 -1.789267 1.03916 -1.414214 1.414214 
+C -1.03916 1.789267 -0.530406 2 0 2 
+z
+" style="stroke: #009e73"/>
+    </defs>
+    <g>
+     <use xlink:href="#m649bfc18b8" x="113.959844" y="222.288125" style="fill: #009e73; stroke: #009e73"/>
+    </g>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start" x="124.809844" y="224.738125" transform="rotate(-0 124.809844 224.738125)">Start</text>
+   </g>
+   <g id="line2d_15">
+    <defs>
+     <path id="m8f507c2391" d="M 0 -3 
+L -0.673542 -0.927051 
+L -2.85317 -0.927051 
+L -1.089814 0.354102 
+L -1.763356 2.427051 
+L -0 1.145898 
+L 1.763356 2.427051 
+L 1.089814 0.354102 
+L 2.85317 -0.927051 
+L 0.673542 -0.927051 
+z
+" style="stroke: #d55e00; stroke-linejoin: bevel"/>
+    </defs>
+    <g>
+     <use xlink:href="#m8f507c2391" x="155.559531" y="222.288125" style="fill: #d55e00; stroke: #d55e00; stroke-linejoin: bevel"/>
+    </g>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start" x="166.409531" y="224.738125" transform="rotate(-0 166.409531 224.738125)">Requested goal</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pdf9221fcd1">
+   <rect x="22.942469" y="26.285906" width="179.712" height="179.712"/>
+  </clipPath>
+ </defs>
+</svg>

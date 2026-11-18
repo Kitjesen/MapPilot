@@ -160,6 +160,22 @@ int main(int argc, char** argv) try {
   compare("stairs", scene(false,false,true), {{-1.15,.05,.385},{-.55,.05,.385},
       {-.15,.05,.485},{.25,.05,.585},{.65,.05,.685},{1.05,.05,.785}}, true);
   compare("actual_start", floor, {{-.85,.05,.485},{-.45,.05,.385}}, true, {}, true);
+  auto departure = std::make_shared<octomap::OcTree>(.1);
+  departure->updateNode(-1,-1,-1,false);
+  departure->updateNode(3,1,2,false);
+  for (int x=3;x<25;++x) for (int y=-8;y<8;++y)
+    departure->updateNode((x+.5)*.1,(y+.5)*.1,-.05,true,true);
+  departure->updateInnerOccupancy();
+  auto body = configuration();
+  body.body_offset_m=.23;
+  const std::vector<PointPose> entry{{.05,.05,.435,0.0},{1.25,.05,.435}};
+  compare("departure",departure,entry,true,{},true,false,body);
+  compare("departure_no_go",departure,entry,false,
+      {{"blocked",{.15,-.1,.2},{.3,.2,.8}}},true,false,body);
+  for (int x=0;x<3;++x) for (int y=-8;y<8;++y)
+    departure->updateNode((x+.5)*.1,(y+.5)*.1,-.75,true,true);
+  departure->updateInnerOccupancy();
+  compare("measured_drop",departure,entry,false,{},true,false,body);
   auto corner = scene();
   corner->updateNode(.35,.35,.45,true,true);
   corner->updateInnerOccupancy();

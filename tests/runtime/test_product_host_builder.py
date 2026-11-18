@@ -339,6 +339,7 @@ def test_inspection_product_only_loads_declared_semantic_planning_modules() -> N
     }
     assert {
         "host.bus.navigation_goal_status->nav.goals.navigation_goal_status",
+        "host.bus.inspection_task_event->AgentPlannerModule.inspection_task_event",
         "SemanticPlannerModule.nav_command->nav.goals.goal_command",
         "nav.goals.goal_status->SemanticPlannerModule.goal_status",
         "nav.goals.task_status->SemanticPlannerModule.navigation_goal_status",

@@ -1,0 +1,58 @@
+<mujoco model="lingtu_nav_3d_course">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.005" integrator="Euler" solver="Newton" iterations="100"/>
+  <visual>
+    <headlight diffuse="0.65 0.65 0.62" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <global azimuth="-45" elevation="-25" fovy="55"/>
+  </visual>
+  <asset>
+    <material name="ground" rgba=".54 .57 .55 1"/>
+    <material name="wall" rgba=".72 .70 .66 1"/>
+    <material name="door" rgba=".22 .34 .46 1"/>
+    <material name="box_blue" rgba=".18 .40 .70 1"/>
+    <material name="box_orange" rgba=".78 .36 .10 1"/>
+    <material name="ramp" rgba=".42 .48 .52 1"/>
+    <material name="landing" rgba=".32 .38 .42 1"/>
+    <material name="start" rgba=".15 .78 .28 .85"/>
+    <material name="goal" rgba=".90 .12 .12 .90"/>
+  </asset>
+  <worldbody>
+    <geom name="ground" type="box" pos="15 10 -0.05" size="15 10 0.05" material="ground" conaffinity="1" condim="3"/>
+
+    <!-- Perimeter, with a 1.20 m opening at the east side. -->
+    <geom name="wall_south" type="box" pos="15 0.10 1.35" size="15 0.10 1.35" material="wall" conaffinity="1"/>
+    <geom name="wall_west" type="box" pos="0.10 10 1.35" size="0.10 10 1.35" material="wall" conaffinity="1"/>
+    <geom name="wall_north" type="box" pos="15 19.90 1.35" size="15 0.10 1.35" material="wall" conaffinity="1"/>
+    <geom name="wall_east_low" type="box" pos="29.90 5.0 1.35" size="0.10 4.4 1.35" material="wall" conaffinity="1"/>
+    <geom name="wall_east_high" type="box" pos="29.90 15.0 1.35" size="0.10 4.4 1.35" material="wall" conaffinity="1"/>
+
+    <!-- The west seal and the L walls make the start corridor single-exit. -->
+    <geom name="door_lane_south" type="box" pos="22.0 8.0 1.35" size="6.8 0.10 1.35" material="wall" conaffinity="1"/>
+    <geom name="door_lane_north" type="box" pos="22.0 14.0 1.35" size="6.8 0.10 1.35" material="wall" conaffinity="1"/>
+    <geom name="course_west_seal" type="box" pos="0.75 5.65 1.35" size="0.10 2.65 1.35" material="wall" conaffinity="1"/>
+
+    <!-- L corridor, nominal clear width 2.00 m. The inner corner is left open for the turn. -->
+    <geom name="l_outer_horizontal" type="box" pos="8.0 5.0 1.25" size="7.0 0.10 1.25" material="wall" conaffinity="1"/>
+    <geom name="l_inner_horizontal" type="box" pos="6.5 7.00 1.25" size="5.0 0.10 1.25" material="wall" conaffinity="1"/>
+    <geom name="l_outer_vertical" type="box" pos="14.70 8.40 1.25" size="0.10 3.00 1.25" material="wall" conaffinity="1"/>
+    <geom name="l_inner_vertical" type="box" pos="12.70 9.20 1.25" size="0.10 2.20 1.25" material="wall" conaffinity="1"/>
+
+    <!-- Door frame with a 3.00 m passage, followed by a raised landing. -->
+    <geom name="door_left" type="box" pos="16.0 9.00 1.15" size="0.10 1.00 1.15" material="door" conaffinity="1"/>
+    <geom name="door_right" type="box" pos="16.0 13.50 1.15" size="0.10 0.50 1.15" material="door" conaffinity="1"/>
+    <geom name="door_header" type="box" pos="16.0 11.0 2.40" size="0.10 2.60 0.12" material="door" conaffinity="1"/>
+    <geom name="raised_landing" type="box" pos="22.5 11.0 0.095" size="5.0 4.0 0.095" material="landing" conaffinity="1"/>
+    <geom name="ramp" type="box" pos="17.5 11.0 0.09" euler="0 0.05 0" size="1.8 3.0 0.10" material="ramp" conaffinity="1" condim="3"/>
+
+    <!-- Static obstacles requiring a global detour and a local corner check. -->
+    <geom name="box_blue" type="box" pos="6.0 3.0 0.45" size="0.55 0.55 0.45" material="box_blue" conaffinity="1" condim="3"/>
+    <geom name="box_orange" type="box" pos="10.0 8.8 0.45" size="0.65 0.45 0.45" material="box_orange" conaffinity="1" condim="3"/>
+    <geom name="box_goal_side" type="box" pos="25.0 12.8 0.50" size="0.75 0.75 0.50" material="box_blue" conaffinity="1" condim="3"/>
+    <geom name="post_a" type="cylinder" pos="20.0 5.0 0.80" size="0.28 0.80" material="door" conaffinity="1" condim="3"/>
+    <geom name="post_b" type="cylinder" pos="25.0 6.5 0.80" size="0.28 0.80" material="door" conaffinity="1" condim="3"/>
+
+    <geom name="start_marker" type="cylinder" pos="2.0 5.65 0.01" size="0.65 0.01" material="start" contype="0" conaffinity="0"/>
+    <geom name="goal_marker" type="cylinder" pos="27.0 11.0 0.20" size="0.65 0.01" material="goal" contype="0" conaffinity="0"/>
+    <light name="sun" pos="10 -6 22" dir="-.2 .3 -1" diffuse=".75 .75 .70" specular=".08 .08 .08"/>
+  </worldbody>
+</mujoco>

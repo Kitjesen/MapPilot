@@ -81,6 +81,92 @@ async def test_conversation_can_submit_complete_inspection_route(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_conversation_navigation_tools_use_native_gateway_owners(monkeypatch):
+    calls = []
+
+    def fake_preview(_service, body):
+        calls.append(("preview", body.x, body.y, body.z))
+        return {"ok": True, "feasible": True, "reasons": []}
+
+    def fake_start(_gw, body, *, command="goal"):
+        calls.append(("start", body.x, body.y, body.z, command))
+        return {"accepted": True, "task_id": "nav-task-1", "request_id": body.request_id}
+
+    def fake_status(_gw, task_id):
+        calls.append(("status", task_id))
+        return {"found": True, "task_id": task_id, "status": {"state_name": "EXECUTING"}}
+
+    monkeypatch.setattr("gateway.services.conversation_tools.ControlCommandService.preview_plan", fake_preview)
+    monkeypatch.setattr("gateway.services.conversation_tools.start_navigation", fake_start)
+    monkeypatch.setattr("gateway.services.conversation_tools.query_navigation_task_status", fake_status)
+
+    tools, invoke = workbench_tools(SimpleNamespace())
+    names = {tool["function"]["name"] for tool in tools}
+    assert {"preview_navigation", "start_navigation", "get_navigation_status", "cancel_navigation",
+            "pause_navigation", "resume_navigation", "set_navigation_speed",
+            "get_inspection_status"} <= names
+    assert await invoke("preview_navigation", {"x": 1.0, "y": 2.0, "z": .4}) == {
+        "ok": True, "feasible": True, "reasons": []
+    }
+    assert (await invoke("start_navigation", {"x": 1.0, "y": 2.0}))["task_id"] == "nav-task-1"
+    assert (await invoke("get_navigation_status", {"task_id": "nav-task-1"}))["found"] is True
+    assert calls == [("preview", 1.0, 2.0, 0.4), ("start", 1.0, 2.0, 0.0, "goal"),
+                     ("status", "nav-task-1")]
+
+
+@pytest.mark.asyncio
+async def test_conversation_can_read_inspection_task_status(monkeypatch):
+    async def fake_get_task(_gw, task_id):
+        return {"found": True, "task_id": task_id, "terminal": True, "current_state": "SUCCESS"}
+
+    monkeypatch.setattr("gateway.services.conversation_tools.get_task", fake_get_task)
+    _, invoke = workbench_tools(SimpleNamespace())
+
+    result = await invoke("get_inspection_status", {"task_id": "inspection-task-1"})
+
+    assert result["task_id"] == "inspection-task-1"
+    assert result["terminal"] is True
+
+
+@pytest.mark.asyncio
+async def test_navigation_tool_definitions_mark_motion_and_lifecycle_correctly():
+    tools, _ = workbench_tools(SimpleNamespace())
+    definitions = {tool["function"]["name"]: tool for tool in tools}
+    assert definitions["preview_navigation"]["writes"] is False
+    for name in ("start_navigation", "cancel_navigation", "pause_navigation", "resume_navigation", "set_navigation_speed"):
+        assert definitions[name]["writes"] is True
+    assert definitions["get_navigation_status"]["writes"] is False
+
+
+@pytest.mark.asyncio
+async def test_navigation_control_tools_route_to_the_exact_task(monkeypatch):
+    calls = []
+
+    def fake_cancel(_gw, body, task_id):
+        calls.append(("cancel", task_id, body.task_id, body.reason))
+        return {"accepted": True, "task_id": task_id, "status": "cancel_requested"}
+
+    def fake_control(_gw, body, *, route_task_id, action):
+        calls.append((action, route_task_id, body.task_id))
+        return {"accepted": True, "task_id": route_task_id, "status": f"{action}_requested"}
+
+    monkeypatch.setattr("gateway.services.conversation_tools.cancel_navigation", fake_cancel)
+    monkeypatch.setattr("gateway.services.conversation_tools.control_task", fake_control)
+    _, invoke = workbench_tools(SimpleNamespace(), client_id="bot")
+
+    assert (await invoke("cancel_navigation", {"task_id": "task-1"}))["accepted"]
+    assert (await invoke("pause_navigation", {"task_id": "task-1"}))["accepted"]
+    assert (await invoke("resume_navigation", {"task_id": "task-1"}))["accepted"]
+    assert (await invoke("set_navigation_speed", {"task_id": "task-1", "max_speed_mps": .4}))["accepted"]
+    assert calls == [
+        ("cancel", "task-1", "task-1", "agent_cancel"),
+        ("pause", "task-1", "task-1"),
+        ("resume", "task-1", "task-1"),
+        ("speed_limit", "task-1", "task-1"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_conversation_route_listing_uses_current_active_map(monkeypatch):
     calls = []
 

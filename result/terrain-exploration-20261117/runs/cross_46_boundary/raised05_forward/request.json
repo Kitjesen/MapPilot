@@ -1,0 +1,47 @@
+{
+  "map_path": "D:\\inovxio\\brain\\lingtu\\build\\terrain-exploration-20261117\\maps\\cross_46_boundary.bt",
+  "start": [
+    0.775,
+    0.025000000000000133,
+    0.535
+  ],
+  "goal": [
+    7.275,
+    0.025000000000000133,
+    0.535
+  ],
+  "start_yaw": 0.0,
+  "options": {
+    "robot_radius": 0.32,
+    "max_iterations": 500000,
+    "snap_search_radius_cells": 24,
+    "ground_support": true,
+    "direct_support_only": false,
+    "support_depth_cells": 2,
+    "support_patch_radius_cells": 0,
+    "support_patch_min_samples": 0,
+    "search_resolution_m": 0.1,
+    "surface_closing_radius_m": 0.2,
+    "surface_max_hole_area_m2": 0.16,
+    "surface_max_slope": 0.7,
+    "support_height_m": 0.435,
+    "support_height_tolerance_m": 0.1,
+    "enable_preblocked_costmap": false,
+    "preblocked_costmap_radius_cells": 3,
+    "preblocked_costmap_weight": 0.0,
+    "lowest_traversable_only": false,
+    "floor_change_penalty": 0.0,
+    "max_step_height": 0.45,
+    "max_slope": 0.5773502691896257,
+    "same_floor_preference": false,
+    "same_floor_z_tolerance": 0.75,
+    "obstacle_clearance_radius_cells": 8,
+    "obstacle_clearance_weight": 2.0,
+    "terminal_goal_tolerance_m": 0.15,
+    "terminal_goal_xy_tolerance_m": 0.15,
+    "terminal_goal_z_tolerance_m": 0.15,
+    "body_clearance_below_m": 0.05,
+    "body_clearance_above_m": 0.35,
+    "body_offset_m": 0.23
+  }
+}

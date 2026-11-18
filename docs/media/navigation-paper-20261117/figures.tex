@@ -1,0 +1,35 @@
+% Requires \usepackage{graphicx} and a \graphicspath pointing to this bundle pdf/ directory.
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig01_multilevel.pdf}
+  \caption{Static body-reference routes on four multi-level OctoMap scenes. Outer walls are omitted for visibility; axes have equal metric scale. Green circles and orange stars denote the actual starts and requested goals. These results establish geometric planning feasibility, not foothold or physical locomotion performance.}
+  \label{fig:fig01_multilevel}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig02_departure.pdf}
+  \caption{Departure comparison using identical starts and body envelopes. Distances are horizontal offsets from the body reference point to the observed floor edge, not step heights or measured foot gaps. Missing observations inside the initial body footprint are tolerated only on the initial connector; occupancy, no-go and measured lower ground remain checked. The map itself is unchanged.}
+  \label{fig:fig02_departure}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig03_steps.pdf}
+  \caption{Bidirectional single-step probes with the same declared body and 0.45 m step limit. Routes and independent geometry checks pass at 0.35, 0.40 and 0.45 m; no route is returned at 0.50 m. No physical climbing experiment is represented.}
+  \label{fig:fig03_steps}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig04_ramps.pdf}
+  \caption{Bidirectional routes on nominal 20, 25, 30 and 35 degree ramp maps. Map inclination is distinct from individual route-segment slope. The 35 degree scene uses winding routes and took 101.503 s forward and 22.194 s reverse in this run; it is not a real-time or physical-climbing result.}
+  \label{fig:fig04_ramps}
+\end{figure*}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{fig05_obstacles.pdf}
+  \caption{Obstacle and clearance cases. The box detour and 0.80 m doorway return checked routes. The 0.60 m doorway and mid-route 0.50 m ground gap return no route. Empty results are shown with endpoints only, without invented connecting trajectories.}
+  \label{fig:fig05_obstacles}
+\end{figure*}

@@ -663,3 +663,23 @@ def handle_navigation_goal_status(gw: Any, status: Any) -> None:
             statuses.popitem(last=False)
         gw._latest_navigation_goal_status = dict(data)
     _publish_navigation_status(gw)
+    from gateway.services.event_handlers import _publish_bound_activity
+
+    lifecycle = str(data.get("lifecycle_state_name") or data.get("state_name") or data.get("phase") or "").upper()
+    activity_state = {
+        "SUCCESS": "completed",
+        "REACHED": "completed",
+        "FAILED": "failed",
+        "CANCELLED": "cancelled",
+        "PAUSED": "awaiting",
+    }.get(lifecycle, "running")
+    _publish_bound_activity(
+        gw,
+        task_id=task_id,
+        request_id=request_id,
+        activity_type="navigation",
+        activity_state=activity_state,
+        phase="navigation_goal_status",
+        text=f"导航状态：{data.get('lifecycle_state_name') or data.get('phase') or '更新'}",
+        data=data,
+    )

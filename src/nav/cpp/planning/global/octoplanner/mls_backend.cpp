@@ -471,15 +471,25 @@ PreparedArtifactHandle::MetricQueryResult PreparedArtifactHandle::metricQuery(
     poses.push_back({pose.point.x,pose.point.y,pose.point.z,
         pose.has_yaw ? std::optional<double>(pose.yaw) : std::nullopt});
   }
+  const auto failure_stage = output.failure_stage;
+  const auto failure_segment = output.failure_segment;
+  const auto failure_cell = SurfaceCell{
+      output.failure_cell.x, output.failure_cell.y, output.failure_cell.z};
   lt_mls_free_pose_buffer(&output);
   if (input.error) std::rethrow_exception(input.error);
   switch (status) {
-    case 0: return {QueryStatus::Found, std::move(poses)};
-    case 1: return {QueryStatus::Exhausted, {}};
-    case 2: return {QueryStatus::Budget, {}};
-    case 3: return {QueryStatus::Cancelled, {}};
-    case 4: return {QueryStatus::StartUnreachable, {}};
-    case 5: return {QueryStatus::GoalUnreachable, {}};
+    case 0: return {QueryStatus::Found, std::move(poses), failure_stage,
+                    failure_segment, failure_cell};
+    case 1: return {QueryStatus::Exhausted, {}, failure_stage,
+                    failure_segment, failure_cell};
+    case 2: return {QueryStatus::Budget, {}, failure_stage,
+                    failure_segment, failure_cell};
+    case 3: return {QueryStatus::Cancelled, {}, failure_stage,
+                    failure_segment, failure_cell};
+    case 4: return {QueryStatus::StartUnreachable, {}, failure_stage,
+                    failure_segment, failure_cell};
+    case 5: return {QueryStatus::GoalUnreachable, {}, failure_stage,
+                    failure_segment, failure_cell};
     default: throw std::runtime_error("Rust MLS metric query failed: " + std::to_string(status));
   }
 }

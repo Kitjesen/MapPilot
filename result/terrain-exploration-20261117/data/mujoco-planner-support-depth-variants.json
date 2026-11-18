@@ -1,0 +1,130 @@
+[
+  {
+    "name": "depth_2_tol_0.11",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 802.5091
+  },
+  {
+    "name": "depth_2_tol_0.2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 785.3774
+  },
+  {
+    "name": "depth_2_tol_0.3",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 777.1699
+  },
+  {
+    "name": "depth_2_tol_0.5",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 818.577
+  },
+  {
+    "name": "depth_4_tol_0.11",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 820.7132
+  },
+  {
+    "name": "depth_4_tol_0.2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 771.74
+  },
+  {
+    "name": "depth_4_tol_0.3",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 766.6202
+  },
+  {
+    "name": "depth_4_tol_0.5",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 797.6722
+  },
+  {
+    "name": "depth_6_tol_0.11",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 762.0563
+  },
+  {
+    "name": "depth_6_tol_0.2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 780.1148
+  },
+  {
+    "name": "depth_6_tol_0.3",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 798.6944
+  },
+  {
+    "name": "depth_6_tol_0.5",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 783.6521
+  },
+  {
+    "name": "depth_8_tol_0.11",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 800.9981
+  },
+  {
+    "name": "depth_8_tol_0.2",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 826.7278
+  },
+  {
+    "name": "depth_8_tol_0.3",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 788.8121
+  },
+  {
+    "name": "depth_8_tol_0.5",
+    "ok": false,
+    "stage": "edge_search",
+    "failure": "Rust surface route exhausted at edge_search",
+    "path_points": 0,
+    "elapsed_ms": 789.9824
+  }
+]

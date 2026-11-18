@@ -5,6 +5,9 @@ def test_activity_types_keep_robot_domains_distinct():
     assert activity_type("navigate_to") == "navigation"
     assert activity_type("follow_person") == "tracking"
     assert activity_type("start_inspection_route") == "inspection"
+    assert activity_type("get_inspection_status") == "inspection"
+    assert activity_type("start_navigation") == "navigation"
+    assert activity_type("get_navigation_status") == "navigation"
     assert activity_type("web_search") == "tool"
     assert activity_type("reply", role="assistant") == "model"
 

@@ -3,26 +3,8 @@ import { Check, Copy, ExternalLink, Link, LoaderCircle, X } from 'lucide-react'
 import { ModalShell } from '../Modal'
 import { cancelCodexLogin, disconnectCodex, getCodexConnection, pollCodexLogin, startCodexLogin,
   getAcpProviders, type AcpProviderStatus, type CodexConnection, type CodexLogin } from '../../services/modelConnections.ts'
-import type { ConversationOptions } from '../../services/agentConversation.ts'
+import { knownConversationModels, type ConversationOptions } from '../../services/agentConversation.ts'
 import styles from './ModelConnections.module.css'
-
-const knownConversationModels: ConversationOptions['models'] = [
-  { id: 'codex:gpt-6-astra', label: 'GPT-6 Astra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'codex:gpt-6.1-sol', label: 'GPT-6.1 Sol · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'codex:gpt-6.1-terra', label: 'GPT-6.1 Terra · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'codex:gpt-6-luna', label: 'GPT-6 Luna · Codex', provider: 'codex', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', provider: 'openai', configured: false, key_env: 'OPENAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'qwen-plus', label: 'Qwen Plus', provider: 'qwen', configured: false, key_env: 'DASHSCOPE_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'claude', configured: false, key_env: 'ANTHROPIC_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'kimi-k3', label: 'Kimi K3', provider: 'moonshot', configured: false, key_env: 'MOONSHOT_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: true },
-  { id: 'grok-4.7', label: 'Grok 4.7 · xAI', provider: 'grok', configured: false, key_env: 'XAI_API_KEY', reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:grok', label: 'Grok Build · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:kilo', label: 'Kilo Code · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:kiro', label: 'Kiro CLI · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:opencode', label: 'OpenCode · ACP', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-  { id: 'acp:registry', label: 'ACP Registry Agent', provider: 'acp', configured: false, reasoning: [{ id: 'default', label: '默认' }], image_input: false },
-]
-
 
 export function ModelConnections({ options, onClose, onChanged }: {
   options?: ConversationOptions | null; onClose(): void; onChanged(): void
