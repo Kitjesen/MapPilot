@@ -21,7 +21,7 @@ class Commands:
         self.goals = []
         self.cancels = []
 
-    def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+    def send_goal(self, x, y, z, yaw, *, task_id, request_id, continue_motion=False):
         self.goals.append((task_id, request_id))
         return self.receipt(task_id, request_id, NavigationCommandKind.GOAL)
 

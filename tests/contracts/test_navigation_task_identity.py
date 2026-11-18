@@ -41,6 +41,7 @@ def test_navigation_task_identity_is_distinct_from_command_attempt_identity() ->
             "local_planner",
             "map_id",
             "map_content_epoch",
+            "continue_motion",
         ],
         "NavigationCommandAck": [
             "header",
