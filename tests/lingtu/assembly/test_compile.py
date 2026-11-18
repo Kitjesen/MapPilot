@@ -837,7 +837,7 @@ def test_real_run_plan_selects_go2_mid360_config() -> None:
     assert plan.native_process_environment["LINGTU_NAV_COLLISION_CLEARANCE_ABOVE_M"] == "0.24"
     assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_UP_M"] == "0.1"
     assert plan.native_process_environment["LINGTU_MAPD_INFLATION_Z_DOWN_M"] == "0.24"
-    assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(1.0)
+    assert float(plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS"]) == pytest.approx(math.sqrt(2.0))
     assert plan.native_process_environment["LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S"] == "1"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_SPEED_MPS"] == "1"
     assert plan.native_process_environment["LINGTU_TELEOP_MAX_YAW_RATE"] == "1"
