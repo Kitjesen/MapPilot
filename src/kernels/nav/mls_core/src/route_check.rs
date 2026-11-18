@@ -487,10 +487,10 @@ impl Checker<'_> {
                         }
                         let cell = SurfaceCell::new(x, y, z);
                         if allow_initial_center
-                            && c.start_exemption != 0
                             && x == center.x
                             && y == center.y
-                            && z <= center.z
+                            && (z < center.z
+                                || (z == center.z && c.start_exemption != 0))
                         {
                             continue;
                         }
@@ -511,10 +511,10 @@ impl Checker<'_> {
                         return ROUTE_NO_GO;
                     }
                     if allow_initial_center
-                        && c.start_exemption != 0
                         && x == center.x
                         && y == center.y
-                        && z <= center.z
+                        && (z < center.z
+                            || (z == center.z && c.start_exemption != 0))
                     {
                         continue;
                     }

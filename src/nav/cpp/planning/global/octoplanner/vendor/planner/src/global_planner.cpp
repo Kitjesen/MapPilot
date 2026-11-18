@@ -2065,9 +2065,12 @@ namespace global_planner
                         const GridIndex voxel{x, y, z};
                         if (external_preblocked_cells_.count(voxel))
                             return TraversabilityFailure::ExternalPreblockedBody;
-                        if (allow_center_occupancy && start_exemption_ &&
-                            voxel.x == center.x && voxel.y == center.y && voxel.z <= center.z &&
-                            start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)) continue;
+                        if (allow_center_occupancy && voxel.x == center.x &&
+                            voxel.y == center.y &&
+                            (voxel.z < center.z ||
+                             (voxel.z == center.z && start_exemption_ &&
+                              start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r))))
+                            continue;
                         if (body_collision_ && (occupied || isOccupiedCell(voxel)) && (!start_exemption_ ||
                             !start_exemption_({(x+.5)*r,(y+.5)*r,(z+.5)*r},r)))
                             return TraversabilityFailure::OccupiedBody;
