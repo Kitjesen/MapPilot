@@ -1297,6 +1297,11 @@ if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_input_gate.cpp")
   lingtu_endpoint_enable_warnings(test_input_gate)
   add_test(NAME test_input_gate COMMAND test_input_gate)
 endif()
+add_executable(test_sensor_batch_merge "${_NAV_ENDPOINT_TESTS_DIR}/test_sensor_batch_merge.cpp")
+target_include_directories(test_sensor_batch_merge PRIVATE
+  "${_NAV_CPP_DIR}" "${_NAV_KERNEL_DIR}/include" ${_EP_DIRS})
+lingtu_endpoint_enable_warnings(test_sensor_batch_merge)
+add_test(NAME test_sensor_batch_merge COMMAND test_sensor_batch_merge)
 if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_geofence.cpp")
   add_executable(test_geofence
     "${_NAV_ENDPOINT_TESTS_DIR}/test_geofence.cpp"
