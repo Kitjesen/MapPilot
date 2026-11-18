@@ -107,6 +107,12 @@ Rust artifact and query caches under the same mutex. The
 standalone C++ graph remains available for regression comparisons; new prepared
 caches contain only the Rust artifact.
 
+Besides pairwise rise/run, the Rust checker fits the ground slope along the
+direction of travel under the body length at every map cell of a segment. Height
+jumps above two cells are steps and stay governed by `max_step`. Without it, a
+route could climb terrain steeper than `max_slope` by alternating short forward
+hops with back steps, each pair under the limit.
+
 Surface search checks an edge only when it is popped as the cheapest way to
 settle a cell (lazy A*). The artifact also keeps surface-pair admissions from
 earlier metric queries while the map, body geometry, no-go regions and

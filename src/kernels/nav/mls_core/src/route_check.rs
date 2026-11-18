@@ -516,6 +516,90 @@ impl Checker<'_> {
         ROUTE_OK
     }
 
+    /// Ground slope along `heading` under the body at `point`.
+    ///
+    /// Pairwise rise/run between route poses can be satisfied on terrain that
+    /// is steeper than the limit by alternating forward hops with short back
+    /// steps. This fits the ground under the body length instead. Height jumps
+    /// above two cells between neighbouring samples are steps, governed by
+    /// `max_step`, so each continuous run is fitted on its own.
+    fn terrain_slope(&self, point: LtMlsPoint, heading: f64) -> u32 {
+        let c = self.config;
+        let r = c.resolution;
+        let half = c.body_offset + c.robot_radius;
+        let samples = (half / r).floor() as i32;
+        let expected = point.z - c.support_height;
+        let (cos, sin) = (heading.cos(), heading.sin());
+        let mut run: Vec<(f64, f64)> = Vec::new();
+        let mut steepest = 0.0_f64;
+        let mut fit = |run: &mut Vec<(f64, f64)>| {
+            // Short runs between steps cannot measure a slope against cell quantization.
+            if run.len() >= 2 && run[run.len() - 1].0 - run[0].0 >= half - 1e-9 {
+                let n = run.len() as f64;
+                let ms = run.iter().map(|p| p.0).sum::<f64>() / n;
+                let mh = run.iter().map(|p| p.1).sum::<f64>() / n;
+                let num: f64 = run.iter().map(|p| (p.0 - ms) * (p.1 - mh)).sum();
+                let den: f64 = run.iter().map(|p| (p.0 - ms).powi(2)).sum();
+                steepest = steepest.max((num / den).abs());
+            }
+            run.clear();
+        };
+        for i in -samples..=samples {
+            let along = i as f64 * r;
+            let x = point.x + along * cos;
+            let y = point.y + along * sin;
+            let reach = 2.0 * along.abs() + c.support_tolerance + r;
+            let Some(levels) = self
+                .surface
+                .get(&((x / r).floor() as i32, (y / r).floor() as i32))
+            else {
+                continue;
+            };
+            let Some(height) = levels
+                .iter()
+                .map(|&z| (z as f64 + 1.0) * r)
+                .filter(|h| (h - expected).abs() <= reach)
+                .min_by(|a, b| (a - expected).abs().total_cmp(&(b - expected).abs()))
+            else {
+                continue;
+            };
+            if run
+                .last()
+                .is_some_and(|&(_, last)| (height - last).abs() > 2.0 * r + 1e-9)
+            {
+                fit(&mut run);
+            }
+            run.push((along, height));
+        }
+        fit(&mut run);
+        if steepest > c.max_slope + EPSILON {
+            ROUTE_SLOPE
+        } else {
+            ROUTE_OK
+        }
+    }
+
+    fn terrain_slope_along(
+        &self,
+        from: LtMlsPoint,
+        to: LtMlsPoint,
+        heading: f64,
+        skip_from: bool,
+    ) -> Option<(u32, LtMlsPoint)> {
+        let c = self.config;
+        if c.max_slope <= 0.0 || c.ground_support == 0 {
+            return None;
+        }
+        let length = (to.x - from.x).hypot(to.y - from.y);
+        let steps = (length / c.resolution).ceil().max(1.0) as usize;
+        (usize::from(skip_from)..=steps)
+            .map(|i| from.interpolate(to, i as f64 / steps as f64))
+            .find_map(|point| {
+                let failure = self.terrain_slope(point, heading);
+                (failure != ROUTE_OK).then_some((failure, point))
+            })
+    }
+
     fn offsets(&self) -> impl Iterator<Item = f64> {
         let offset = self.config.body_offset;
         [-offset, offset]
@@ -1198,6 +1282,13 @@ impl Checker<'_> {
             if let Some((failure, point)) = self.sweep(from, to, true, heading) {
                 return route_failure(failure, index as i32, self.cell(point));
             }
+            if dx.hypot(dy) > 1e-9 {
+                if let Some((failure, point)) =
+                    self.terrain_slope_along(from, to, heading, actual_start)
+                {
+                    return route_failure(failure, index as i32, self.cell(point));
+                }
+            }
             previous_heading = Some(heading);
         }
         let last = route.last().unwrap();
@@ -1798,5 +1889,105 @@ mod tests {
             old_body.as_secs_f64() * 1000.0,
             new_body.as_secs_f64() * 1000.0
         );
+    }
+
+    // 0.05 m map, 2 m wide; `rise_cells(x)` gives the top cell of column x.
+    fn terrain_state(rise_cells: impl Fn(i32) -> i32) -> PlannerState {
+        let mut occupied = Vec::new();
+        for x in -30..120 {
+            for y in -20..=20 {
+                let top = rise_cells(x);
+                occupied.extend(((top - 3).max(-1)..=top).map(|z| SurfaceCell::new(x, y, z)));
+            }
+        }
+        PlannerState::new(
+            occupied,
+            Vec::new(),
+            SurfaceConfig {
+                clearance_cells: 16,
+                ..SurfaceConfig::default()
+            },
+            GraphConfig::default(),
+        )
+    }
+
+    fn thunder() -> LtMlsMetricConfig {
+        LtMlsMetricConfig {
+            resolution: 0.05,
+            robot_radius: 0.32,
+            body_offset: 0.23,
+            below: 0.05,
+            above: 0.35,
+            support_height: 0.435,
+            support_tolerance: 0.10,
+            max_step: 0.45,
+            max_slope: 30f64.to_radians().tan(),
+            ground_support: 1,
+            min: point(-5.0, -5.0, -1.0),
+            max: point(10.0, 5.0, 5.0),
+            ..LtMlsMetricConfig::default()
+        }
+    }
+
+    fn ramp_cells(degrees: f64) -> impl Fn(i32) -> i32 {
+        let tan = degrees.to_radians().tan();
+        move |x| if x < 0 { 0 } else { ((x as f64 + 0.5) * tan).floor() as i32 }
+    }
+
+    fn standing(rise_cells: &impl Fn(i32) -> i32, x: f64) -> LtMlsPose {
+        let top = rise_cells((x / 0.05).floor() as i32);
+        LtMlsPose {
+            point: point(x, 0.025, (top as f64 + 1.0) * 0.05 + 0.435),
+            ..LtMlsPose::default()
+        }
+    }
+
+    #[test]
+    fn back_steps_do_not_hide_steep_terrain() {
+        let rise = ramp_cells(31.0);
+        let state = terrain_state(&rise);
+        let checker = prepare(&state, thunder(), &[], &[], None, std::ptr::null_mut()).unwrap();
+        // Part of the route the search returned on this ramp before terrain slope
+        // was checked: forward 0.10 m, back 0.05 m, each pair under 30 degrees.
+        let route: Vec<_> = [
+            1.025, 1.125, 1.225, 1.325, 1.275, 1.375, 1.475, 1.425, 1.525, 1.625, 1.725, 1.825,
+            1.775, 1.875, 1.975, 1.925, 2.025,
+        ]
+        .into_iter()
+        .map(|x| standing(&rise, x))
+        .collect();
+        for pair in route.windows(2) {
+            let (a, b) = (pair[0].point, pair[1].point);
+            assert!((b.z - a.z).abs() <= 0.5 * (b.x - a.x).abs() + EPSILON);
+        }
+        assert_eq!(checker.check_poses(&route).failure_kind, ROUTE_SLOPE);
+    }
+
+    #[test]
+    fn terrain_under_the_limit_keeps_its_route() {
+        let rise = ramp_cells(25.0);
+        let state = terrain_state(&rise);
+        let checker = prepare(&state, thunder(), &[], &[], None, std::ptr::null_mut()).unwrap();
+        let route: Vec<_> = [1.025, 1.625, 2.225, 2.825]
+            .into_iter()
+            .map(|x| standing(&rise, x))
+            .collect();
+        let result = checker.check_poses(&route);
+        assert_eq!(result.valid, 1, "{result:?}");
+    }
+
+    #[test]
+    fn single_riser_is_a_step_not_terrain_slope() {
+        let rise = |x: i32| if x < 0 { 0 } else { 9 };
+        let state = terrain_state(rise);
+        let checker = prepare(&state, thunder(), &[], &[], None, std::ptr::null_mut()).unwrap();
+        // 0.45 m over a 0.8 m lead-in stays under 30 degrees as a body trajectory.
+        let route = [
+            standing(&rise, -1.475),
+            standing(&rise, -0.775),
+            standing(&rise, 0.025),
+            standing(&rise, 1.025),
+        ];
+        assert_eq!(checker.check_poses(&route).valid, 1);
     }
 }
