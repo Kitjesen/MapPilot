@@ -1,3 +1,9 @@
+# SLAM localizer notes (legacy ROS workflow)
+
+Scratch notes moved from `src/slam/note.md`. They describe the earlier ROS
+FAST-LIO2 / PGO / ICP-localizer / PCT workflow, not the current native stack.
+
+```text
 Mapping（建图）	PGO	回环检测 + 位姿图优化，校正 odom 漂移，建立全局一致地图
 Navigation（导航）	Localizer	加载已保存地图，用 ICP 把当前点云配准到地图，得到在 map 下的位姿
 
@@ -45,3 +51,5 @@ publishCloud(m_world_cloud_pub, world_cloud, m_node_config.world_frame, ...);
 0	正常控制	默认状态
 1	停止速度，保留转向	需要转向避让
 2	完全停止	紧急制动
+
+```

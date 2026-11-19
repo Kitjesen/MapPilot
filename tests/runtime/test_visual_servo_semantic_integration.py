@@ -365,6 +365,7 @@ def test_follow_status_distinguishes_three_frame_evidence_from_missing_verifier(
 
     mod = VisualServoModule()
     mod._person_tracker.set_dino_encoder(Dino())
+    mod._person_tracker.LOCAL_REACQUIRE_MIN_SIMILARITY = 1.01
     mod._on_servo_target("follow_id:original")
     frame = np.ones((16, 16, 3), dtype=np.uint8)
 
@@ -895,6 +896,7 @@ def test_reacquisition_requires_three_distinct_observation_images():
     mod._target_label = "person in red"
     mod._follow_select_method = "clip"
     mod._person_tracker.set_dino_encoder(_Dino())
+    mod._person_tracker.LOCAL_REACQUIRE_MIN_SIMILARITY = 1.01
     reference = np.ones((16, 16, 3), dtype=np.uint8)
     mod._person_tracker.lock_target(
         {

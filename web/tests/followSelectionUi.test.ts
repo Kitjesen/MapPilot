@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url)
 const source = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/FollowSelectionCard.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
 }).outputText
-type Element = { type: string; props: Record<string, any> }
+type Element = { type: string; props: Record<string, unknown> }
 function elements(node: unknown): Element[] {
   if (Array.isArray(node)) return node.flatMap(elements)
   if (!node || typeof node !== 'object') return []
@@ -20,7 +20,7 @@ function elements(node: unknown): Element[] {
 function setup(view: FollowSelection) {
   const state: unknown[] = [view]
   let cursor = 0
-  const exports: Record<string, any> = {}
+  const exports: Record<string, (props: unknown) => unknown> = {}
   runInNewContext(source, { exports, require: (name: string) => {
     if (name === 'react') return { ...require('react'), useEffect() {}, useRef: () => ({ current: null }),
       useState(initial: unknown) {
