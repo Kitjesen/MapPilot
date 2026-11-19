@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -153,5 +154,37 @@ struct SensorBatch {
   std::optional<InputSample<LocalCollisionMap>> local_collision;
   std::optional<std::string> localization_health;
 };
+
+// Fold a newer batch into one the control thread has not taken yet. The
+// sensor thread drains every millisecond and odometry arrives at about
+// 200 Hz, so replacing the pending batch dropped most low-rate inputs (local
+// collision layers, registered clouds, clears) before the 100 Hz control tick
+// saw them. Merged samples take the newer receive time, at most one control
+// period late.
+inline void mergeSensorBatch(SensorBatch &pending, SensorBatch &&next) {
+  const auto append = [](auto &into, auto &from) {
+    into.insert(into.end(), std::make_move_iterator(from.begin()),
+                std::make_move_iterator(from.end()));
+  };
+  const auto replace = [](auto &into, auto &from) {
+    if (from) into = std::move(from);
+  };
+  pending.receive_steady_s = next.receive_steady_s;
+  pending.receive_wall_s = next.receive_wall_s;
+  replace(pending.simulation_time_s, next.simulation_time_s);
+  append(pending.transforms, next.transforms);
+  append(pending.odometry, next.odometry);
+  replace(pending.driver_control, next.driver_control);
+  replace(pending.motion_profile, next.motion_profile);
+  replace(pending.exploration_grid, next.exploration_grid);
+  replace(pending.obstacles, next.obstacles);
+  replace(pending.terrain, next.terrain);
+  replace(pending.terrain_extended, next.terrain_extended);
+  append(pending.clears, next.clears);
+  replace(pending.traversability, next.traversability);
+  replace(pending.local_traversability, next.local_traversability);
+  replace(pending.local_collision, next.local_collision);
+  replace(pending.localization_health, next.localization_health);
+}
 
 }  // namespace lingtu::nav::endpoint

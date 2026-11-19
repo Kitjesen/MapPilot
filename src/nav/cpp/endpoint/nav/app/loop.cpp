@@ -74,7 +74,8 @@ bool hasSensorData(const lingtu::nav::endpoint::SensorBatch &batch) {
 }
 
 // DDS point-cloud decoding can copy a large payload. Keep that work outside
-// the 100 Hz control thread and publish only the newest sensor batch.
+// the 100 Hz control thread; the control thread takes everything received
+// since its previous tick.
 class SensorMailbox {
  public:
   explicit SensorMailbox(lingtu::nav::endpoint::Dds &dds)
@@ -108,7 +109,11 @@ class SensorMailbox {
       {
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_.load()) return;
-        latest_ = std::move(batch);
+        if (latest_) {
+          lingtu::nav::endpoint::mergeSensorBatch(*latest_, std::move(batch));
+        } else {
+          latest_ = std::move(batch);
+        }
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
