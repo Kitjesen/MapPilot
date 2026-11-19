@@ -97,6 +97,16 @@ target_include_directories(test_exploration_run_event_outbox PRIVATE
   ${_EXPLORE_INCLUDES})
 lingtu_add_explore_test(test_exploration_run_event_outbox)
 
+# Portable test builds skip the nav endpoint, which is what normally adds maps.
+if(NOT TARGET lingtu_maps)
+  set(_LINGTU_EXPLORE_SAVED_BUILD_TESTING "${BUILD_TESTING}")
+  set(BUILD_TESTING OFF)
+  add_subdirectory("${LINGTU_REPO_ROOT}/src/maps" "${CMAKE_BINARY_DIR}/maps"
+    EXCLUDE_FROM_ALL)
+  set(BUILD_TESTING "${_LINGTU_EXPLORE_SAVED_BUILD_TESTING}")
+  unset(_LINGTU_EXPLORE_SAVED_BUILD_TESTING)
+endif()
+
 add_executable(test_saved_coverage_grid
   test_saved_coverage_grid.cpp
   "${_EXPLORE_ENDPOINT}/saved_coverage_grid.cpp")

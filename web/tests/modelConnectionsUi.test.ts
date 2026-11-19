@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 
 const require = createRequire(import.meta.url)
-const source = ts.transpileModule(readFileSync(new URL('../src/components/agentConversation/ModelConnections.tsx', import.meta.url), 'utf8'), {
+const componentUrl = new URL('../src/components/agentConversation/ModelConnections.tsx', import.meta.url)
+const source = ts.transpileModule(readFileSync(componentUrl, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
 }).outputText
 type View = { type: unknown; props: Record<string, unknown> }
@@ -24,7 +26,8 @@ function render(states: unknown[], api: Record<string, unknown> = {}, onClose = 
     if (name.endsWith('/Modal')) return { ModalShell: (props: Record<string, unknown>) => require('react').createElement('dialog', { open: true }, props.children) }
     if (name.endsWith('modelConnections.ts')) return api
     if (name.endsWith('.css')) return { default: {} }
-    return require(name)
+    // Relative imports belong to the component, not to this test file.
+    return require(name.startsWith('.') ? fileURLToPath(new URL(name, componentUrl)) : name)
   } })
   return exports.ModelConnections({ onClose, onChanged() {}, options })
 }
