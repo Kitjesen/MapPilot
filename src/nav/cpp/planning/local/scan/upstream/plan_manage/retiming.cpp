@@ -103,9 +103,15 @@ bool SCANPlannerManager::retime(
           // lengthenTime stretches only the middle spans, excluding 4*h.
           const double interiorRatio = 1.0 + (timeRatio - 1.0) * originalDuration /
                                                (originalDuration - 4.0 * originalInterval);
+          // XY refinement cannot repair a fixed vertical end velocity: on a stair
+          // flight the reference's nominal vz forces a steep end ramp that only
+          // fits after many stretches (34 s for 3 m). Slow the end's vertical
+          // rate with the curve; the measured start and XY cruise stay exact.
+          auto boundary = start_end_derivatives;
+          boundary[1].z() /= timeRatio;
           Eigen::MatrixXd controls;
-          reparamBspline(reference, start_end_derivatives, interiorRatio, controls, ts);
-          setSplineBoundary(controls, ts, start_pt, local_target_pt, start_end_derivatives);
+          reparamBspline(reference, boundary, interiorRatio, controls, ts);
+          setSplineBoundary(controls, ts, start_pt, local_target_pt, boundary);
           if (!controls.allFinite())
             break;
           pos = UniformBspline(controls, 3, ts);
