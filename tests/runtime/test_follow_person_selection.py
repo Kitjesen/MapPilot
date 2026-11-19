@@ -1796,6 +1796,7 @@ def test_provisional_following_needs_an_available_verifier():
     vs._mode = "follow"
     vs._target_label = "person in red"
     vs._person_tracker.set_dino_encoder(_FakeDino())
+    vs._person_tracker.LOCAL_REACQUIRE_MIN_SIMILARITY = 1.01
     vs._latest_bgr = np.ones((32, 32, 3), dtype=np.uint8)
     vs._person_tracker.lock_target(
         _person("original", "person", 4.0, [0, 0, 16, 16]) | {"ts": 1.0},

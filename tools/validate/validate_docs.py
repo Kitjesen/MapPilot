@@ -59,6 +59,7 @@ DOCS_MARKDOWN = {
 DOCS_RESEARCH_PREFIX = "research/"
 DOCS_RESEARCH_PAPERS_PREFIX = "research/papers/"
 DOCS_PLANNING_FIGURES_PREFIX = "assets/planning/"
+DOCS_MEDIA_FIGURES_PREFIX = "media/"
 METADATA_RE = {
     "Status": re.compile(r"^\*\*Status:\*\*\s+\S", re.IGNORECASE),
     "Audience": re.compile(r"^\*\*Audience:\*\*\s+\S", re.IGNORECASE),
@@ -192,7 +193,7 @@ def validate_repository(root: Path = ROOT) -> tuple[list[str], int]:
         if not (
             path.suffix.lower() == ".pdf"
             and path.relative_to(docs_root).as_posix().startswith(
-                (DOCS_RESEARCH_PAPERS_PREFIX, DOCS_PLANNING_FIGURES_PREFIX)
+                (DOCS_RESEARCH_PAPERS_PREFIX, DOCS_PLANNING_FIGURES_PREFIX, DOCS_MEDIA_FIGURES_PREFIX)
             )
         )
     )

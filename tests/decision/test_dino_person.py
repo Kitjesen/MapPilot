@@ -1,8 +1,16 @@
 """Independent appearance matching must preserve language selection and target identity."""
 
 import numpy as np
+import pytest
 
 from decision.vision.person import PersonTracker
+
+
+@pytest.fixture(autouse=True)
+def _require_remote_identity_gate(monkeypatch):
+    # These tests exercise the remote-verification gate. Strong local DINO
+    # reacquisition is covered in test_person_tracker.py.
+    monkeypatch.setattr(PersonTracker, "LOCAL_REACQUIRE_MIN_SIMILARITY", 1.01)
 
 
 class Dino:
